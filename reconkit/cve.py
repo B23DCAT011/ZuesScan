@@ -61,8 +61,28 @@ class LocalCveSource:
                 service=service,
                 cve=entry.get("cve"),
                 description=entry.get("description", ""),
+                evidence=self._evidence(service, entry),
             )
             # No fingerprint here: it depends on the host's address, which only the
             # orchestrator knows. It fingerprints every finding of a run in one place.
             findings.append(finding)
         return findings
+
+    def _evidence(self, service: Service, entry: dict[str, str]) -> str:
+        """Say what was observed and why it matched, so a person can re-check it.
+
+        A match on product + version is an inference from what the scanner
+        fingerprinted, not a proof that the flaw is exploitable (a distribution may
+        have patched it without changing the version): the wording says so.
+        """
+        seen = [f"product {service.product!r}", f"version {service.version!r}"]
+        if service.cpe:
+            seen.append(f"cpe {service.cpe}")
+        if service.banner:
+            seen.append(f"banner {service.banner!r}")
+        return (
+            f"{service.port}/{service.protocol} {service.state}: scanner reported "
+            f"{', '.join(seen)}. Matched {self.name} entry "
+            f"{entry['product']} {entry['version']} by exact product and version; "
+            "not verified by exploitation."
+        )

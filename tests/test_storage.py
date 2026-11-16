@@ -6,11 +6,18 @@ from pathlib import Path
 import pytest
 
 from reconkit.orchestrator import RunStatus, ScanRun
-from reconkit.schema import Asset, Finding, Service, Severity
+from reconkit.schema import Asset, Finding, RawOutput, Service, Severity
 from reconkit.storage import _V1, SCHEMA_VERSION, Storage, StorageError
 
 SSH = Service(port=22, name="ssh", product="OpenSSH", version="7.4")
 HTTP = Service(port=80, name="http", product="nginx", version="1.18.0")
+NMAP_XML = RawOutput(
+    plugin="nmap",
+    format="nmap-xml",
+    command=("nmap", "-sV", "-T4", "-oX", "-", "10.0.0.5"),
+    content='<?xml version="1.0"?>\n<nmaprun><!-- máy chủ “thử” --></nmaprun>\n',
+    stderr="Warning: something",
+)
 
 
 def _finding(host: str, service: Service | None, title: str = "OpenSSH 7.4") -> Finding:
@@ -36,6 +43,7 @@ def _make_run() -> ScanRun:
         "2026-01-01T00:00:05+00:00",
         assets=[asset],
         tool_versions={"nmap": "7.92"},
+        raw_outputs=[NMAP_XML],
     )
 
 
@@ -233,6 +241,7 @@ def test_deleting_a_run_deletes_everything_under_it(tmp_path: Path) -> None:
             ("service", 1),
             ("finding", 1),
             ("scan_run_plugin", 1),
+            ("scan_run_output", 1),
             ("scan_run_out_of_scope", 0),
         ]:
             assert _count(store, table) == left, table
@@ -381,3 +390,67 @@ def test_file_that_is_not_a_database_is_refused(tmp_path: Path) -> None:
     path.write_text("this is not a SQLite database, just some text\n" * 50, encoding="utf-8")
     with pytest.raises(StorageError, match="cannot use database"):
         Storage(path)
+
+
+# --- evidence: raw scanner output (G13) ------------------------------------------
+
+
+def test_raw_output_comes_back_exactly_as_it_went_in(tmp_path: Path) -> None:
+    with _store(tmp_path) as store:
+        run_id = store.save_run(_make_run())
+        (output,) = store.outputs_for_run(run_id)
+    assert output == NMAP_XML  # content, command, stderr: nothing lost, non-ASCII included
+    assert output.sha256 == NMAP_XML.sha256
+
+
+def test_raw_output_is_stored_compressed_with_its_hash(tmp_path: Path) -> None:
+    big = RawOutput(plugin="nmap", format="nmap-xml", command=("nmap",), content="<port/>" * 5000)
+    run = _make_run()
+    run.raw_outputs = [big]
+    with _store(tmp_path) as store:
+        store.save_run(run)
+        row = store._conn.execute(
+            "SELECT size, sha256, LENGTH(content) AS stored FROM scan_run_output"
+        ).fetchone()
+    assert row["size"] == 35000
+    assert row["sha256"] == big.sha256
+    assert row["stored"] < 1000  # zlib: repetitive XML shrinks a lot
+
+
+def test_tampered_raw_output_is_refused(tmp_path: Path) -> None:
+    import zlib
+
+    with _store(tmp_path) as store:
+        run_id = store.save_run(_make_run())
+        # Someone edits the evidence after the fact (valid zlib, different text).
+        store._conn.execute(
+            "UPDATE scan_run_output SET content = ?",
+            (zlib.compress(b"<nmaprun>nothing</nmaprun>"),),
+        )
+        store._conn.commit()
+        with pytest.raises(StorageError, match="does not match its stored SHA-256"):
+            store.outputs_for_run(run_id)
+
+
+def test_damaged_raw_output_is_refused(tmp_path: Path) -> None:
+    with _store(tmp_path) as store:
+        run_id = store.save_run(_make_run())
+        store._conn.execute("UPDATE scan_run_output SET content = ?", (b"not zlib at all",))
+        store._conn.commit()
+        with pytest.raises(StorageError, match="unreadable"):
+            store.load_run(run_id)
+
+
+def test_run_without_raw_output_has_none(tmp_path: Path) -> None:
+    run = _make_run()
+    run.raw_outputs = []
+    with _store(tmp_path) as store:
+        assert store.outputs_for_run(store.save_run(run)) == []
+
+
+def test_finding_evidence_is_stored(tmp_path: Path) -> None:
+    run = _make_run()
+    run.assets[0].findings[0].evidence = "22/tcp open: scanner reported product 'OpenSSH'"
+    with _store(tmp_path) as store:
+        (finding,) = store.findings_for_run(store.save_run(run))
+    assert finding.evidence == "22/tcp open: scanner reported product 'OpenSSH'"
