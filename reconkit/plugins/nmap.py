@@ -12,6 +12,7 @@ inject extra commands.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from xml.etree import ElementTree as ET
@@ -32,6 +33,22 @@ class NmapPlugin:
 
     def is_available(self) -> bool:
         return shutil.which("nmap") is not None
+
+    def version(self) -> str | None:
+        """nmap's version as it reports it (`nmap --version`), e.g. "7.92"."""
+        try:
+            proc = subprocess.run(
+                ["nmap", "--version"],
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+                check=True,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None  # an unknown version must never stop a scan
+        match = re.search(r"Nmap version (\S+)", proc.stdout)
+        return match.group(1) if match else None
 
     def _command(self, target: ScanTarget) -> list[str]:
         # Only addresses reach nmap, never a name: nmap would resolve a name again

@@ -11,17 +11,21 @@ import ipaddress
 import sys
 
 from reconkit.cve import LocalCveSource
-from reconkit.orchestrator import NoPluginAvailableError, Orchestrator, ScanRun
+from reconkit.orchestrator import NoPluginAvailableError, Orchestrator, ScanRun, now
 from reconkit.plugins.base import ScanError
 from reconkit.plugins.nmap import NmapPlugin
 from reconkit.scope import ResolutionError, Scope, ScopeError
-from reconkit.storage import Storage
+from reconkit.storage import SCHEMA_VERSION, Storage, StorageError
 
 
 def _print_summary(run: ScanRun, run_id: int, db_path: str) -> None:
     services = [s for a in run.assets for s in a.services]
     findings = [f for a in run.assets for f in a.findings]
-    print(f"\nScan run #{run_id}  target={run.target}  (saved to {db_path})")
+    print(f"\nScan run #{run_id}  target={run.target}  status={run.status}  (saved to {db_path})")
+    tools = ", ".join(
+        f"{name} {version or '(unknown version)'}" for name, version in run.tool_versions.items()
+    )
+    print(f"  scanners: {tools}")
     plan = run.plan
     if plan is not None and plan.hostname:
         print(f"  resolved: {plan.hostname} -> {', '.join(plan.addresses)}")
@@ -79,20 +83,40 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     else:
         cve_source = LocalCveSource()  # bundled seed
     orch = Orchestrator(plugins=[NmapPlugin()], scope=scope, cve_source=cve_source)
+
+    # Open the database before scanning: if the results cannot be saved, find out
+    # now, not after probing the target for five minutes.
+    try:
+        store = Storage(args.db)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    with store:
+        if store.backup_path:
+            print(
+                f"note: database upgraded to schema v{SCHEMA_VERSION}; "
+                f"the previous version was kept at {store.backup_path}",
+                file=sys.stderr,
+            )
+        return _scan(args, orch, store)
+
+
+def _scan(args: argparse.Namespace, orch: Orchestrator, store: Storage) -> int:
+    started = now()
     try:
         run = orch.run(args.target)
     except ScopeError as exc:
+        # Refused before anything was probed: there is no run to record.
         print(f"refused: {exc}", file=sys.stderr)
         return 3
     except (NoPluginAvailableError, ResolutionError) as exc:
         print(f"scan failed: {exc}", file=sys.stderr)
-        return 4
+        return _record_failure(args, orch, store, started, exc)
     except ScanError as exc:
-        # A failed scan is never saved: an empty run would read as "nothing found".
         print(f"scan failed [{exc.plugin}]: {exc}", file=sys.stderr)
         if exc.stderr:
             print(_indent(exc.stderr), file=sys.stderr)
-        return 4
+        return _record_failure(args, orch, store, started, exc)
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -107,10 +131,22 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
 
-    with Storage(args.db) as store:
-        run_id = store.save_run(run)
+    run_id = store.save_run(run)
     _print_summary(run, run_id, args.db)
     return 0
+
+
+def _record_failure(
+    args: argparse.Namespace, orch: Orchestrator, store: Storage, started: str, exc: Exception
+) -> int:
+    """Store a failed scan as a `failed` run: no results, but the error is kept.
+
+    Saving it as an ordinary empty run would read as "nothing found"; saving nothing
+    would hide that the scan is broken.
+    """
+    run_id = store.save_run(orch.failed_run(args.target, started, exc))
+    print(f"recorded as failed run #{run_id} in {args.db} (no results saved)", file=sys.stderr)
+    return 4
 
 
 def build_parser() -> argparse.ArgumentParser:

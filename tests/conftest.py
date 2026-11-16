@@ -43,14 +43,19 @@ class FakePlugin:
         assets: list[Asset],
         available: bool = True,
         error: Exception | None = None,
+        version: str | None = "1.0-fake",
     ) -> None:
         self._assets = assets
         self._available = available
         self._error = error  # raised by scan() to simulate a failing tool
+        self._version = version
         self.seen: list[ScanTarget] = []  # every target this plugin was asked to scan
 
     def is_available(self) -> bool:
         return self._available
+
+    def version(self) -> str | None:
+        return self._version
 
     def scan(self, target: ScanTarget) -> list[Asset]:
         self.seen.append(target)
