@@ -124,8 +124,26 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
 - [ ] **G10. Không phân biệt "chắc chắn" và "có thể" bị lỗi** (backport của distro giữ nguyên
   số phiên bản). Sửa: thêm `Finding.confidence` (`tentative` / `confirmed`).
 - [ ] **G11. Severity là nhãn gõ tay.** Sửa: lưu điểm + vector CVSS; cân nhắc EPSS để ưu tiên.
-- [ ] **G12. Fingerprint có `title`.** Sửa câu chữ title là lỗi cũ thành "lỗi mới".
+- [x] **G12. Fingerprint có `title`.** Sửa câu chữ title là lỗi cũ thành "lỗi mới".
   Sửa: định danh theo asset + port + protocol + CVE/rule id (đổi schema fingerprint có version).
+  - ✅ **Đã sửa (F8)**: fingerprint = băm của **ở đâu** (địa chỉ IP của máy, chỉ dùng tên khi
+    không có IP; port; protocol) + **lỗi gì** (CVE; không có thì `rule_id` của bài kiểm; không
+    có cả hai thì mới dùng title). Bỏ khỏi định danh: title, description, severity, evidence,
+    product, **version** — máy nâng từ bản lỗi này lên bản lỗi khác vẫn là *cùng một lỗi còn
+    mở*. Fingerprint tự ghi công thức của nó: `v2:<sha256>` (`FINGERPRINT_SCHEME`).
+    `Finding` thêm `rule_id` (cột mới, schema DB v3) và `ip`. Orchestrator là **nơi duy nhất**
+    đặt fingerprint, sau khi gộp host; hai tool báo cùng một lỗi trên cùng cổng → một finding.
+    Quét theo tên và quét theo IP cho cùng fingerprint.
+  - Còn lại (đã cân nhắc, ghi lại để làm sau):
+    - Fingerprint cũ trong DB (công thức 1, không có tiền tố) **không được tính lại**: các
+      dòng từ schema v1 không biết lỗi nằm ở cổng nào. Run trước F8 và sau F8 vì thế không so
+      được với nhau bằng fingerprint; `feat/diff` phải bỏ qua cặp khác công thức.
+    - Máy đổi IP (DHCP, cloud) → fingerprint đổi → lỗi cũ thành "mới". Công cụ thật giải
+      bằng định danh tài sản bền hơn IP (agent UUID, MAC, tên máy). → D1 (kho tài sản).
+    - Nhiều website chung một IP (virtual host): lỗi của từng site sẽ cần tên host trong
+      định danh → làm cùng plugin nuclei.
+    - Finding không có CVE lẫn `rule_id` vẫn định danh bằng title (đã chuẩn hóa hoa/thường
+      và khoảng trắng) — plugin mới phải điền `rule_id`.
 - [ ] **G13. Không lưu bằng chứng** (`evidence` rỗng, XML nmap bị bỏ).
   Sửa: lưu output gốc của tool theo run; điền `evidence` cho finding.
 - [x] **G14. `scan_run` không có trạng thái / lỗi / phiên bản tool.**

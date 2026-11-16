@@ -12,8 +12,8 @@ Ghi chú thiết kế ban đầu: [`GHI-CHU.md`](../GHI-CHU.md).
 | — | Phân tích lỗi Mức 1: G1 CIDR, G4 scope/DNS, G2, G3, G5 | orchestrator, scope, cli, storage | ✅ 2026-10-28 |
 | 2 | CVE, CPE, CVSS, NVD, KEV, EPSS | `cve.py`, `cve_seed.json` | ✅ 2026-10-28 |
 | 3 | Scope & pháp lý: Rules of Engagement, xin phép quét, luật VN | `scope.py` | ✅ 2026-11-11 |
-| 4 | Vòng đời finding: mới / còn mở / đã vá / tái xuất hiện | fingerprint, `feat/diff` | ⏭️ tiếp theo |
-| 5 | Kiến trúc: pipeline, plugin, repository, transaction, migration | orchestrator, storage | |
+| 4 | Vòng đời finding: mới / còn mở / đã vá / tái xuất hiện | fingerprint, `feat/diff` | ✅ 2026-11-16 |
+| 5 | Kiến trúc: pipeline, plugin, repository, transaction, migration | orchestrator, storage | ⏭️ tiếp theo |
 | 6 | Công cụ thật (OpenVAS, Nessus, nuclei, DefectDojo) so với ReconKit | toàn dự án | |
 
 ---
@@ -119,8 +119,8 @@ Ghi chú thiết kế ban đầu: [`GHI-CHU.md`](../GHI-CHU.md).
 |---|---|
 | Không quét khi chưa khai báo phạm vi | ✅ `--scope` bắt buộc; ngoài allowlist → từ chối, exit 3 |
 | Có danh sách loại trừ, lỗi thì nghiêng về an toàn | ✅ deny `!`, dải chồng lấn deny bị từ chối, dòng sai → dừng (F2) |
-| Kiểm tra IP thật, không chỉ tên | ❌ G4 phần DNS → **F6** |
-| Kiểm lại từng host trong kết quả | ❌ → **F6** (cần cho subfinder sau này) |
+| Kiểm tra IP thật, không chỉ tên | ✅ F6: phân giải một lần, kiểm mọi IP, quét bằng IP |
+| Kiểm lại từng host trong kết quả | ✅ F6: host ngoài scope bị loại và được ghi lại |
 | Giới hạn tốc độ / khung giờ theo RoE | ❌ cố định `-T4` (G7); chưa có khung giờ (G21) |
 | Dấu vết kiểm toán: ai, lúc nào, theo giấy phép nào | ❌ `scan_run` chỉ có target + thời gian → **G21** |
 | Nhắc người dùng về trách nhiệm pháp lý | ⚠️ chỉ có một dòng cảnh báo trong README |
@@ -128,3 +128,65 @@ Ghi chú thiết kế ban đầu: [`GHI-CHU.md`](../GHI-CHU.md).
 Kết luận: file scope của ReconKit là **cái khoá kỹ thuật**, không phải **giấy phép**. Công cụ
 chỉ biết "người dùng khai là được phép"; trách nhiệm có giấy thật vẫn ở người chạy. Việc của
 công cụ là làm cho quét nhầm thật khó (F2, F6) và để lại bằng chứng đã làm đúng (G21).
+
+## Bài 4 — Vòng đời finding
+
+**Thuật ngữ**
+
+- **Finding** = một lần *quan sát thấy* một vấn đề. **Vulnerability (lỗi)** = bản thân vấn đề,
+  tồn tại qua nhiều lần quét. Quét 30 đêm thấy 30 finding nhưng chỉ có **một** lỗi. Việc nối 30
+  quan sát đó thành một lỗi gọi là **deduplication / correlation**.
+- **Định danh (identity)** của một lỗi: tập trường trả lời câu "đây có phải *cùng* lỗi lần
+  trước không?". **Fingerprint** = băm của định danh, để so nhanh.
+- **Trạng thái** thường gặp: *new* (lần đầu thấy) → *active / open* (vẫn thấy) → *fixed*
+  (không còn thấy) → *resurfaced / reopened* (đã fixed rồi thấy lại). Ngoài luồng chính:
+  *false positive* (công cụ báo sai), *risk accepted* (biết nhưng chấp nhận, phải có lý do và
+  hạn xem lại), *mitigated* (chưa vá nhưng đã chặn bằng cách khác, vd firewall).
+- **first seen / last seen**: lần đầu và lần cuối quan sát thấy. Từ đó tính **tuổi của lỗi** và
+  **MTTR** (mean time to remediate — thời gian trung bình để vá).
+- **SLA vá lỗi**: hạn vá theo mức độ, vd critical 7 ngày, high 30 ngày. Lỗi quá hạn là thứ
+  báo cáo quản lý quan tâm nhất.
+- **Fix giả (fake fix)**: ticket đã đóng "đã sửa" nhưng lần quét sau vẫn thấy đúng lỗi đó.
+- **Regression**: lỗi đã vá thật rồi quay lại (rollback, dựng lại máy từ image cũ).
+
+**Thực tế người ta làm thế nào**
+
+- Định danh = **ở đâu + lỗi gì**, không bao giờ gồm câu chữ. Nessus / Tenable: máy + plugin ID +
+  port + protocol. DefectDojo: `hash_code` băm từ một danh sách trường cấu hình được theo
+  từng loại scanner. Lý do: title, mô tả, điểm CVSS đều bị sửa theo thời gian; nếu chúng nằm
+  trong định danh thì mỗi lần cập nhật dữ liệu là mọi lỗi cũ "biến mất" và "xuất hiện mới".
+- **Phiên bản phần mềm không thuộc định danh.** Nâng từ bản lỗi này lên bản vẫn lỗi thì lỗi
+  *chưa* được vá; nếu version nằm trong băm, lần nâng cấp đó sẽ bị ghi thành "đã vá + lỗi
+  mới" và che mất fix giả.
+- **"Không thấy" chưa phải "đã vá".** Lỗi chỉ được chuyển sang *fixed* khi lần quét đó **có
+  kiểm tra lại đúng chỗ đó** mà không thấy: máy trả lời, cổng nằm trong danh sách đã quét,
+  scanner tương ứng có chạy. Máy tắt, firewall chặn, scanner bị bỏ qua → trạng thái giữ
+  nguyên. Đây là lý do F7 phải lưu `status` của run và danh sách scanner đã chạy.
+- **Định danh của máy khó hơn định danh của lỗi.** IP đổi (DHCP, cloud), một tên trỏ nhiều
+  máy, một máy nhiều tên. Công cụ thật ưu tiên định danh bền: agent UUID → MAC → tên máy
+  (NetBIOS / FQDN) → IP. Quét từ xa không agent thì IP là thứ tốt nhất có được.
+- Thay đổi công thức băm là chuyện lớn: mọi lịch sử cũ mất liên kết. Vì vậy công thức phải có
+  **số phiên bản**, và khi đổi thì tính lại băm cho dữ liệu cũ (nếu còn đủ dữ liệu) hoặc
+  chấp nhận một điểm đứt và ghi rõ.
+- Kết quả so hai lần quét (**diff**) mới là thứ người dùng đọc, không phải danh sách đầy đủ:
+  "đêm qua có 3 lỗi mới, 5 lỗi đã vá, 1 fix giả".
+
+**ReconKit có theo không**
+
+| Thực tế yêu cầu | ReconKit hiện tại |
+|---|---|
+| Định danh = ở đâu + lỗi gì, không gồm câu chữ | ✅ F8: IP + port + protocol + CVE / `rule_id` |
+| Version không nằm trong định danh | ✅ F8 |
+| Công thức băm có số phiên bản | ✅ F8: `v2:<sha256>`; băm cũ giữ nguyên, không so với băm mới |
+| Một lỗi do nhiều tool báo → một finding | ✅ F8: orchestrator gộp theo fingerprint |
+| Finding nối được về đúng cổng, đúng máy | ✅ F7: `finding.service_id` |
+| Biết lần quét có thật sự kiểm tra hay không | ⚠️ F7 lưu `status` + scanner đã chạy; chưa lưu danh sách cổng đã quét, chưa lưu host im lặng (→ D1) |
+| Trạng thái, first seen / last seen, diff | ❌ → `feat/diff` + D1 (Giai đoạn 2) |
+| Định danh máy bền hơn IP | ❌ chỉ có IP → D1 |
+| Risk accepted / false positive có lý do và hạn | ❌ → D1 |
+| SLA, MTTR | ❌ → sau khi có first seen / last seen |
+
+Kết luận: fingerprint là **nền** của vòng đời, nhưng tự nó chưa phải vòng đời. Sau F8,
+ReconKit trả lời được "hai finding này có phải một lỗi không"; còn "lỗi này đang ở trạng thái
+nào, mở bao lâu rồi" cần kho tài sản và lịch sử của D1. Sơ đồ trạng thái đã chốt nằm trong
+[`THIET-KE.md`](THIET-KE.md), mục "Vòng đời một lỗ hổng".
