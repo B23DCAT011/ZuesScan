@@ -62,6 +62,7 @@ class LocalCveSource:
                 cve=entry.get("cve"),
                 description=entry.get("description", ""),
             )
-            finding.compute_fingerprint()
+            # No fingerprint here: it depends on the host's address, which only the
+            # orchestrator knows. It fingerprints every finding of a run in one place.
             findings.append(finding)
         return findings

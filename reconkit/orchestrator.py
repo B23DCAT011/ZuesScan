@@ -3,7 +3,7 @@
 It knows the *order of stages*, not the details of any tool:
 
     scope gate (resolve + plan)  ->  run each available plugin  ->  re-check and
-    merge assets per host  ->  CVE stage
+    merge assets per host  ->  CVE stage  ->  fingerprint every finding
 
 One target can be many hosts (a CIDR range), so a run holds one `Asset` per host.
 
@@ -21,7 +21,7 @@ from enum import StrEnum
 from reconkit import __version__
 from reconkit.cve import CveSource
 from reconkit.plugins.base import ScanError, ScannerPlugin
-from reconkit.schema import Asset, ScanTarget
+from reconkit.schema import Asset, Finding, ScanTarget
 from reconkit.scope import Resolver, Scope
 
 
@@ -121,6 +121,18 @@ class Orchestrator:
             for asset in assets:
                 for service in asset.services:
                     asset.findings.extend(self.cve_source.find(service, asset.host))
+
+        # 5. Identify every finding the same way, whichever plugin or stage produced
+        #    it: tie it to the merged asset, then fingerprint it. Done here, once,
+        #    because only now is it settled which machine each finding belongs to.
+        #    Two tools reporting the same issue on the same port is one finding.
+        for asset in assets:
+            unique: dict[str, Finding] = {}
+            for finding in asset.findings:
+                finding.asset = asset.host
+                finding.ip = asset.ip
+                unique.setdefault(finding.compute_fingerprint(), finding)
+            asset.findings = list(unique.values())
 
         return ScanRun(
             target=target,

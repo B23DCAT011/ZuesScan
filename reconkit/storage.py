@@ -22,7 +22,7 @@ from reconkit.schema import Asset, Finding, Service, Severity
 
 # The schema version this code reads and writes. Bump it together with a new entry
 # in `_MIGRATIONS`; never edit a migration that has already shipped.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class StorageError(Exception):
@@ -188,7 +188,16 @@ _V2 = (
     "CREATE INDEX idx_out_of_scope_run ON scan_run_out_of_scope(run_id)",
 )
 
-_MIGRATIONS: dict[int, tuple[str, ...]] = {1: _V1, 2: _V2}
+# Version 3 (F8): a finding can carry the id of the check that produced it (G12).
+# Adding a nullable column needs no rebuild.
+#
+# Fingerprints already stored are left as they are: they were made with scheme 1
+# (title + product + version), carry no "v2:" prefix, and cannot be converted for
+# rows that never recorded their service. Runs from before this version are therefore
+# not comparable, by fingerprint, with runs after it.
+_V3 = ("ALTER TABLE finding ADD COLUMN rule_id TEXT",)
+
+_MIGRATIONS: dict[int, tuple[str, ...]] = {1: _V1, 2: _V2, 3: _V3}
 
 
 class Storage:
@@ -385,6 +394,7 @@ class Storage:
                     f.title,
                     str(f.severity),
                     f.cve,
+                    f.rule_id,
                     f.description,
                     f.evidence,
                     fp,
@@ -392,8 +402,8 @@ class Storage:
             )
         self._conn.executemany(
             "INSERT INTO finding "
-            "(asset_id, service_id, title, severity, cve, description, evidence, fingerprint) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "(asset_id, service_id, title, severity, cve, rule_id, description, evidence, "
+            "fingerprint) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
 
@@ -457,11 +467,11 @@ class Storage:
                 services_by_id[s["id"]] = service
                 asset.services.append(service)
             for f in self._conn.execute(
-                "SELECT service_id, title, severity, cve, description, evidence, fingerprint "
-                "FROM finding WHERE asset_id = ? ORDER BY id",
+                "SELECT service_id, title, severity, cve, rule_id, description, evidence, "
+                "fingerprint FROM finding WHERE asset_id = ? ORDER BY id",
                 (a["id"],),
             ):
-                asset.findings.append(_finding(f, a["host"], services_by_id.get(f["service_id"])))
+                asset.findings.append(_finding(f, asset, services_by_id.get(f["service_id"])))
             run.assets.append(asset)
         return run
 
@@ -494,9 +504,11 @@ def _service(row: sqlite3.Row) -> Service:
     )
 
 
-def _finding(row: sqlite3.Row, host: str, service: Service | None) -> Finding:
+def _finding(row: sqlite3.Row, asset: Asset, service: Service | None) -> Finding:
     return Finding(
-        asset=host,
+        asset=asset.host,
+        ip=asset.ip,
+        rule_id=row["rule_id"],
         title=row["title"],
         severity=Severity(row["severity"]),
         service=service,
