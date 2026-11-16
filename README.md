@@ -44,12 +44,18 @@ Quy tắc của scope:
 - **Kết quả được kiểm lại.** Máy nào scanner trả về mà nằm ngoài scope sẽ không được lưu và
   CLI in cảnh báo.
 
-Cần cài `nmap` trên PATH. ReconKit chỉ lưu một lần quét khi nó thực sự quét được: một run
-0 service nghĩa là "đã quét và không thấy gì", không bao giờ là "chưa quét".
+Cần cài `nmap` trên PATH. Mỗi lần quét được lưu thành một *run* có trạng thái: `completed`,
+`partial` (thiếu scanner) hoặc `failed` (kèm lỗi, không có kết quả). Một run `completed` với
+0 service nghĩa là "đã quét và không thấy gì", không bao giờ là "chưa quét". Run còn ghi
+phiên bản của từng scanner đã chạy.
+
+Database có số phiên bản schema. Mở một DB cũ thì ReconKit tự nâng cấp, sau khi sao lưu
+bản cũ ra `<db>.v<N>.bak`; DB do bản ReconKit mới hơn tạo ra thì từ chối mở.
 
 | Exit code | Ý nghĩa |
 |---|---|
 | 0 | Quét xong, kết quả đã lưu vào DB |
+| 1 | Không dùng được database (hỏng, không phải SQLite, hoặc schema mới hơn bản ReconKit này) — chưa quét gì |
 | 2 | Đầu vào sai: không thấy file scope, hoặc file scope có dòng không hợp lệ |
 | 3 | Từ chối: target nằm ngoài scope, tên miền trỏ tới IP ngoài scope, hoặc target bị denylist phủ kín |
-| 4 | Quét thất bại, **không lưu gì**: thiếu nmap, nmap lỗi / quá thời gian, không phân giải được tên, không host nào trả lời |
+| 4 | Quét thất bại, lưu thành run `failed` **không có kết quả**: thiếu nmap, nmap lỗi / quá thời gian, không phân giải được tên, không host nào trả lời |

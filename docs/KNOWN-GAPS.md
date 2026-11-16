@@ -19,8 +19,8 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     không thì là IP; host up mà không có cổng mở vẫn là một asset. Orchestrator gộp báo cáo
     của nhiều plugin về cùng một máy (so IP; thiếu IP thì so tên). CLI in theo từng host.
     Đã kiểm với nmap thật: `127.0.0.0/30` → 4 asset riêng.
-  - Còn lại: tên PTR và trường hợp một máy nhiều hostname chưa được lưu (cần thêm cột →
-    F7). Host được trả về chưa được kiểm lại với scope (→ F6).
+  - Còn lại: tên PTR và trường hợp một máy nhiều hostname chưa được lưu (→ D1, làm cùng
+    kho tài sản). Host được trả về chưa được kiểm lại với scope (→ F6).
   - Dẫn chứng: `orchestrator.py` tạo một `Asset(host=target)` duy nhất; `NmapPlugin.parse_xml()`
     duyệt mọi `<host>` nhưng bỏ địa chỉ, trả về một danh sách `Service` phẳng.
   - Hậu quả: quét `10.0.0.0/24` ra một "máy" tên `10.0.0.0/24`; không biết cổng nào của máy
@@ -40,8 +40,9 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     được (kiểm tra *sau* scope); plugin bị bỏ qua trong khi plugin khác vẫn chạy được ghi
     vào `ScanRun.skipped_plugins` và CLI in cảnh báo. Plugin nmap đọc `runstats/hosts`:
     `total = 0` hoặc `up = 0` → `ScanError`. CLI trả exit code 4, không lưu run.
-  - Còn lại: `skipped_plugins` chưa lưu vào DB (→ F7, `scan_run.status`). "Host không trả
-    lời" hiện là *lỗi* vì chưa có chỗ ghi trạng thái từng host; khi có (F7, D1) nó sẽ thành
+  - Còn lại: ~~`skipped_plugins` chưa lưu vào DB~~ (✅ F7: bảng `scan_run_plugin`, run
+    thiếu scanner có `status = partial`). "Host không trả lời" hiện là *lỗi* (từ F7 được lưu
+    thành run `failed`) vì chưa có chỗ ghi trạng thái từng host; khi có (D1) nó sẽ thành
     một quan sát được lưu lại. Quét dải mà chỉ một phần host trả lời: từ F5 CLI in
     "N responded of M addresses", nhưng chưa liệt kê địa chỉ nào im lặng (→ D1).
 
@@ -69,7 +70,7 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
   - Hệ quả cho người dùng: file scope chỉ có tên miền là **không đủ**, phải khai cả IP/dải.
   - Còn lại: wildcard `*.example.com` (→ plugin subfinder); IPv6 (→ G22); quét bằng IP làm
     mất tên miền ở tầng HTTP (virtual host / SNI) — phải truyền lại tên khi làm plugin kiểm
-    tra web (nuclei); `out_of_scope` chưa lưu vào DB (→ F7).
+    tra web (nuclei). ~~`out_of_scope` chưa lưu vào DB~~ (✅ F7).
   - Dẫn chứng: `scope.py` so khớp hostname, không phân giải DNS.
   - Hậu quả: domain trong allowlist nhưng trỏ tới IP ngoài phạm vi vẫn bị quét — lỗ hổng ở
     chính lớp an toàn.
@@ -89,7 +90,14 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     (không phải hostname) cho nmap; dải chồng lấn deny → truyền `--exclude` cho nmap;
     kiểm tra lại scope cho từng host trong kết quả (liên quan G1, subfinder sau này).
 
-- [ ] **G5. Đọc finding từ DB mất thông tin service.**
+- [x] **G5. Đọc finding từ DB mất thông tin service.**
+  - ✅ **Đã sửa (F7)**: bảng `finding` có cột `service_id` (khóa ngoại tới `service`,
+    `ON DELETE SET NULL`). Khi lưu, finding được nối với service theo (port, protocol)
+    **trong cùng một host**. `Storage.load_run()` đọc lại nguyên một run (host → service →
+    finding, trạng thái, scanner, host ngoài scope); `findings_for_run()` trả finding kèm
+    `service`, nên tính lại fingerprint từ dữ liệu đọc ra cho đúng giá trị đã lưu.
+  - Còn lại: finding của DB cũ (schema v1) không có thông tin này → `service_id` để NULL,
+    không đoán. `ScanRun.plan` (địa chỉ đã duyệt, danh sách loại trừ) chưa được lưu (→ G21).
   - Dẫn chứng: bảng `finding` không có cột `service_id`; `Storage.findings_for_run()` trả
     `Finding.service = None`.
   - Hậu quả: không biết lỗi nằm ở cổng nào; diff giữa các lần quét thiếu dữ liệu.
@@ -120,10 +128,30 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
   Sửa: định danh theo asset + port + protocol + CVE/rule id (đổi schema fingerprint có version).
 - [ ] **G13. Không lưu bằng chứng** (`evidence` rỗng, XML nmap bị bỏ).
   Sửa: lưu output gốc của tool theo run; điền `evidence` cho finding.
-- [ ] **G14. `scan_run` không có trạng thái / lỗi / phiên bản tool.**
+- [x] **G14. `scan_run` không có trạng thái / lỗi / phiên bản tool.**
   Sửa: thêm `status`, `error`, `tool_version`.
-- [ ] **G15. Thiếu index khóa ngoại, thiếu `ON DELETE CASCADE`, chưa có migration.**
+  - ✅ **Đã sửa (F7)**: `scan_run` có `status` (`completed` / `partial` / `failed`, có ràng
+    buộc `CHECK`), `error`, `reconkit_version`. Phiên bản tool nằm ở bảng riêng
+    `scan_run_plugin` (mỗi scanner một dòng: `ran` / `skipped` / `failed` + `version`) vì
+    một run sẽ có nhiều scanner; hợp đồng plugin thêm `version()`. Host ngoài scope bị loại
+    được lưu vào `scan_run_out_of_scope`.
+  - **Đổi hành vi**: lần quét thất bại (exit 4) nay **được lưu** thành một run `failed` kèm
+    thông báo lỗi và stderr của tool, không có host nào. Lý do: khi quét theo lịch, "quét bị
+    hỏng" mà không để lại gì thì trông y hệt "chưa ai quét". Run `failed` không thể bị đọc
+    nhầm thành "đã quét, không thấy gì". Bị scope từ chối (exit 3) vẫn không tạo run.
+  - Còn lại: chưa có lệnh CLI xem danh sách run (→ báo cáo, G18); lần bị scope từ chối chưa
+    để lại dấu vết (→ G21).
+- [x] **G15. Thiếu index khóa ngoại, thiếu `ON DELETE CASCADE`, chưa có migration.**
   Sửa: index FK, cascade, bảng `schema_version` + migration đơn giản.
+  - ✅ **Đã sửa (F7)**: mọi khóa ngoại có index và `ON DELETE CASCADE` (riêng
+    `finding.service_id` là `SET NULL`); `Storage.delete_run()` xóa một run cùng mọi thứ bên
+    dưới. Schema có số phiên bản (`SCHEMA_VERSION = 2`, bảng `schema_version`): mở DB là tự
+    chạy các migration còn thiếu trong **một transaction** (hỏng giữa chừng → DB cũ nguyên
+    vẹn), sau khi **sao lưu** DB cũ ra `<db>.v<N>.bak`, và kiểm `PRAGMA foreign_key_check`
+    trước khi commit. DB do bản ReconKit mới hơn ghi thì từ chối mở. CLI mở DB **trước** khi
+    quét. Đã kiểm bằng cách migrate một DB v1 thật.
+  - Còn lại: `service` chưa có ràng buộc `UNIQUE (asset_id, port, protocol)`; bản sao lưu
+    không tự dọn.
 - [x] **G16. `Asset.ip` không bao giờ được điền.** (sửa cùng G1) ✅ F5: plugin nmap điền từ
   `<address addrtype="ipv4|ipv6">`.
 - [ ] **G21. Không có dấu vết kiểm toán về uỷ quyền.** (từ Bài 3)
