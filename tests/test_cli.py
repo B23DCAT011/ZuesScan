@@ -7,7 +7,7 @@ from conftest import FakePlugin, fake_resolver, lab_asset, lab_resolver
 
 from reconkit import cli
 from reconkit.plugins.base import ScanError
-from reconkit.schema import Service
+from reconkit.schema import RawOutput, Service
 from reconkit.storage import Storage
 
 LAB_SCOPE = "scanme.lab\n10.0.0.0/24\n"
@@ -54,6 +54,8 @@ def test_scan_end_to_end(
     assert "Scan run #1" in out
     assert "status=completed" in out
     assert "scanners: fake 1.0-fake" in out
+    assert "evidence: 22/tcp open: scanner reported product 'OpenSSH'" in out
+    assert "raw output kept: fake (fake-text, " in out
     assert "resolved: scanme.lab -> 10.0.0.5" in out
     assert "hosts: 1 " in out
     assert "scanme.lab (10.0.0.5)" in out
@@ -276,3 +278,67 @@ def test_scan_without_any_scanner_is_recorded_as_a_failed_run(
         run = store.load_run(1)
     assert run is not None
     assert run.skipped_plugins == ["fake"]
+
+
+# --- `reconkit raw`: getting the evidence back out (G13) -------------------------
+
+
+def _scan_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake: FakePlugin) -> Path:
+    db = tmp_path / "out.db"
+    monkeypatch.setattr(cli, "NmapPlugin", lambda: fake)
+    cli.main(["scan", "scanme.lab", "--scope", _scope_file(tmp_path), "--db", str(db)])
+    return db
+
+
+def test_raw_prints_the_stored_output_and_nothing_else_on_stdout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfdbinary: pytest.CaptureFixture[bytes]
+) -> None:
+    db = _scan_once(tmp_path, monkeypatch, FakePlugin([lab_asset()]))
+    capfdbinary.readouterr()  # drop what `scan` printed
+
+    code = cli.main(["raw", "1", "--db", str(db)])
+    captured = capfdbinary.readouterr()
+
+    assert code == 0
+    assert captured.out == b"fake scan of 10.0.0.5\n"  # pipeable: output only
+    assert b"command: fake 10.0.0.5" in captured.err
+    assert b"verified" in captured.err
+
+
+def test_raw_can_write_to_a_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    db = _scan_once(tmp_path, monkeypatch, FakePlugin([lab_asset()]))
+    out = tmp_path / "evidence.txt"
+
+    assert cli.main(["raw", "1", "--db", str(db), "--out", str(out)]) == 0
+    assert out.read_bytes() == b"fake scan of 10.0.0.5\n"
+
+
+def test_raw_of_a_failed_run_shows_what_the_scanner_printed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    printed = RawOutput(plugin="fake", format="fake-text", command=("fake",), content="<broken")
+    error = ScanError("unreadable output", plugin="fake", output=printed)
+    db = _scan_once(tmp_path, monkeypatch, FakePlugin([], error=error))
+    out = tmp_path / "evidence.txt"
+
+    assert cli.main(["raw", "1", "--db", str(db), "--out", str(out)]) == 0
+    assert out.read_text(encoding="utf-8") == "<broken"
+
+
+def test_raw_reports_missing_database_run_and_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    missing = tmp_path / "nope.db"
+    assert cli.main(["raw", "1", "--db", str(missing)]) == 2
+    assert "database not found" in capsys.readouterr().err
+    assert not missing.exists()  # asking for evidence must not create a database
+
+    error = ScanError("nmap timed out", plugin="fake")  # failed before printing anything
+    db = _scan_once(tmp_path, monkeypatch, FakePlugin([], error=error))
+    capsys.readouterr()
+    assert cli.main(["raw", "7", "--db", str(db)]) == 2
+    assert "no run #7" in capsys.readouterr().err
+    assert cli.main(["raw", "1", "--db", str(db)]) == 1
+    assert "run #1 has no raw output stored" in capsys.readouterr().err

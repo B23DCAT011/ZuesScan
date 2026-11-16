@@ -48,6 +48,32 @@ class ScanTarget:
 
 
 @dataclass(frozen=True, slots=True)
+class RawOutput:
+    """What a tool actually printed, untouched: the proof behind a run's results.
+
+    Everything else in a run is ReconKit's *reading* of this. Keeping the original
+    lets a person check a finding by hand, lets a parser bug be found after the fact,
+    and lets old scans be re-read when the parser learns something new.
+    """
+
+    plugin: str  # which scanner produced it, e.g. "nmap"
+    format: str  # how to read `content`, e.g. "nmap-xml"
+    command: tuple[str, ...]  # the exact argument list that was run
+    content: str  # the tool's output (stdout)
+    stderr: str = ""  # its warnings and errors
+
+    @property
+    def sha256(self) -> str:
+        """Hash of `content`: shows that stored evidence was not altered."""
+        return hashlib.sha256(self.content.encode("utf-8")).hexdigest()
+
+    @property
+    def size(self) -> int:
+        """Size of `content` in bytes (UTF-8)."""
+        return len(self.content.encode("utf-8"))
+
+
+@dataclass(frozen=True, slots=True)
 class Service:
     """An open port on an asset and the software fingerprinted behind it."""
 
@@ -83,7 +109,9 @@ class Finding:
     service: Service | None = None
     cve: str | None = None  # e.g. "CVE-2018-15473"
     description: str = ""
-    evidence: str = ""  # raw proof; NOT part of the fingerprint
+    # What was observed that led to this finding, in words a person can check
+    # against the run's raw output. NOT part of the fingerprint.
+    evidence: str = ""
     fingerprint: str = ""
     # The check that produced the finding when it is not a CVE: an identifier that
     # stays the same from run to run, e.g. a nuclei template id.

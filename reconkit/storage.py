@@ -13,16 +13,18 @@ so there is one way to build the schema and every migration is exercised by ever
 
 from __future__ import annotations
 
+import json
 import sqlite3
+import zlib
 from datetime import UTC, datetime
 from pathlib import Path
 
 from reconkit.orchestrator import RunStatus, ScanRun
-from reconkit.schema import Asset, Finding, Service, Severity
+from reconkit.schema import Asset, Finding, RawOutput, Service, Severity
 
 # The schema version this code reads and writes. Bump it together with a new entry
 # in `_MIGRATIONS`; never edit a migration that has already shipped.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class StorageError(Exception):
@@ -197,7 +199,27 @@ _V2 = (
 # not comparable, by fingerprint, with runs after it.
 _V3 = ("ALTER TABLE finding ADD COLUMN rule_id TEXT",)
 
-_MIGRATIONS: dict[int, tuple[str, ...]] = {1: _V1, 2: _V2, 3: _V3}
+# Version 4 (F9): the raw output of each scanner, kept as evidence (G13).
+# `content` is zlib-compressed (scanner XML shrinks about tenfold); `sha256` and `size`
+# describe the *uncompressed* text, so the evidence can be checked after reading.
+_V4 = (
+    """
+    CREATE TABLE scan_run_output (
+        id       INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id   INTEGER NOT NULL REFERENCES scan_run(id) ON DELETE CASCADE,
+        plugin   TEXT NOT NULL,
+        format   TEXT NOT NULL,
+        command  TEXT NOT NULL,
+        stderr   TEXT NOT NULL DEFAULT '',
+        size     INTEGER NOT NULL,
+        sha256   TEXT NOT NULL,
+        content  BLOB NOT NULL
+    )
+    """,
+    "CREATE INDEX idx_output_run ON scan_run_output(run_id)",
+)
+
+_MIGRATIONS: dict[int, tuple[str, ...]] = {1: _V1, 2: _V2, 3: _V3, 4: _V4}
 
 
 class Storage:
@@ -327,6 +349,7 @@ class Storage:
                 "INSERT INTO scan_run_out_of_scope (run_id, host) VALUES (?, ?)",
                 [(run_id, host) for host in run.out_of_scope],
             )
+            self._insert_outputs(run_id, run.raw_outputs)
             for asset in run.assets:
                 cur = self._conn.execute(
                     "INSERT INTO asset (run_id, host, ip) VALUES (?, ?, ?)",
@@ -407,6 +430,26 @@ class Storage:
             rows,
         )
 
+    def _insert_outputs(self, run_id: int, outputs: list[RawOutput]) -> None:
+        self._conn.executemany(
+            "INSERT INTO scan_run_output "
+            "(run_id, plugin, format, command, stderr, size, sha256, content) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    run_id,
+                    o.plugin,
+                    o.format,
+                    json.dumps(list(o.command)),
+                    o.stderr,
+                    o.size,
+                    o.sha256,
+                    zlib.compress(o.content.encode("utf-8")),
+                )
+                for o in outputs
+            ],
+        )
+
     def delete_run(self, run_id: int) -> bool:
         """Delete a run and everything recorded for it; False if there is no such run."""
         with self._conn:
@@ -453,6 +496,8 @@ class Storage:
             )
         ]
 
+        run.raw_outputs = self.outputs_for_run(run_id)
+
         services_by_id: dict[int, Service] = {}
         for a in self._conn.execute(
             "SELECT id, host, ip FROM asset WHERE run_id = ? ORDER BY id", (run_id,)
@@ -474,6 +519,36 @@ class Storage:
                 asset.findings.append(_finding(f, asset, services_by_id.get(f["service_id"])))
             run.assets.append(asset)
         return run
+
+    def outputs_for_run(self, run_id: int) -> list[RawOutput]:
+        """The raw scanner output kept for a run, checked against its stored hash."""
+        outputs = []
+        for row in self._conn.execute(
+            "SELECT id, plugin, format, command, stderr, sha256, content "
+            "FROM scan_run_output WHERE run_id = ? ORDER BY id",
+            (run_id,),
+        ).fetchall():
+            try:
+                content = zlib.decompress(row["content"]).decode("utf-8")
+            except (zlib.error, UnicodeDecodeError) as exc:
+                raise StorageError(
+                    f"raw output #{row['id']} of run {run_id} is unreadable: {exc}"
+                ) from exc
+            output = RawOutput(
+                plugin=row["plugin"],
+                format=row["format"],
+                command=tuple(json.loads(row["command"])),
+                content=content,
+                stderr=row["stderr"],
+            )
+            if output.sha256 != row["sha256"]:
+                # Evidence that no longer matches its hash is not evidence.
+                raise StorageError(
+                    f"raw output #{row['id']} of run {run_id} does not match its "
+                    "stored SHA-256: the database was altered or is damaged"
+                )
+            outputs.append(output)
+        return outputs
 
     def services_for_run(self, run_id: int) -> list[Service]:
         """The services recorded for a run, across all its hosts, by port."""

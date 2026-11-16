@@ -137,7 +137,7 @@ def _fake_run(monkeypatch: pytest.MonkeyPatch, outcome: object) -> None:
 def test_scan_returns_assets_on_success(monkeypatch: pytest.MonkeyPatch) -> None:
     done = subprocess.CompletedProcess(args=["nmap"], returncode=0, stdout=SAMPLE, stderr="")
     _fake_run(monkeypatch, done)
-    (asset,) = NmapPlugin().scan(LAB)
+    (asset,) = NmapPlugin().scan(LAB).assets
     assert (asset.host, asset.ip) == ("scanme.lab", "10.0.0.5")
     assert {s.port for s in asset.services} == {22, 80}
 
@@ -223,7 +223,7 @@ def test_scan_accepts_live_host_with_no_open_ports(monkeypatch: pytest.MonkeyPat
     )
     done = subprocess.CompletedProcess(args=["nmap"], returncode=0, stdout=xml, stderr="")
     _fake_run(monkeypatch, done)
-    (asset,) = NmapPlugin().scan(_ip_target("10.0.0.5"))
+    (asset,) = NmapPlugin().scan(_ip_target("10.0.0.5")).assets
     assert asset.ip == "10.0.0.5"
     assert asset.services == []
 
@@ -251,3 +251,51 @@ def test_unknown_version_is_none_never_an_error(
 ) -> None:
     _fake_run(monkeypatch, outcome)
     assert NmapPlugin().version() is None
+
+
+# --- evidence: nmap's own output is handed back untouched (G13) ------------------
+
+
+def test_scan_returns_the_raw_xml_and_the_exact_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    done = subprocess.CompletedProcess(["nmap"], 0, stdout=SAMPLE, stderr="Warning: slow\n")
+    _fake_run(monkeypatch, done)
+    result = NmapPlugin().scan(LAB)
+
+    (raw,) = result.raw
+    assert raw.plugin == "nmap"
+    assert raw.format == "nmap-xml"
+    assert raw.content == SAMPLE  # byte for byte what nmap printed
+    assert raw.command == tuple(NmapPlugin()._command(LAB))
+    assert raw.stderr == "Warning: slow"
+    # The assets are a reading of that same output.
+    assert [a.ip for a in NmapPlugin.parse_xml(raw.content, hostname="scanme.lab")] == [
+        a.ip for a in result.assets
+    ]
+
+
+def test_failed_scan_still_hands_back_what_nmap_printed(monkeypatch: pytest.MonkeyPatch) -> None:
+    # "No host responded" is our conclusion; the XML it was drawn from is kept so
+    # that the conclusion can be checked.
+    xml = '<nmaprun><runstats><hosts up="0" down="1" total="1"/></runstats></nmaprun>'
+    _fake_run(monkeypatch, subprocess.CompletedProcess(["nmap"], 0, stdout=xml, stderr=""))
+    with pytest.raises(ScanError) as caught:
+        NmapPlugin().scan(_ip_target("192.0.2.1"))
+    assert caught.value.output is not None
+    assert caught.value.output.content == xml
+
+
+def test_unreadable_output_is_kept_as_it_is(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_run(
+        monkeypatch, subprocess.CompletedProcess(["nmap"], 0, stdout="<nmaprun><host>", stderr="")
+    )
+    with pytest.raises(ScanError) as caught:
+        NmapPlugin().scan(LAB)
+    assert caught.value.output is not None
+    assert caught.value.output.content == "<nmaprun><host>"
+
+
+def test_scan_that_never_ran_has_no_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_run(monkeypatch, subprocess.TimeoutExpired(cmd="nmap", timeout=5))
+    with pytest.raises(ScanError) as caught:
+        NmapPlugin(timeout=5).scan(LAB)
+    assert caught.value.output is None

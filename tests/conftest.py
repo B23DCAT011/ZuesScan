@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from reconkit.schema import Asset, ScanTarget, Service
+from reconkit.plugins.base import ScanResult
+from reconkit.schema import Asset, RawOutput, ScanTarget, Service
 from reconkit.scope import ResolutionError, Resolver, Scope
 
 # The lab every test scans: one name, living at 10.0.0.5 inside an allowed /24.
@@ -57,12 +58,22 @@ class FakePlugin:
     def version(self) -> str | None:
         return self._version
 
-    def scan(self, target: ScanTarget) -> list[Asset]:
+    def scan(self, target: ScanTarget) -> ScanResult:
         self.seen.append(target)
         if self._error is not None:
             raise self._error
         # Hand out copies: the orchestrator merges into and adds findings to them.
-        return [
+        assets = [
             Asset(host=a.host, ip=a.ip, services=list(a.services), findings=list(a.findings))
             for a in self._assets
         ]
+        return ScanResult(assets=assets, raw=[self.raw(target)])
+
+    def raw(self, target: ScanTarget) -> RawOutput:
+        """The "tool output" this fake hands back for `target`."""
+        return RawOutput(
+            plugin=self.name,
+            format="fake-text",
+            command=(self.name, *target.addresses),
+            content=f"fake scan of {', '.join(target.addresses)}\n",
+        )

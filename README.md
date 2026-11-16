@@ -52,6 +52,17 @@ phiên bản của từng scanner đã chạy.
 Database có số phiên bản schema. Mở một DB cũ thì ReconKit tự nâng cấp, sau khi sao lưu
 bản cũ ra `<db>.v<N>.bak`; DB do bản ReconKit mới hơn tạo ra thì từ chối mở.
 
+Output gốc của scanner (XML của nmap) được giữ lại theo từng run làm bằng chứng, kèm mã băm
+SHA-256, kể cả khi lần quét thất bại. Lấy lại bằng:
+
+```bash
+reconkit raw 1 --db reconkit.db                 # in ra màn hình (pipe được)
+reconkit raw 1 --db reconkit.db --out run1.xml  # ghi ra file
+```
+
+> File DB chứa toàn bộ kết quả và output gốc của các lần quét: coi nó là dữ liệu nhạy cảm của
+> đợt kiểm thử, không chia sẻ và không commit.
+
 | Exit code | Ý nghĩa |
 |---|---|
 | 0 | Quét xong, kết quả đã lưu vào DB |

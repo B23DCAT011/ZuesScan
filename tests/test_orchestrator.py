@@ -6,7 +6,7 @@ from conftest import FakePlugin, fake_resolver, lab_asset, lab_resolver, lab_sco
 from reconkit.cve import CveSource, LocalCveSource
 from reconkit.orchestrator import NoPluginAvailableError, Orchestrator, RunStatus
 from reconkit.plugins.base import ScanError, ScannerPlugin
-from reconkit.schema import Asset, Finding, Service
+from reconkit.schema import Asset, Finding, RawOutput, Service
 from reconkit.scope import ResolutionError, Resolver, Scope, ScopeError
 
 OPENSSH_74 = Service(port=22, name="ssh", product="OpenSSH", version="7.4")
@@ -295,3 +295,34 @@ def test_failed_run_describes_a_missing_scanner() -> None:
     assert run.failed_plugin is None
     assert run.skipped_plugins == ["fake"]
     assert run.tool_versions == {}
+
+
+# --- evidence: raw scanner output travels with the run (G13) ---------------------
+
+
+def test_run_keeps_the_raw_output_of_every_scanner() -> None:
+    first = FakePlugin([lab_asset(Service(port=22))])
+    second = FakePlugin([lab_asset(Service(port=80))])
+    second.name = "other"
+    run = _orch([first, second]).run("scanme.lab")
+    assert [o.plugin for o in run.raw_outputs] == ["fake", "other"]
+    assert run.raw_outputs[0] == first.raw(first.seen[0])
+
+
+def test_raw_output_is_kept_even_for_hosts_dropped_as_out_of_scope() -> None:
+    # The record of what the tool did is not edited, even when its result is.
+    plugin = FakePlugin([lab_asset(host="192.0.2.50", ip="192.0.2.50")])
+    run = _orch([plugin]).run("10.0.0.0/24")
+    assert run.assets == []
+    assert run.out_of_scope == ["192.0.2.50"]
+    assert len(run.raw_outputs) == 1
+
+
+def test_failed_run_keeps_what_the_scanner_printed() -> None:
+    printed = RawOutput(plugin="fake", format="fake-text", command=("fake",), content="garbage")
+    error = ScanError("unreadable output", plugin="fake", output=printed)
+    orch = _orch([FakePlugin([], error=error)])
+    with pytest.raises(ScanError) as caught:
+        orch.run("scanme.lab")
+    run = orch.failed_run("scanme.lab", "2026-01-01T00:00:00+00:00", caught.value)
+    assert run.raw_outputs == [printed]

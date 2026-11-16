@@ -21,7 +21,7 @@ from enum import StrEnum
 from reconkit import __version__
 from reconkit.cve import CveSource
 from reconkit.plugins.base import ScanError, ScannerPlugin
-from reconkit.schema import Asset, Finding, ScanTarget
+from reconkit.schema import Asset, Finding, RawOutput, ScanTarget
 from reconkit.scope import Resolver, Scope
 
 
@@ -63,6 +63,8 @@ class ScanRun:
     # The scanner whose failure failed the run, if it was a scanner.
     failed_plugin: str | None = None
     reconkit_version: str | None = __version__
+    # What each scanner printed, untouched: the evidence behind everything above.
+    raw_outputs: list[RawOutput] = field(default_factory=list)
     # Plugins that were configured but could not run; the result is partial.
     skipped_plugins: list[str] = field(default_factory=list)
     # What the scope guard authorised for this run: resolved addresses, exclusions.
@@ -103,8 +105,13 @@ class Orchestrator:
         #    What several plugins say about the same host is merged into one asset.
         assets: list[Asset] = []
         out_of_scope: list[str] = []
+        raw_outputs: list[RawOutput] = []
         for plugin in runnable:
-            for found in plugin.scan(plan):
+            result = plugin.scan(plan)
+            # Kept whole, including what it says about hosts dropped just below:
+            # it is the record of what the tool really did.
+            raw_outputs.extend(result.raw)
+            for found in result.assets:
                 # Defence in depth: never trust a tool to stay inside its target.
                 # A host it reports outside the scope is dropped, and reported.
                 if not self.scope.is_allowed(found.ip or found.host):
@@ -144,6 +151,7 @@ class Orchestrator:
             skipped_plugins=skipped,
             plan=plan,
             out_of_scope=out_of_scope,
+            raw_outputs=raw_outputs,
         )
 
     def failed_run(self, target: str, started_at: str, error: Exception) -> ScanRun:
@@ -156,10 +164,13 @@ class Orchestrator:
         runnable, skipped = self._split_plugins()
         message = str(error)
         failed_plugin = None
+        raw_outputs: list[RawOutput] = []
         if isinstance(error, ScanError):
             failed_plugin = error.plugin
             if error.stderr:
                 message = f"{message}\n{error.stderr}"
+            if error.output is not None:
+                raw_outputs.append(error.output)
         return ScanRun(
             target=target,
             started_at=started_at,
@@ -169,6 +180,7 @@ class Orchestrator:
             tool_versions={p.name: p.version() for p in runnable},
             failed_plugin=failed_plugin,
             skipped_plugins=skipped,
+            raw_outputs=raw_outputs,
         )
 
     def _split_plugins(self) -> tuple[list[ScannerPlugin], list[str]]:

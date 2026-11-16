@@ -1,8 +1,9 @@
 """nmap adapter — port/service scan via `nmap -oX`.
 
-`scan()` runs nmap and turns its XML into one `Asset` per host; `parse_xml()` does the
-same from an XML string, as a pure function, so the parsing logic is tested without
-nmap installed (see tests/data/nmap_sample.xml, nmap_two_hosts.xml).
+`scan()` runs nmap and turns its XML into one `Asset` per host, handing the XML itself
+back as evidence; `parse_xml()` does the parsing from an XML string, as a pure
+function, so the parsing logic is tested without nmap installed (see
+tests/data/nmap_sample.xml, nmap_two_hosts.xml).
 
 Safety: the scope guard decides the exact addresses to scan *before* a plugin is
 called, and nmap receives those addresses, never a name it would resolve again. nmap
@@ -17,8 +18,8 @@ import shutil
 import subprocess
 from xml.etree import ElementTree as ET
 
-from reconkit.plugins.base import ScanError
-from reconkit.schema import Asset, ScanTarget, Service
+from reconkit.plugins.base import ScanError, ScanResult
+from reconkit.schema import Asset, RawOutput, ScanTarget, Service
 
 
 class NmapPlugin:
@@ -56,17 +57,19 @@ class NmapPlugin:
         exclude = ["--exclude", ",".join(target.exclude)] if target.exclude else []
         return ["nmap", *self.extra_args, "-oX", "-", *exclude, *target.addresses]
 
-    def scan(self, target: ScanTarget) -> list[Asset]:
-        """Run nmap against `target`; return one `Asset` per host that responded.
+    def scan(self, target: ScanTarget) -> ScanResult:
+        """Run nmap against `target`; return one `Asset` per host that responded,
+        and nmap's XML as evidence.
 
         Every failure surfaces as `ScanError`.
         """
         asked = target.requested
         if not self.is_available():
             raise ScanError("nmap is not installed or not on PATH", plugin=self.name)
+        command = self._command(target)
         try:
             proc = subprocess.run(
-                self._command(target),
+                command,
                 capture_output=True,
                 # nmap writes UTF-8 XML; decode it as such instead of the Windows
                 # locale codepage, and never crash on a stray byte in a banner.
@@ -86,12 +89,16 @@ class NmapPlugin:
                 f"nmap exited with code {exc.returncode} scanning {asked}",
                 plugin=self.name,
                 stderr=stderr,
+                output=self._raw(command, exc.stdout or "", exc.stderr or ""),
             ) from exc
         except OSError as exc:
             # The binary vanished or is not executable between the check and the call.
             raise ScanError(f"could not start nmap: {exc}", plugin=self.name) from exc
 
         stderr = proc.stderr.strip() or None
+        # From here on nmap has said something: whatever we conclude from it, right
+        # or wrong, the output itself is kept.
+        raw = self._raw(command, proc.stdout, proc.stderr)
         try:
             root = ET.fromstring(proc.stdout)
         except ET.ParseError as exc:
@@ -100,6 +107,7 @@ class NmapPlugin:
                 f"nmap produced unreadable XML scanning {asked}: {exc}",
                 plugin=self.name,
                 stderr=stderr,
+                output=raw,
             ) from exc
 
         # nmap exits 0 even when it examined nothing, so the exit code alone cannot
@@ -112,6 +120,7 @@ class NmapPlugin:
                     f"nmap scanned 0 hosts for {asked}",
                     plugin=self.name,
                     stderr=stderr,
+                    output=raw,
                 )
             if up == 0:
                 raise ScanError(
@@ -119,8 +128,18 @@ class NmapPlugin:
                     "down, or blocking nmap's host discovery",
                     plugin=self.name,
                     stderr=stderr,
+                    output=raw,
                 )
-        return self._assets(root, hostname=target.hostname)
+        return ScanResult(assets=self._assets(root, hostname=target.hostname), raw=[raw])
+
+    def _raw(self, command: list[str], stdout: str, stderr: str) -> RawOutput:
+        return RawOutput(
+            plugin=self.name,
+            format="nmap-xml",
+            command=tuple(command),
+            content=stdout,
+            stderr=stderr.strip(),
+        )
 
     @staticmethod
     def _host_counts(root: ET.Element) -> tuple[int, int] | None:

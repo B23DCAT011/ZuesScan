@@ -39,3 +39,22 @@ def test_finding_carries_service_for_fingerprint() -> None:
     finding = src.find(svc, "h")[0]
     assert finding.service == svc
     assert finding.severity == Severity.CRITICAL
+
+
+def test_finding_says_what_was_observed_and_how_it_matched() -> None:
+    # G13: a finding must be checkable by a person against the scanner's output.
+    svc = Service(
+        port=22,
+        name="ssh",
+        product="OpenSSH",
+        version="7.4",
+        cpe="cpe:/a:openbsd:openssh:7.4",
+        banner="OpenSSH 7.4 protocol 2.0",
+    )
+    evidence = LocalCveSource().find(svc, "h")[0].evidence
+    assert "22/tcp open" in evidence
+    assert "product 'OpenSSH'" in evidence and "version '7.4'" in evidence
+    assert "cpe:/a:openbsd:openssh:7.4" in evidence
+    assert "banner 'OpenSSH 7.4 protocol 2.0'" in evidence
+    assert "local-seed" in evidence
+    assert "not verified by exploitation" in evidence  # an inference, and it says so

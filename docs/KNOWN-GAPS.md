@@ -144,8 +144,25 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       định danh → làm cùng plugin nuclei.
     - Finding không có CVE lẫn `rule_id` vẫn định danh bằng title (đã chuẩn hóa hoa/thường
       và khoảng trắng) — plugin mới phải điền `rule_id`.
-- [ ] **G13. Không lưu bằng chứng** (`evidence` rỗng, XML nmap bị bỏ).
+- [x] **G13. Không lưu bằng chứng** (`evidence` rỗng, XML nmap bị bỏ).
   Sửa: lưu output gốc của tool theo run; điền `evidence` cho finding.
+  - ✅ **Đã sửa (F9)**: hợp đồng plugin đổi thành `scan(target) -> ScanResult` (danh sách
+    `Asset` + `RawOutput`: output gốc của tool, đúng từng byte, kèm dòng lệnh đã chạy và
+    stderr). Mỗi run lưu output vào bảng `scan_run_output` (schema DB v4): nén zlib, kèm
+    kích thước và **SHA-256** của bản gốc; khi đọc ra thì kiểm lại mã băm, lệch → từ chối
+    (bằng chứng đã bị sửa hoặc hỏng). Lần quét **thất bại** cũng giữ output nếu tool đã kịp in
+    ra (XML hỏng, 0 host, không host nào trả lời). Lệnh mới `reconkit raw <run id>` lấy lại
+    output (stdout chỉ có output, pipe được; hoặc `--out file`). Finding của bước CVE có
+    `evidence`: cổng, product / version / CPE / banner scanner báo, khớp với mục nào của nguồn
+    CVE, và ghi rõ là *suy luận theo phiên bản, chưa kiểm chứng bằng khai thác*.
+  - Còn lại:
+    - Output gốc chứa cả dữ liệu về host ngoài scope mà kết quả đã loại (cố ý: đó là ghi
+      nhận tool đã thực sự làm gì) và có thể chứa banner nhạy cảm → file DB phải được bảo vệ
+      như dữ liệu kiểm thử; chưa có mã hóa, chưa có chính sách xóa sau N ngày (→ Giai đoạn 3).
+    - Chưa giới hạn kích thước output; quét `-p-` cả dải lớn có thể vài chục MB mỗi run.
+    - Finding chưa trỏ tới *đoạn* cụ thể trong output gốc, chỉ mô tả bằng chữ.
+    - Mã băm chống sửa nhầm / hỏng dữ liệu, **không** chống người có quyền ghi DB (họ sửa được
+      cả mã băm). Muốn chống thì phải ký số hoặc lưu mã băm ở nơi khác (→ G21).
 - [x] **G14. `scan_run` không có trạng thái / lỗi / phiên bản tool.**
   Sửa: thêm `status`, `error`, `tool_version`.
   - ✅ **Đã sửa (F7)**: `scan_run` có `status` (`completed` / `partial` / `failed`, có ràng

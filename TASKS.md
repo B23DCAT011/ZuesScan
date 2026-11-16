@@ -20,7 +20,7 @@ Cập nhật lần cuối: 2026-11-16.
 - [x] `feat/cve` — bước CVE offline, nguồn CVE cắm được. (PR #6)
 - [x] `docs/known-gaps` — rà soát điểm yếu + lộ trình này. (PR #8)
 
-## Giai đoạn 1.5 — Sửa nền móng (đang làm)
+## Giai đoạn 1.5 — Sửa nền móng ✅
 
 Sửa **trước khi** thêm tính năng mới, vì những thứ này càng để lâu càng khó sửa: hợp đồng
 plugin (mọi plugin sau này phải theo), schema DB và fingerprint (dữ liệu tích lũy theo
@@ -36,9 +36,9 @@ format cũ), và lớp an toàn scope.
 | F6 ✅ | `fix/scope-resolve` | G4 (phần DNS) — phân giải 1 lần, kiểm mọi IP, quét bằng IP, `--exclude`, kiểm lại sau quét | Cần F2 + F5 (có danh sách host để kiểm lại) |
 | F7 ✅ | `refactor/storage-schema` | G5 + G14 + G15 — `finding.service_id`, `scan_run.status/error`, phiên bản tool theo từng scanner, index FK, cascade, `schema_version` + migration; lần quét thất bại được lưu thành run `failed` | Đổi schema DB trước khi có dữ liệu thật tích lũy |
 | F8 ✅ | `fix/fingerprint-identity` | G12 — fingerprint theo IP + port + protocol + CVE/rule id, có số công thức (`v2:`); orchestrator là nơi duy nhất đặt fingerprint | Phải ổn định trước `feat/diff` |
-| F9 | `feat/evidence` | G13 — lưu output gốc của tool, điền `evidence` | Cần F7 (schema) |
+| F9 ✅ | `feat/evidence` | G13 — plugin trả `ScanResult` kèm output gốc; lưu nén + SHA-256 theo run; `reconkit raw`; điền `evidence` | Cần F7 (schema) |
 
-## Cột mốc M1 — Báo cáo HTML có bản đồ (sau F9)
+## Cột mốc M1 — Báo cáo HTML có bản đồ (tiếp theo)
 
 Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây web server. Chỉ làm được sau F5
 (dữ liệu theo từng host) và F7 (finding gắn với service).
