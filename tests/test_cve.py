@@ -11,7 +11,7 @@ def test_matches_known_product_version() -> None:
     assert len(findings) == 1
     assert findings[0].cve == "CVE-2018-15473"
     assert findings[0].severity == Severity.MEDIUM
-    assert findings[0].fingerprint  # fingerprint was computed
+    assert findings[0].fingerprint == ""  # the orchestrator fingerprints, not the source
 
 
 def test_match_is_case_insensitive_on_product() -> None:

@@ -7,14 +7,16 @@ Three nested entities describe what a scan discovers:
            └─ Finding   something worth reporting about that service (e.g. a CVE)
 
 Each `Finding` carries a stable `fingerprint`: a hash of its *identifying* fields
-only, so the same issue hashes identically across scans. That is what later lets us
-diff runs — detect a reappearing issue (a fake fix) or a brand-new one — without
-re-reading the whole database. See GHI-CHU.md section 5.
+only (which machine, which port, which issue), so the same issue hashes identically
+across scans. That is what later lets us diff runs — detect a reappearing issue (a
+fake fix) or a brand-new one — without re-reading the whole database. See GHI-CHU.md
+section 5 and docs/LO-TRINH-HOC.md, lesson 4.
 """
 
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -59,13 +61,20 @@ class Service:
     banner: str | None = None
 
 
+# Which recipe a fingerprint was made with. Fingerprints are only comparable within
+# one scheme, so every fingerprint says which one it is ("v2:<sha256>"). Scheme 1
+# (plain hex, no prefix) also hashed the title, product and version. Bump this whenever
+# `Finding.identity()` changes what it returns.
+FINGERPRINT_SCHEME = 2
+
+
 @dataclass(slots=True)
 class Finding:
     """Something worth reporting about a service (a CVE match, a weak config, ...).
 
-    `fingerprint` is filled by :meth:`compute_fingerprint` from the identifying
-    fields; `evidence` and anything volatile (timestamps, session ids) are
-    deliberately excluded so the hash stays stable across scans.
+    `fingerprint` answers one question across scans: "is this the same issue as last
+    time?". It is derived from *where* the issue is and *which* issue it is, and from
+    nothing a person may reword or a patch may change — see :meth:`identity`.
     """
 
     asset: str  # host the finding belongs to, e.g. "api.example.com"
@@ -76,31 +85,61 @@ class Finding:
     description: str = ""
     evidence: str = ""  # raw proof; NOT part of the fingerprint
     fingerprint: str = ""
+    # The check that produced the finding when it is not a CVE: an identifier that
+    # stays the same from run to run, e.g. a nuclei template id.
+    rule_id: str | None = None
+    # Address of the host; the orchestrator fills it in from the asset.
+    ip: str | None = None
 
     def identity(self) -> dict[str, str | int | None]:
-        """The identifying fields a fingerprint is derived from.
+        """What makes this finding *this* finding, from one scan to the next.
 
-        Chosen so that the *same vulnerability on the same service* produces the
-        same dict on every run. Noisy fields (evidence, severity score drift,
-        timestamps) are excluded on purpose.
+        - **where**: the machine (its address; its name only if no address is known)
+          and the port + protocol. One name can front several machines, and one
+          machine can be scanned by name or by address: the address is the machine.
+        - **what**: the CVE, else the rule id of the check, else — for a finding with
+          neither — its title.
+
+        Deliberately left out: the title and description (rewording an entry must not
+        turn an old issue into a new one), severity (scores get revised), evidence,
+        and the product version — a server upgraded from one vulnerable version to
+        another still has the same open issue, not a new one.
         """
         svc = self.service
         return {
-            "asset": self.asset,
-            "title": self.title,
-            "cve": self.cve,
+            "scheme": FINGERPRINT_SCHEME,
+            "asset": _asset_key(self.ip, self.asset),
             "port": svc.port if svc else None,
-            "protocol": svc.protocol if svc else None,
-            "product": svc.product if svc else None,
-            "version": svc.version if svc else None,
+            "protocol": svc.protocol.lower() if svc else None,
+            "check": self._check_key(),
         }
 
+    def _check_key(self) -> str:
+        if self.cve and self.cve.strip():
+            return f"cve:{self.cve.strip().upper()}"
+        if self.rule_id and self.rule_id.strip():
+            return f"rule:{self.rule_id.strip()}"
+        # Last resort, and a weak one: the wording *is* the identity here. A check
+        # that reports neither a CVE nor a rule id should be given a rule id.
+        return f"title:{' '.join(self.title.split()).casefold()}"
+
     def compute_fingerprint(self) -> str:
-        """Return a stable SHA-256 over this finding's identity (and set it)."""
+        """Return this finding's fingerprint, "v<scheme>:<sha256 hex>" (and set it)."""
         canonical = json.dumps(self.identity(), sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-        self.fingerprint = digest
-        return digest
+        self.fingerprint = f"v{FINGERPRINT_SCHEME}:{digest}"
+        return self.fingerprint
+
+
+def _asset_key(ip: str | None, host: str) -> str:
+    """One spelling per machine: the address if known, else the name."""
+    if ip:
+        try:
+            # "2001:DB8::1" and "2001:db8:0:0:0:0:0:1" are the same address.
+            return str(ipaddress.ip_address(ip))
+        except ValueError:
+            return ip.strip().lower()
+    return host.strip().lower().rstrip(".")
 
 
 @dataclass(slots=True)

@@ -175,6 +175,52 @@ def test_no_cve_source_means_no_findings() -> None:
     assert run.assets[0].findings == []
 
 
+# --- fingerprints: one identity per issue, set in one place (G12) -----------------
+
+
+def test_every_finding_is_fingerprinted_against_the_merged_asset() -> None:
+    # A plugin names the host its own way and knows no address; the finding must
+    # still be identified by the machine the orchestrator settled on.
+    issue = Finding(asset="10.0.0.5", title="exposed admin panel", rule_id="admin-panel")
+    checks = FakePlugin([Asset(host="10.0.0.5", ip="10.0.0.5", findings=[issue])])
+    ports = FakePlugin([lab_asset(OPENSSH_74)])
+    run = _orch([ports, checks], cve_source=LocalCveSource()).run("scanme.lab")
+
+    findings = run.assets[0].findings
+    assert {f.rule_id or f.cve for f in findings} == {"admin-panel", "CVE-2018-15473"}
+    for finding in findings:
+        assert (finding.asset, finding.ip) == ("scanme.lab", "10.0.0.5")
+        assert finding.fingerprint.startswith("v2:")
+        assert finding.fingerprint == finding.compute_fingerprint()
+
+
+def test_scan_by_name_and_scan_by_address_give_the_same_fingerprint() -> None:
+    # What `feat/diff` needs: Monday's range scan and Tuesday's scan of one name
+    # must recognise the same issue.
+    by_name = _orch([FakePlugin([lab_asset(OPENSSH_74)])], cve_source=LocalCveSource()).run(
+        "scanme.lab"
+    )
+    by_address = _orch(
+        [FakePlugin([lab_asset(OPENSSH_74, host="10.0.0.5")])], cve_source=LocalCveSource()
+    ).run("10.0.0.5")
+    assert by_name.assets[0].findings[0].fingerprint == by_address.assets[0].findings[0].fingerprint
+
+
+def test_same_issue_reported_by_two_tools_is_one_finding() -> None:
+    def cve_report() -> Finding:
+        return Finding(
+            asset="scanme.lab", title="tool wording", service=OPENSSH_74, cve="CVE-2018-15473"
+        )
+
+    first = FakePlugin(
+        [Asset(host="scanme.lab", ip="10.0.0.5", services=[OPENSSH_74], findings=[cve_report()])]
+    )
+    second = FakePlugin([Asset(host="scanme.lab", ip="10.0.0.5", findings=[cve_report()])])
+    run = _orch([first, second], cve_source=LocalCveSource()).run("scanme.lab")
+    # Two plugins and the CVE stage all found CVE-2018-15473 on 22/tcp.
+    assert [f.cve for f in run.assets[0].findings] == ["CVE-2018-15473"]
+
+
 # --- plugin availability (G2) ----------------------------------------------------
 
 

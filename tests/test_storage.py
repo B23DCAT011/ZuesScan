@@ -15,7 +15,12 @@ HTTP = Service(port=80, name="http", product="nginx", version="1.18.0")
 
 def _finding(host: str, service: Service | None, title: str = "OpenSSH 7.4") -> Finding:
     finding = Finding(
-        asset=host, title=title, severity=Severity.MEDIUM, service=service, cve="CVE-2018-15473"
+        asset=host,
+        ip="10.0.0.5" if host == "scanme.lab" else host,  # as the orchestrator sets it
+        title=title,
+        severity=Severity.MEDIUM,
+        service=service,
+        cve="CVE-2018-15473",
     )
     finding.compute_fingerprint()
     return finding
@@ -56,7 +61,7 @@ def test_save_and_read_back_findings(tmp_path: Path) -> None:
         findings = store.findings_for_run(run_id)
     assert len(findings) == 1
     assert findings[0].cve == "CVE-2018-15473"
-    assert len(findings[0].fingerprint) == 64
+    assert findings[0].fingerprint.startswith("v2:")
 
 
 def test_run_ids_increment(tmp_path: Path) -> None:
@@ -126,6 +131,19 @@ def test_findings_point_at_the_service_of_their_own_host(tmp_path: Path) -> None
         ("10.0.0.5", "OpenSSH 7.4", SSH),
         ("10.0.0.7", "dropbear issue", other_ssh),
     ]
+
+
+def test_rule_id_is_stored(tmp_path: Path) -> None:
+    run = _make_run()
+    finding = Finding(
+        asset="scanme.lab", ip="10.0.0.5", title="Admin panel exposed", rule_id="exposed-admin"
+    )
+    run.assets[0].findings = [finding]
+    with _store(tmp_path) as store:
+        (loaded,) = store.findings_for_run(store.save_run(run))
+    assert loaded.rule_id == "exposed-admin"
+    assert loaded.cve is None
+    assert loaded == finding  # fingerprinted on save, and read back identical
 
 
 def test_finding_without_a_service_is_kept_as_such(tmp_path: Path) -> None:
@@ -301,7 +319,9 @@ def test_v1_database_is_migrated_with_its_data(tmp_path: Path) -> None:
         assert (asset.host, asset.ip) == ("scanme.lab", "10.0.0.5")
         assert [s.cpe for s in asset.services] == ["cpe:/a:openbsd:openssh:7.4"]
         (finding,) = asset.findings
+        # An old fingerprint is kept as it is (scheme 1, no prefix), not re-labelled.
         assert finding.fingerprint == "abc123"
+        assert finding.rule_id is None
         assert finding.service is None  # v1 never knew; the migration does not guess
         # New runs carry on from the old ids.
         assert store.save_run(_make_run()) == 8
