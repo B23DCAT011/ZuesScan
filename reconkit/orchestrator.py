@@ -8,16 +8,19 @@ It knows the *order of stages*, not the details of any tool:
 One target can be many hosts (a CIDR range), so a run holds one `Asset` per host.
 
 A scan that could not run is an error, never an empty result: a run with zero
-services must mean "we looked and found nothing", not "we did not look".
+services must mean "we looked and found nothing", not "we did not look". Such a scan
+is still worth remembering, as a run whose status is `failed` (see `failed_run`).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from enum import StrEnum
 
+from reconkit import __version__
 from reconkit.cve import CveSource
-from reconkit.plugins.base import ScannerPlugin
+from reconkit.plugins.base import ScanError, ScannerPlugin
 from reconkit.schema import Asset, ScanTarget
 from reconkit.scope import Resolver, Scope
 
@@ -35,6 +38,14 @@ class NoPluginAvailableError(Exception):
         super().__init__(message)
 
 
+class RunStatus(StrEnum):
+    """How a scan run ended."""
+
+    COMPLETED = "completed"  # every configured scanner ran
+    PARTIAL = "partial"  # some scanners could not run: the result has blind spots
+    FAILED = "failed"  # nothing trustworthy was produced; see `ScanRun.error`
+
+
 @dataclass
 class ScanRun:
     """The result of one scan of one target: one asset per host found."""
@@ -43,6 +54,15 @@ class ScanRun:
     started_at: str
     finished_at: str
     assets: list[Asset] = field(default_factory=list)
+    status: RunStatus = RunStatus.COMPLETED
+    # Why the run failed (only when `status` is FAILED).
+    error: str | None = None
+    # Version of each scanner that was started, e.g. {"nmap": "7.92"}: results are
+    # only comparable between runs if you know which tool produced them.
+    tool_versions: dict[str, str | None] = field(default_factory=dict)
+    # The scanner whose failure failed the run, if it was a scanner.
+    failed_plugin: str | None = None
+    reconkit_version: str | None = __version__
     # Plugins that were configured but could not run; the result is partial.
     skipped_plugins: list[str] = field(default_factory=list)
     # What the scope guard authorised for this run: resolved addresses, exclusions.
@@ -72,12 +92,12 @@ class Orchestrator:
         plan = self.scope.plan(target, self.resolver)
 
         # 2. Fail loudly if nothing can scan: saving an empty run would look "clean".
-        runnable = [p for p in self.plugins if p.is_available()]
-        skipped = [p.name for p in self.plugins if p not in runnable]
+        runnable, skipped = self._split_plugins()
         if not runnable:
             raise NoPluginAvailableError(skipped)
 
-        started = datetime.now(UTC).isoformat()
+        started = now()
+        tool_versions = {p.name: p.version() for p in runnable}
 
         # 3. Run every available plugin; each reports one asset per host it found.
         #    What several plugins say about the same host is merged into one asset.
@@ -102,16 +122,53 @@ class Orchestrator:
                 for service in asset.services:
                     asset.findings.extend(self.cve_source.find(service, asset.host))
 
-        finished = datetime.now(UTC).isoformat()
         return ScanRun(
             target=target,
             started_at=started,
-            finished_at=finished,
+            finished_at=now(),
             assets=assets,
+            status=RunStatus.PARTIAL if skipped else RunStatus.COMPLETED,
+            tool_versions=tool_versions,
             skipped_plugins=skipped,
             plan=plan,
             out_of_scope=out_of_scope,
         )
+
+    def failed_run(self, target: str, started_at: str, error: Exception) -> ScanRun:
+        """Describe a scan that `run()` gave up on, so that the failure can be stored.
+
+        A scan that fails every night must leave a trace: with no record at all, "the
+        scan is broken" looks exactly like "nobody scanned". The run carries the error
+        and no asset, so it can never be read as "scanned, nothing found".
+        """
+        runnable, skipped = self._split_plugins()
+        message = str(error)
+        failed_plugin = None
+        if isinstance(error, ScanError):
+            failed_plugin = error.plugin
+            if error.stderr:
+                message = f"{message}\n{error.stderr}"
+        return ScanRun(
+            target=target,
+            started_at=started_at,
+            finished_at=now(),
+            status=RunStatus.FAILED,
+            error=message,
+            tool_versions={p.name: p.version() for p in runnable},
+            failed_plugin=failed_plugin,
+            skipped_plugins=skipped,
+        )
+
+    def _split_plugins(self) -> tuple[list[ScannerPlugin], list[str]]:
+        """The plugins that can run here, and the names of those that cannot."""
+        runnable = [p for p in self.plugins if p.is_available()]
+        skipped = [p.name for p in self.plugins if p not in runnable]
+        return runnable, skipped
+
+
+def now() -> str:
+    """The current time, as stored in a run: ISO 8601, UTC."""
+    return datetime.now(UTC).isoformat()
 
 
 def _same_host(a: Asset, b: Asset) -> bool:

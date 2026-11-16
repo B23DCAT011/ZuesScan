@@ -4,8 +4,8 @@ import pytest
 from conftest import FakePlugin, fake_resolver, lab_asset, lab_resolver, lab_scope
 
 from reconkit.cve import CveSource, LocalCveSource
-from reconkit.orchestrator import NoPluginAvailableError, Orchestrator
-from reconkit.plugins.base import ScannerPlugin
+from reconkit.orchestrator import NoPluginAvailableError, Orchestrator, RunStatus
+from reconkit.plugins.base import ScanError, ScannerPlugin
 from reconkit.schema import Asset, Finding, Service
 from reconkit.scope import ResolutionError, Resolver, Scope, ScopeError
 
@@ -201,3 +201,51 @@ def test_scope_is_checked_before_plugin_availability() -> None:
     missing = FakePlugin([], available=False)
     with pytest.raises(ScopeError):
         _orch([missing]).run("evil.example.com")
+
+
+# --- what a run records about itself (G14) ---------------------------------------
+
+
+def test_run_records_status_and_scanner_versions() -> None:
+    run = _orch([FakePlugin([lab_asset()], version="7.92")]).run("scanme.lab")
+    assert run.status is RunStatus.COMPLETED
+    assert run.error is None
+    assert run.tool_versions == {"fake": "7.92"}
+
+
+def test_run_with_a_skipped_scanner_is_partial() -> None:
+    present = FakePlugin([lab_asset()])
+    missing = FakePlugin([], available=False)
+    missing.name = "nuclei"
+    run = _orch([present, missing]).run("scanme.lab")
+    assert run.status is RunStatus.PARTIAL
+    assert run.skipped_plugins == ["nuclei"]
+    assert run.tool_versions == {"fake": "1.0-fake"}  # only scanners that were started
+
+
+def test_failed_run_describes_a_scanner_failure() -> None:
+    error = ScanError("nmap exited with code 1", plugin="fake", stderr="requires root")
+    orch = _orch([FakePlugin([], error=error, version="7.92")])
+    with pytest.raises(ScanError) as caught:
+        orch.run("scanme.lab")
+
+    run = orch.failed_run("scanme.lab", "2026-01-01T00:00:00+00:00", caught.value)
+    assert run.status is RunStatus.FAILED
+    assert run.error == "nmap exited with code 1\nrequires root"
+    assert run.failed_plugin == "fake"
+    assert run.tool_versions == {"fake": "7.92"}
+    assert run.started_at == "2026-01-01T00:00:00+00:00"
+    assert run.assets == []  # never a result
+
+
+def test_failed_run_describes_a_missing_scanner() -> None:
+    orch = _orch([FakePlugin([], available=False)])
+    with pytest.raises(NoPluginAvailableError) as caught:
+        orch.run("scanme.lab")
+
+    run = orch.failed_run("scanme.lab", "2026-01-01T00:00:00+00:00", caught.value)
+    assert run.status is RunStatus.FAILED
+    assert run.error == "no scanner available: fake not installed or not on PATH"
+    assert run.failed_plugin is None
+    assert run.skipped_plugins == ["fake"]
+    assert run.tool_versions == {}

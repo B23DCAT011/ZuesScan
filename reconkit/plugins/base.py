@@ -42,6 +42,14 @@ class ScannerPlugin(Protocol):
         """True if the underlying binary is installed and runnable."""
         ...
 
+    def version(self) -> str | None:
+        """The version of the underlying tool, or None if it cannot be determined.
+
+        Recorded with every run: two runs are only comparable if you know which
+        version of the tool produced each. Must not raise.
+        """
+        ...
+
     def scan(self, target: ScanTarget) -> list[Asset]:
         """Scan `target.addresses` (minus `target.exclude`); return one `Asset` per host.
 

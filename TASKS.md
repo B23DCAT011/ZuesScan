@@ -8,7 +8,7 @@ Quy trình: mỗi task = 1 nhánh = 1 PR, merge trên GitHub theo thứ tự dư
 song song: [`docs/LO-TRINH-HOC.md`](docs/LO-TRINH-HOC.md). Tầm nhìn & các quyết định thiết kế
 đã chốt (D1–D8): [`docs/THIET-KE.md`](docs/THIET-KE.md).
 
-Cập nhật lần cuối: 2026-11-07.
+Cập nhật lần cuối: 2026-11-16.
 
 ## Giai đoạn 1 — Lát cắt dọc (CLI) ✅
 
@@ -34,7 +34,7 @@ format cũ), và lớp an toàn scope.
 | F4 ✅ | `fix/no-plugin-available` | G2 — không plugin nào chạy được → lỗi, không lưu run "sạch" | Nhỏ; sửa cả câu sai trong README |
 | F5 ✅ | `refactor/per-host-assets` | G1 + G16 — plugin trả kết quả theo từng host, điền `Asset.ip` | Đổi hợp đồng plugin: phải xong trước khi thêm subfinder/nuclei |
 | F6 ✅ | `fix/scope-resolve` | G4 (phần DNS) — phân giải 1 lần, kiểm mọi IP, quét bằng IP, `--exclude`, kiểm lại sau quét | Cần F2 + F5 (có danh sách host để kiểm lại) |
-| F7 | `refactor/storage-schema` | G5 + G14 + G15 — `finding.service_id`, `scan_run.status/error/tool_version`, index FK, cascade, `schema_version` | Đổi schema DB trước khi có dữ liệu thật tích lũy |
+| F7 ✅ | `refactor/storage-schema` | G5 + G14 + G15 — `finding.service_id`, `scan_run.status/error`, phiên bản tool theo từng scanner, index FK, cascade, `schema_version` + migration; lần quét thất bại được lưu thành run `failed` | Đổi schema DB trước khi có dữ liệu thật tích lũy |
 | F8 | `fix/fingerprint-identity` | G12 — fingerprint theo asset + port + protocol + CVE/rule id | Phải ổn định trước `feat/diff` |
 | F9 | `feat/evidence` | G13 — lưu output gốc của tool, điền `evidence` | Cần F7 (schema) |
 

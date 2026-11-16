@@ -226,3 +226,28 @@ def test_scan_accepts_live_host_with_no_open_ports(monkeypatch: pytest.MonkeyPat
     (asset,) = NmapPlugin().scan(_ip_target("10.0.0.5"))
     assert asset.ip == "10.0.0.5"
     assert asset.services == []
+
+
+# --- version(): recorded with every run (G14) --------------------------------------
+
+
+def test_version_is_read_from_nmap_itself(monkeypatch: pytest.MonkeyPatch) -> None:
+    banner = "Nmap version 7.92 ( https://nmap.org )\nPlatform: i686-pc-windows-windows\n"
+    _fake_run(monkeypatch, subprocess.CompletedProcess(["nmap"], 0, stdout=banner, stderr=""))
+    assert NmapPlugin().version() == "7.92"
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        FileNotFoundError("nmap"),
+        subprocess.TimeoutExpired(cmd="nmap", timeout=10),
+        subprocess.CalledProcessError(returncode=1, cmd="nmap"),
+        subprocess.CompletedProcess(["nmap"], 0, stdout="something unexpected", stderr=""),
+    ],
+)
+def test_unknown_version_is_none_never_an_error(
+    monkeypatch: pytest.MonkeyPatch, outcome: object
+) -> None:
+    _fake_run(monkeypatch, outcome)
+    assert NmapPlugin().version() is None

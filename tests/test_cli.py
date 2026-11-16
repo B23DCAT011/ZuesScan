@@ -25,6 +25,18 @@ def _scope_file(tmp_path: Path, text: str = LAB_SCOPE) -> str:
     return str(path)
 
 
+def _runs(db: Path) -> list[tuple[str, str | None]]:
+    """`(status, error)` of every run stored in `db`."""
+    with Storage(db) as store:
+        rows = store._conn.execute("SELECT status, error FROM scan_run ORDER BY id").fetchall()
+    return [(r["status"], r["error"]) for r in rows]
+
+
+def _count(db: Path, table: str) -> int:
+    with Storage(db) as store:
+        return int(store._conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"])
+
+
 def test_scan_end_to_end(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -38,8 +50,10 @@ def test_scan_end_to_end(
     out = capsys.readouterr().out
 
     assert code == 0
-    assert db.exists()
+    assert _runs(db) == [("completed", None)]
     assert "Scan run #1" in out
+    assert "status=completed" in out
+    assert "scanners: fake 1.0-fake" in out
     assert "resolved: scanme.lab -> 10.0.0.5" in out
     assert "hosts: 1 " in out
     assert "scanme.lab (10.0.0.5)" in out
@@ -131,10 +145,10 @@ def test_scan_refuses_name_pointing_outside_the_scope(
     assert "refused" in err
     assert "resolves to 203.0.113.9" in err
     assert fake.seen == []  # nothing was scanned
-    assert not db.exists()
+    assert _runs(db) == []  # a refusal is not a run: nothing was attempted
 
 
-def test_scan_of_unresolvable_name_fails_and_saves_nothing(
+def test_scan_of_unresolvable_name_is_recorded_as_a_failed_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(cli, "NmapPlugin", lambda: FakePlugin([]))
@@ -146,7 +160,10 @@ def test_scan_of_unresolvable_name_fails_and_saves_nothing(
 
     assert code == 4
     assert "scan failed: cannot resolve 'scanme.lab'" in err
-    assert not db.exists()
+    assert "recorded as failed run #1" in err
+    ((status, error),) = _runs(db)
+    assert status == "failed"
+    assert error is not None and "cannot resolve 'scanme.lab'" in error
 
 
 def test_out_of_scope_host_in_results_is_warned_about_and_not_saved(
@@ -184,7 +201,7 @@ def test_scan_rejects_invalid_scope_file(
     assert "scope.txt:2" in err
 
 
-def test_scan_failure_is_reported_not_saved(
+def test_scan_failure_is_reported_and_recorded_as_a_failed_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     db = tmp_path / "out.db"
@@ -199,10 +216,49 @@ def test_scan_failure_is_reported_not_saved(
     assert "  | requires root" in captured.err  # the tool's own stderr is shown
     assert "Traceback" not in captured.err
     assert "Scan run" not in captured.out
-    assert not db.exists()  # a failed scan must not be stored as a clean run
+    # G14: the failure is kept, with the tool's own words, and can never be mistaken
+    # for a clean run: status says failed, and no host was stored.
+    assert _runs(db) == [("failed", "nmap exited with code 1\nrequires root\nQUITTING!")]
+    assert _count(db, "asset") == 0
+    with Storage(db) as store:
+        run = store.load_run(1)
+    assert run is not None
+    assert run.failed_plugin == "nmap"
 
 
-def test_scan_without_any_scanner_fails_and_saves_nothing(
+def test_run_after_a_failed_one_gets_the_next_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    db = tmp_path / "out.db"
+    args = ["scan", "scanme.lab", "--scope", _scope_file(tmp_path), "--db", str(db)]
+    error = ScanError("nmap timed out", plugin="fake")
+    monkeypatch.setattr(cli, "NmapPlugin", lambda: FakePlugin([], error=error))
+    assert cli.main(args) == 4
+    monkeypatch.setattr(cli, "NmapPlugin", lambda: FakePlugin([lab_asset()]))
+    assert cli.main(args) == 0
+
+    assert "Scan run #2" in capsys.readouterr().out
+    assert [status for status, _ in _runs(db)] == ["failed", "completed"]
+
+
+def test_database_from_a_newer_reconkit_is_refused_before_scanning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    db = tmp_path / "out.db"
+    with Storage(db) as store:
+        store._conn.execute("INSERT INTO schema_version VALUES (999, 'later')")
+        store._conn.commit()
+    fake = FakePlugin([lab_asset()])
+    monkeypatch.setattr(cli, "NmapPlugin", lambda: fake)
+
+    code = cli.main(["scan", "scanme.lab", "--scope", _scope_file(tmp_path), "--db", str(db)])
+
+    assert code == 1
+    assert "schema v999" in capsys.readouterr().err
+    assert fake.seen == []  # no point probing a target whose results cannot be saved
+
+
+def test_scan_without_any_scanner_is_recorded_as_a_failed_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     db = tmp_path / "out.db"
@@ -214,4 +270,9 @@ def test_scan_without_any_scanner_fails_and_saves_nothing(
     assert code == 4
     assert "scan failed: no scanner available: fake" in captured.err
     assert "Scan run" not in captured.out
-    assert not db.exists()  # "could not scan" must never be stored as "clean"
+    # "could not scan" must never be stored as "clean"
+    assert _runs(db) == [("failed", "no scanner available: fake not installed or not on PATH")]
+    with Storage(db) as store:
+        run = store.load_run(1)
+    assert run is not None
+    assert run.skipped_plugins == ["fake"]
