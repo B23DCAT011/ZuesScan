@@ -69,9 +69,9 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     phân giải được → `ResolutionError`, exit 4. Đã kiểm với nmap + DNS thật.
   - Hệ quả cho người dùng: file scope chỉ có tên miền là **không đủ**, phải khai cả IP/dải.
   - Còn lại: ~~wildcard `*.example.com`~~ (✅ `feat/plugin-subfinder`: `*.example.com` cho phép
-    *tên* dưới example.com; mỗi tên vẫn phải có mọi địa chỉ trong allowlist); ~~IPv6~~ (✅ G22); quét bằng IP làm
-    mất tên miền ở tầng HTTP (virtual host / SNI) — phải truyền lại tên khi làm plugin kiểm
-    tra web (nuclei). ~~`out_of_scope` chưa lưu vào DB~~ (✅ F7).
+    *tên* dưới example.com; mỗi tên vẫn phải có mọi địa chỉ trong allowlist); ~~IPv6~~ (✅ G22); ~~quét bằng IP làm
+    mất tên miền ở tầng HTTP (virtual host / SNI)~~ ✅ nuclei gửi tên qua Host header + SNI
+    trong khi vẫn kết nối tới địa chỉ đã duyệt. ~~`out_of_scope` chưa lưu vào DB~~ (✅ F7).
   - Dẫn chứng: `scope.py` so khớp hostname, không phân giải DNS.
   - Hậu quả: domain trong allowlist nhưng trỏ tới IP ngoài phạm vi vẫn bị quét — lỗ hổng ở
     chính lớp an toàn.
@@ -177,6 +177,9 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     `confirmed` — chỉ khi một bài kiểm thực sự chạm vào lỗi (dành cho plugin nuclei). Lưu trong
     cột `finding.confidence` (schema DB v7), hiện ở CLI và báo cáo HTML. Không nằm trong
     fingerprint.
+  - ✅ `confirmed` đã có nguồn (`feat/plugin-nuclei`): template CVE của nuclei gửi đúng request
+    khai thác (an toàn) và kiểm câu trả lời; nếu cùng CVE cũng khớp theo version, finding quan
+    sát được giữ lại.
   - Còn lại: nhận diện distro dựa trên chuỗi version / banner (heuristic). Muốn chắc phải quét
     có đăng nhập và đối chiếu số phiên bản gói với security tracker (→ GĐ 2, mục nâng cao).
 - [x] **G11. Severity là nhãn gõ tay.** Sửa: lưu điểm + vector CVSS; cân nhắc EPSS để ưu tiên.
@@ -208,8 +211,8 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       được với nhau bằng fingerprint; `feat/diff` phải bỏ qua cặp khác công thức.
     - Máy đổi IP (DHCP, cloud) → fingerprint đổi → lỗi cũ thành "mới". Công cụ thật giải
       bằng định danh tài sản bền hơn IP (agent UUID, MAC, tên máy). → D1 (kho tài sản).
-    - Nhiều website chung một IP (virtual host): lỗi của từng site sẽ cần tên host trong
-      định danh → làm cùng plugin nuclei.
+    - ~~Nhiều website chung một IP (virtual host): lỗi của từng site sẽ cần tên host trong
+      định danh~~ ✅ `feat/plugin-nuclei`: `rule_id` của nuclei có dạng `nuclei:<template>@<vhost>`.
     - Finding không có CVE lẫn `rule_id` vẫn định danh bằng title (đã chuẩn hóa hoa/thường
       và khoảng trắng) — plugin mới phải điền `rule_id`.
 - [x] **G13. Không lưu bằng chứng** (`evidence` rỗng, XML nmap bị bỏ).
