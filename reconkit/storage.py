@@ -25,7 +25,7 @@ from reconkit.schema import Asset, Confidence, Finding, Hop, RawOutput, Service,
 
 # The schema version this code reads and writes. Bump it together with a new entry
 # in `_MIGRATIONS`; never edit a migration that has already shipped.
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 
 class StorageError(Exception):
@@ -275,6 +275,10 @@ _V8 = (
     "ALTER TABLE finding ADD COLUMN epss REAL",
 )
 
+# Version 9 (G22): notes about how a run went (e.g. "IPv6: no host answered"), as a
+# JSON list.
+_V9 = ("ALTER TABLE scan_run ADD COLUMN notes TEXT NOT NULL DEFAULT '[]'",)
+
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: _V1,
     2: _V2,
@@ -284,6 +288,7 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
     6: _V6,
     7: _V7,
     8: _V8,
+    9: _V9,
 }
 
 
@@ -398,7 +403,7 @@ class Storage:
             cur = self._conn.execute(
                 "INSERT INTO scan_run "
                 "(target, status, error, started_at, finished_at, reconkit_version, "
-                "profile, profile_settings) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "profile, profile_settings, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     run.target,
                     str(run.status),
@@ -410,6 +415,7 @@ class Storage:
                     None
                     if run.profile_settings is None
                     else json.dumps(run.profile_settings, sort_keys=True),
+                    json.dumps(run.notes),
                 ),
             )
             run_id = int(cur.lastrowid or 0)
@@ -549,7 +555,7 @@ class Storage:
         """
         row = self._conn.execute(
             "SELECT target, status, error, started_at, finished_at, reconkit_version, "
-            "profile, profile_settings FROM scan_run WHERE id = ?",
+            "profile, profile_settings, notes FROM scan_run WHERE id = ?",
             (run_id,),
         ).fetchone()
         if row is None:
@@ -565,6 +571,7 @@ class Storage:
             profile_settings=(
                 None if row["profile_settings"] is None else json.loads(row["profile_settings"])
             ),
+            notes=list(json.loads(row["notes"] or "[]")),
         )
         for p in self._conn.execute(
             "SELECT name, status, version FROM scan_run_plugin WHERE run_id = ? ORDER BY rowid",

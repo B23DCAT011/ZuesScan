@@ -548,3 +548,13 @@ def test_finding_risk_facts_are_stored(tmp_path: Path) -> None:
     assert (back.cvss_score, back.cvss_vector, back.cwe) == (f.cvss_score, f.cvss_vector, f.cwe)
     assert (back.kev_added, back.epss) == ("2024-01-01", 0.98675)
     assert (bare.cvss_score, bare.cwe, bare.kev_added, bare.epss) == (None, (), None, None)
+
+
+def test_run_notes_are_stored(tmp_path: Path) -> None:
+    run = _make_run()
+    run.notes = ["nmap: no host responded for x over IPv6"]
+    with _store(tmp_path) as store:
+        loaded = store.load_run(store.save_run(run))
+        bare = store.load_run(store.save_run(_make_run()))
+    assert loaded is not None and loaded.notes == run.notes
+    assert bare is not None and bare.notes == []

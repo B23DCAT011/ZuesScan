@@ -7,8 +7,8 @@ import pytest
 from conftest import FakePlugin, fake_resolver, lab_asset, lab_resolver
 
 from reconkit import cli
-from reconkit.plugins.base import ScanError
-from reconkit.schema import Hop, RawOutput, Service
+from reconkit.plugins.base import ScanError, ScanResult
+from reconkit.schema import Hop, RawOutput, ScanTarget, Service
 from reconkit.storage import Storage
 
 LAB_SCOPE = "scanme.lab\n10.0.0.0/24\n"
@@ -18,6 +18,7 @@ LAB_SCOPE = "scanme.lab\n10.0.0.0/24\n"
 def _lab_dns(monkeypatch: pytest.MonkeyPatch) -> None:
     """Answer DNS from the lab records: no test may depend on the real resolver."""
     monkeypatch.setattr("reconkit.scope.resolve_ipv4", lab_resolver)
+    monkeypatch.setattr("reconkit.scope.resolve_addresses", lab_resolver)
 
 
 def _scope_file(tmp_path: Path, text: str = LAB_SCOPE) -> str:
@@ -137,7 +138,7 @@ def test_scan_refuses_name_pointing_outside_the_scope(
     fake = FakePlugin([])
     monkeypatch.setattr(cli, "NmapPlugin", lambda **_: fake)
     monkeypatch.setattr(
-        "reconkit.scope.resolve_ipv4", fake_resolver({"scanme.lab": ["203.0.113.9"]})
+        "reconkit.scope.resolve_addresses", fake_resolver({"scanme.lab": ["203.0.113.9"]})
     )
     db = tmp_path / "x.db"
 
@@ -155,7 +156,7 @@ def test_scan_of_unresolvable_name_is_recorded_as_a_failed_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(cli, "NmapPlugin", lambda **_: FakePlugin([]))
-    monkeypatch.setattr("reconkit.scope.resolve_ipv4", fake_resolver({}))
+    monkeypatch.setattr("reconkit.scope.resolve_addresses", fake_resolver({}))
     db = tmp_path / "x.db"
 
     code = cli.main(["scan", "scanme.lab", "--scope", _scope_file(tmp_path), "--db", str(db)])
@@ -695,3 +696,44 @@ def test_feed_failure_keeps_what_was_downloaded(
     assert "run the same command again" in capsys.readouterr().err
     assert cli.main(["cve", "status", "--cache", cache]) == 0
     assert "2 CVEs" in capsys.readouterr().out
+
+
+# --- IPv6 (G22) ---------------------------------------------------------------------------
+
+
+def test_ipv4_only_flag_and_notes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakePlugin([lab_asset()])
+    monkeypatch.setattr(cli, "NmapPlugin", lambda **_: fake)
+    dual = fake_resolver({"scanme.lab": ["10.0.0.5", "2001:db8::5"]})
+    monkeypatch.setattr("reconkit.scope.resolve_addresses", dual)
+    argv = ["scan", "scanme.lab", "--scope", _scope_file(tmp_path), "--db", str(tmp_path / "d")]
+
+    assert cli.main(argv) == 3  # the AAAA address is not in the scope
+    assert "resolves to 2001:db8::5" in capsys.readouterr().err
+    assert cli.main([*argv, "--ipv4-only"]) == 0
+    assert "note: IPv4 only" in capsys.readouterr().err
+    assert fake.seen[-1].addresses == ("10.0.0.5",)
+
+
+def test_raw_picks_one_of_several_outputs_by_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfdbinary: pytest.CaptureFixture[bytes]
+) -> None:
+    class TwoRuns(FakePlugin):
+        def scan(self, target: ScanTarget) -> ScanResult:
+            result = super().scan(target)
+            result.raw.append(RawOutput("fake", "fake-text", ("fake", "-6", "::1"), "v6 output\n"))
+            return result
+
+    db = _scan_once(tmp_path, monkeypatch, TwoRuns([lab_asset()]))
+    out = capfdbinary.readouterr().out
+    assert b"reconkit raw 1 --index 2 --db" in out
+
+    assert cli.main(["raw", "1", "--db", str(db)]) == 2
+    err = capfdbinary.readouterr().err
+    assert b"has 2 raw outputs; pick one with --index" in err
+    assert b"  2  fake     fake -6 ::1" in err
+    assert cli.main(["raw", "1", "--db", str(db), "--index", "2"]) == 0
+    assert capfdbinary.readouterr().out == b"v6 output\n"
+    assert cli.main(["raw", "1", "--db", str(db), "--index", "3"]) == 1

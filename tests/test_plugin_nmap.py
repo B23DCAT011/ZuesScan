@@ -400,3 +400,68 @@ def test_profile_timeout_applies_to_the_run(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(subprocess, "run", run)
     NmapPlugin(BUILTIN["full"]).scan(LAB)
     assert seen["timeout"] == 4 * 3600
+
+
+# --- IPv6: one nmap run per address family (G22) ----------------------------------------------
+
+V6_UP = (
+    '<nmaprun><host><status state="up"/><address addr="2001:db8::5" addrtype="ipv6"/>'
+    '<ports><port protocol="tcp" portid="22"><state state="open"/><service name="ssh"/>'
+    '</port></ports></host><runstats><hosts up="1" down="0" total="1"/></runstats></nmaprun>'
+)
+V6_DOWN = '<nmaprun><runstats><hosts up="0" down="1" total="1"/></runstats></nmaprun>'
+DUAL = ScanTarget(
+    requested="scanme.lab",
+    addresses=("10.0.0.5", "2001:db8::5"),
+    exclude=("2001:db8::1",),
+    hostname="scanme.lab",
+)
+
+
+def _per_family(monkeypatch: pytest.MonkeyPatch, v4: str, v6: str) -> list[list[str]]:
+    commands: list[list[str]] = []
+
+    def run(command: list[str], **kwargs: object) -> object:
+        commands.append(command)
+        out = v6 if "-6" in command else v4
+        return subprocess.CompletedProcess(command, 0, stdout=out, stderr="")
+
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/nmap")
+    monkeypatch.setattr(subprocess, "run", run)
+    return commands
+
+
+def test_dual_stack_target_is_scanned_once_per_family(monkeypatch: pytest.MonkeyPatch) -> None:
+    commands = _per_family(monkeypatch, SAMPLE, V6_UP)
+    result = NmapPlugin().scan(DUAL)
+    v4, v6 = commands
+    assert "-6" not in v4 and v4[-1] == "10.0.0.5" and "--exclude" not in v4
+    assert v6[:2] == ["nmap", "-6"] and v6[-1] == "2001:db8::5"
+    assert v6[v6.index("--exclude") + 1] == "2001:db8::1"  # excludes go with their family
+    assert [a.ip for a in result.assets] == ["10.0.0.5", "2001:db8::5"]
+    assert all(a.host == "scanme.lab" for a in result.assets)
+    assert len(result.raw) == 2 and result.notes == []
+
+
+def test_unreachable_ipv6_is_a_note_not_a_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    _per_family(monkeypatch, SAMPLE, V6_DOWN)
+    result = NmapPlugin().scan(DUAL)
+    assert [a.ip for a in result.assets] == ["10.0.0.5"]
+    (note,) = result.notes
+    assert "no host responded for scanme.lab over IPv6" in note
+    assert result.raw[-1].content == V6_DOWN  # the proof is kept
+
+
+def test_no_family_answering_is_still_a_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    down = '<nmaprun><runstats><hosts up="0" down="1" total="1"/></runstats></nmaprun>'
+    _per_family(monkeypatch, down, V6_DOWN)
+    with pytest.raises(ScanError, match="no host responded for scanme.lab"):
+        NmapPlugin().scan(DUAL)
+
+
+def test_ipv6_only_target_uses_dash_6(monkeypatch: pytest.MonkeyPatch) -> None:
+    commands = _per_family(monkeypatch, SAMPLE, V6_UP)
+    target = ScanTarget(requested="2001:db8::/120", addresses=("2001:db8::/120",))
+    (asset,) = NmapPlugin().scan(target).assets
+    assert asset.ip == "2001:db8::5"
+    assert commands[0][1] == "-6"

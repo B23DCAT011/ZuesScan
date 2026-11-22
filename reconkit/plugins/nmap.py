@@ -22,9 +22,11 @@ Npcap on Windows); without them, or for a local target, nmap reports no route.
 
 from __future__ import annotations
 
+import ipaddress
 import re
 import shutil
 import subprocess
+from dataclasses import replace
 from xml.etree import ElementTree as ET
 
 from reconkit.plugins.base import ScanError, ScanResult
@@ -72,17 +74,58 @@ class NmapPlugin:
         # Only addresses reach nmap, never a name: nmap would resolve a name again
         # by itself, possibly to an address the scope guard never saw.
         exclude = ["--exclude", ",".join(target.exclude)] if target.exclude else []
-        return ["nmap", *self.profile.nmap_args(), "-oX", "-", *exclude, *target.addresses]
+        ipv6 = ["-6"] if target.addresses and _version(target.addresses[0]) == 6 else []
+        return [
+            "nmap",
+            *ipv6,
+            *self.profile.nmap_args(),
+            "-oX",
+            "-",
+            *exclude,
+            *target.addresses,
+        ]
 
     def scan(self, target: ScanTarget) -> ScanResult:
         """Run nmap against `target`; return one `Asset` per host that responded,
         and nmap's XML as evidence.
 
+        nmap scans IPv4 or IPv6 in one run, never both (`-6`): a dual-stack target is
+        scanned once per address family and the results joined. If one family has no
+        host answering (common: an AAAA record the scanner cannot reach), that is noted,
+        not fatal; it fails the scan only if no family answered at all.
+
         Every failure surfaces as `ScanError`.
         """
-        asked = target.requested
         if not self.is_available():
             raise ScanError("nmap is not installed or not on PATH", plugin=self.name)
+        parts = _by_family(target)
+        results: list[ScanResult] = []
+        silent: list[ScanError] = []
+        for part in parts:
+            try:
+                results.append(self._scan(part))
+            except ScanError as exc:
+                if exc.no_response and len(parts) > 1:
+                    silent.append(exc)
+                    continue
+                raise
+        if not results:
+            raise silent[0]
+        merged = ScanResult(
+            assets=[a for r in results for a in r.assets],
+            raw=[o for r in results for o in r.raw],
+        )
+        for quiet in silent:
+            if quiet.output is not None:
+                merged.raw.append(quiet.output)  # the proof that nothing answered
+            merged.notes.append(f"{quiet} (the other address family answered)")
+        return merged
+
+    def _scan(self, target: ScanTarget) -> ScanResult:
+        """One nmap run, over addresses of a single family."""
+        asked = target.requested
+        if len(target.addresses) and _version(target.addresses[0]) == 6:
+            asked += " over IPv6"
         command = self._command(target)
         try:
             proc = subprocess.run(
@@ -143,6 +186,7 @@ class NmapPlugin:
                     plugin=self.name,
                     stderr=stderr,
                     output=raw,
+                    no_response=True,
                 )
             if up == 0:
                 raise ScanError(
@@ -151,6 +195,7 @@ class NmapPlugin:
                     plugin=self.name,
                     stderr=stderr,
                     output=raw,
+                    no_response=True,
                 )
         return ScanResult(assets=self._assets(root, hostname=target.hostname), raw=[raw])
 
@@ -297,3 +342,19 @@ def _text(output: bytes | str | None) -> str:
     if isinstance(output, bytes):
         return output.decode("utf-8", errors="replace")
     return output
+
+
+def _version(address: str) -> int:
+    """4 or 6, for an address or a range."""
+    return ipaddress.ip_network(address, strict=False).version
+
+
+def _by_family(target: ScanTarget) -> list[ScanTarget]:
+    """`target` split into an IPv4 part and an IPv6 part (whichever exist)."""
+    parts = []
+    for version in (4, 6):
+        addresses = tuple(a for a in target.addresses if _version(a) == version)
+        if addresses:
+            exclude = tuple(e for e in target.exclude if _version(e) == version)
+            parts.append(replace(target, addresses=addresses, exclude=exclude))
+    return parts

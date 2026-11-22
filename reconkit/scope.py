@@ -43,21 +43,31 @@ class ResolutionError(Exception):
     """Raised when a hostname cannot be resolved, so there is nothing to check or scan."""
 
 
-# A resolver maps a hostname to its IPv4 addresses. Injectable so tests need no DNS.
+# A resolver maps a hostname to its addresses. Injectable so tests need no DNS.
 Resolver = Callable[[str], list[str]]
+
+# The largest IPv6 range ReconKit will sweep: a /112. An IPv6 subnet is normally a /64
+# (2^64 addresses): it cannot be swept, its hosts are found by name (DNS) instead.
+MAX_IPV6_ADDRESSES = 2**16
+
+
+def resolve_addresses(hostname: str) -> list[str]:
+    """Resolve `hostname` to all of its IPv4 (A) and IPv6 (AAAA) addresses, IPv4 first."""
+    return _lookup(hostname, socket.AF_UNSPEC)
 
 
 def resolve_ipv4(hostname: str) -> list[str]:
-    """Resolve `hostname` to all of its IPv4 addresses using the system resolver.
+    """Resolve `hostname` to its IPv4 addresses only (`scan --ipv4-only`)."""
+    return _lookup(hostname, socket.AF_INET)
 
-    IPv6 (AAAA) records are not looked up: scans run against the IPv4 addresses
-    returned here only, so an IPv6 address is never touched (KNOWN-GAPS G22).
-    """
+
+def _lookup(hostname: str, family: int) -> list[str]:
     try:
-        infos = socket.getaddrinfo(hostname, None, family=socket.AF_INET)
+        infos = socket.getaddrinfo(hostname, None, family=family)
     except socket.gaierror as exc:
         raise ResolutionError(f"cannot resolve {hostname!r}: {exc.strerror or exc}") from exc
-    return [str(info[4][0]) for info in infos]
+    found = [str(info[4][0]) for info in infos if info[0] in (socket.AF_INET, socket.AF_INET6)]
+    return sorted(dict.fromkeys(found), key=lambda a: ":" in a)  # IPv4 first, order kept
 
 
 def _parse_net(entry: str) -> Network | None:
@@ -150,7 +160,9 @@ class Scope:
             scope.add(entry)
         return scope
 
-    def plan(self, target: str, resolver: Resolver | None = None) -> ScanTarget:
+    def plan(
+        self, target: str, resolver: Resolver | None = None, *, ipv4_only: bool = False
+    ) -> ScanTarget:
         """Turn a requested target into the exact addresses that may be scanned.
 
         This is the gate every scan goes through. It raises :class:`ScopeError` if
@@ -159,21 +171,31 @@ class Scope:
 
         * IP / CIDR: must lie inside the allowlist. Denied addresses inside it are
           returned in `exclude`; a target that is denied entirely is refused.
-        * Hostname: the name must be allowlisted, and so must **every** IPv4 address
-          it resolves to. An allowlisted name is not proof that the machine behind
-          it is ours (it may point at a CDN, or have been repointed). The name is
-          resolved here, once, and the scan uses these addresses, so it cannot
-          change between the check and the scan.
+        * Hostname: the name must be allowlisted, and so must **every** address it
+          resolves to, IPv4 and IPv6 (unless `ipv4_only`). An allowlisted name is not
+          proof that the machine behind it is ours (it may point at a CDN, or have
+          been repointed). The name is resolved here, once, and the scan uses these
+          addresses, so it cannot change between the check and the scan.
         """
         target = target.strip()
         net = _parse_net(target)
         if net is not None:
+            if ipv4_only and net.version == 6:
+                raise ScopeError(f"Target {target!r} is IPv6, but the scan is IPv4 only.")
             return self._plan_network(target, net)
-        return self._plan_hostname(target, resolver or resolve_ipv4)
+        if resolver is None:
+            resolver = resolve_ipv4 if ipv4_only else resolve_addresses
+        return self._plan_hostname(target, resolver)
 
     def _plan_network(self, target: str, net: Network) -> ScanTarget:
         if not any(_contained(net, a) for a in self.allow_nets):
             raise ScopeError(_outside(target))
+        if net.version == 6 and net.num_addresses > MAX_IPV6_ADDRESSES:
+            raise ScopeError(
+                f"Target {target!r} has 2^{net.max_prefixlen - net.prefixlen} addresses: too "
+                f"many to sweep (at most a /{128 - 16} for IPv6). Scan the hosts by name or "
+                "address instead; IPv6 hosts are found through DNS, not by sweeping."
+            )
         # Two CIDR blocks overlap only if one contains the other, so each denied
         # block is either all of the target or a part of it.
         denied = [d for d in self.deny_nets if _overlaps(net, d)]
@@ -196,7 +218,7 @@ class Scope:
             raise ScopeError(_outside(target))
         addresses = tuple(dict.fromkeys(resolver(name)))  # de-duplicated, order kept
         if not addresses:
-            raise ResolutionError(f"{target!r} did not resolve to any IPv4 address")
+            raise ResolutionError(f"{target!r} did not resolve to any address")
         for address in addresses:
             if not self.is_allowed(address):
                 raise ScopeError(

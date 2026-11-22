@@ -5,8 +5,8 @@ from conftest import FakePlugin, fake_resolver, lab_asset, lab_resolver, lab_sco
 
 from reconkit.cve import CveSource, LocalCveSource
 from reconkit.orchestrator import NoPluginAvailableError, Orchestrator, RunStatus
-from reconkit.plugins.base import ScanError, ScannerPlugin
-from reconkit.schema import Asset, Finding, Hop, RawOutput, Service
+from reconkit.plugins.base import ScanError, ScannerPlugin, ScanResult
+from reconkit.schema import Asset, Finding, Hop, RawOutput, ScanTarget, Service
 from reconkit.scope import ResolutionError, Resolver, Scope, ScopeError
 
 OPENSSH_74 = Service(port=22, name="ssh", product="OpenSSH", version="7.4")
@@ -359,3 +359,25 @@ def test_run_and_failed_run_record_the_profile() -> None:
     assert run.profile_settings == BUILTIN["quick"].settings()
     failed = orch.failed_run("scanme.lab", run.started_at, RuntimeError("boom"))
     assert failed.profile == "quick"
+
+
+# --- IPv6 (G22) --------------------------------------------------------------------------------
+
+
+class _NotingPlugin(FakePlugin):
+    def scan(self, target: ScanTarget) -> ScanResult:
+        result = super().scan(target)
+        result.notes.append("no host responded over IPv6")
+        return result
+
+
+def test_scanner_notes_and_ipv4_only_are_recorded() -> None:
+    scope = lab_scope()
+    orch = Orchestrator(
+        [_NotingPlugin([lab_asset()])], scope, resolver=lab_resolver, ipv4_only=True
+    )
+    run = orch.run("scanme.lab")
+    assert run.notes == [
+        "IPv4 only: the name's IPv6 (AAAA) addresses were not looked up",
+        "fake: no host responded over IPv6",
+    ]
