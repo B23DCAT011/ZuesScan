@@ -184,6 +184,7 @@ reconkit raw 1 --db reconkit.db --out run1.xml  # ghi ra file
 reconkit runs --db reconkit.db                          # danh sách các run, mới nhất trước
 reconkit report --db reconkit.db --html report.html     # báo cáo run mới nhất
 reconkit report --db reconkit.db --run 3 --html run3.html
+reconkit report --db reconkit.db --json run.json --sarif run.sarif   # dữ liệu / SARIF 2.1.0
 ```
 
 `report.html` là **một file duy nhất, mở offline** (không tải gì từ mạng): bản đồ
