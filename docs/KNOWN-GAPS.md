@@ -304,14 +304,21 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
 ## Mức 3 — Hoàn thiện sản phẩm / portfolio
 
 - [x] **G17. Chưa có CI.** Sửa: GitHub Actions chạy pytest + ruff + mypy cho mọi PR. (F1, `chore/ci`)
-- [ ] **G18. Chỉ in ra màn hình.** Sửa: xuất báo cáo JSON / HTML / SARIF.
+- [x] **G18. Chỉ in ra màn hình.** Sửa: xuất báo cáo JSON / HTML / SARIF.
   - ✅ **Phần HTML (M1, `feat/report-html`)**: `reconkit report --html` sinh một file HTML tự
     chứa (bản đồ Cytoscape.js + bảng finding / host + thông tin run), mở offline. Dữ liệu quét
     (banner, tên sản phẩm) do máy bị quét tự khai nên có thể độc: JSON được escape để không thoát
     được khỏi thẻ `<script>`, script của trang chỉ ghi text (không `innerHTML`), CSP chỉ cho
     chạy script / style có SHA-256 đã liệt kê và `default-src 'none'` (trang không gọi mạng được).
     `reconkit runs` liệt kê các run.
-  - Còn lại: JSON / SARIF (→ GĐ 2). Báo cáo chưa so sánh hai run (→ `feat/diff`). Mỗi báo cáo
+  - ✅ **JSON / SARIF (`feat/report-json-sarif`)**: `--json` xuất đúng dữ liệu của báo cáo;
+    `--sarif` xuất SARIF 2.1.0 (chuẩn OASIS, DefectDojo đọc được): mỗi CVE / bài kiểm là một
+    *rule* (link NVD, CWE, `security-severity`), mỗi finding là một *result* có mức, `rank` theo
+    CVSS, vị trí `tcp://host:port`, fingerprint của ReconKit trong `partialFingerprints` (để công
+    cụ khác nhận ra cùng một lỗi qua các lần quét), và ưu tiên / độ tin cậy / EPSS / KEV / trạng
+    thái vòng đời. ~~Báo cáo chưa so sánh hai run~~ (✅ `feat/diff`: mục "Changes").
+  - Còn lại: SARIF mới được kiểm theo cấu trúc trong test, chưa chạy validator theo JSON schema
+    chính thức, cũng chưa thử import vào DefectDojo thật. Mỗi báo cáo
     nặng ~470 KB vì nhúng nguyên Cytoscape.js. Host được nhóm theo /24 (/64) vì từ ngoài không
     thấy subnet mask thật.
 - [ ] **G19. Dùng `print`, chưa có logging.** Sửa: module `logging`, cờ `--verbose`.

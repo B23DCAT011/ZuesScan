@@ -317,3 +317,65 @@ def test_many_findings_on_one_port_are_summed_up_on_the_map() -> None:
     assert more["label"] == "+3 more"
     assert len(more["ref"]["findings"]) == 3
     assert report_model(_run([asset]), 1)["summary"]["findings"] == 8  # the table has all
+
+
+# --- JSON / SARIF (G18) ----------------------------------------------------------------------
+
+
+def test_sarif_follows_the_2_1_0_structure() -> None:
+    from reconkit.report.sarif import to_sarif
+
+    assets = _assets()
+    assets[0].findings[1].cvss_score = 7.7
+    assets[0].findings[1].cwe = ("CWE-193",)
+    assets[0].findings[1].kev_added = "2026-01-15"
+    model = report_model(_run(assets), 4, statuses={assets[0].findings[1].fingerprint: "open"})
+    sarif = to_sarif(model)
+    assert sarif["version"] == "2.1.0" and sarif["$schema"].endswith("sarif-2.1.0.json")
+    (run,) = sarif["runs"]
+    driver = run["tool"]["driver"]
+    assert driver["name"] == "ReconKit"
+    rules = driver["rules"]
+    assert [r["id"] for r in rules] == ["CVE-2018-15473", "CVE-2021-23017", "CVE-0000-0001"]
+    results = run["results"]
+    assert len(results) == 3
+    for result in results:
+        rule = rules[result["ruleIndex"]]
+        assert result["ruleId"] == rule["id"]  # index and id agree
+        assert result["level"] in ("error", "warning", "note")
+        assert result["message"]["text"]
+        assert result["partialFingerprints"]["reconkit/v2"].startswith("v2:")
+        assert None not in result["properties"].values()
+    nginx = results[1]
+    assert nginx["level"] == "error"  # high
+    assert nginx["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == (
+        "tcp://10.0.0.5:80"
+    )
+    assert nginx["locations"][0]["logicalLocations"][0]["name"] == "10.0.0.5:80/tcp"
+    assert nginx["rank"] == 77.0
+    assert nginx["properties"]["priority"] == "P1"
+    assert nginx["properties"]["kevAdded"] == "2026-01-15"
+    assert nginx["properties"]["status"] == "open"
+    assert rules[1]["helpUri"] == "https://nvd.nist.gov/vuln/detail/CVE-2021-23017"
+    assert rules[1]["properties"]["security-severity"] == "7.7"
+    assert "CWE-193" in rules[1]["properties"]["tags"]
+    loose = results[2]  # no service: located at the host itself
+    assert loose["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "tcp://10.0.0.5"
+    assert run["invocations"][0]["executionSuccessful"] is True
+    assert run["automationDetails"]["id"] == "reconkit/10.0.0.0/24/run-4"
+
+
+def test_sarif_of_ipv6_and_of_a_failed_run() -> None:
+    from reconkit.report.sarif import to_sarif
+
+    f = _finding(SSH, "CVE-2018-15473", Severity.MEDIUM, "2001:db8::5")
+    asset = Asset(host="2001:db8::5", ip="2001:db8::5", services=[SSH], findings=[f])
+    (result,) = to_sarif(report_model(_run([asset]), 1))["runs"][0]["results"]
+    assert result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == (
+        "tcp://[2001:db8::5]:22"
+    )
+    failed = _run([])
+    failed.status, failed.error = RunStatus.FAILED, "nmap timed out"
+    invocation = to_sarif(report_model(failed, 2))["runs"][0]["invocations"][0]
+    assert invocation["executionSuccessful"] is False
+    assert invocation["exitCodeDescription"] == "nmap timed out"
