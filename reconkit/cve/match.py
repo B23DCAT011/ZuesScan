@@ -76,6 +76,11 @@ def affected_range(software: Software, record: CveRecord) -> AffectedRange | Non
             continue
         if not same_vendor(cpe.product, cpe.vendor, software.vendor):
             continue
+        # An exact entry may name the patch level too ("9.9" + "p1"): then 9.9p2, the
+        # fixed build, is not it. A range or an entry without one ignores patch levels.
+        update = software.version.update
+        if cpe.version is not None and cpe.update and update and cpe.update.lower() != update:
+            continue
         if candidate.contains(software.version.release):
             return candidate
     return None

@@ -564,3 +564,85 @@ def test_unusable_cve_file_stops_the_scan(
     assert cli.main([*argv, "--cve-db", str(tmp_path / "nope.json")]) == 2
     assert "CVE data file not found" in capsys.readouterr().err
     assert not db.exists()
+
+
+# --- NVD cache (G9) ------------------------------------------------------------------------
+
+
+def _fake_nvd(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Make `cve sync` talk to canned NVD pages; return the URLs it asked for."""
+    import json as _json
+
+    from reconkit.cve.nvd import NvdClient
+
+    page = _json.loads((Path(__file__).parent / "data" / "nvd_page.json").read_text("utf-8"))
+    urls: list[str] = []
+
+    def fetch(url: str, headers: dict[str, str]) -> object:
+        urls.append(url)
+        return page
+
+    monkeypatch.setattr(
+        cli,
+        "NvdClient",
+        lambda api_key=None: NvdClient(api_key=api_key, fetch=fetch, sleep=lambda _s: None),
+    )
+    return urls
+
+
+def test_cve_sync_status_show(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    urls = _fake_nvd(monkeypatch)
+    monkeypatch.delenv("NVD_API_KEY", raising=False)
+    cache = str(tmp_path / "cve.db")
+
+    assert cli.main(["cve", "sync", "--cache", cache, "--product", "cpe:2.3:a:f5:nginx"]) == 0
+    captured = capsys.readouterr()
+    assert "cpe:2.3:a:f5:nginx: 2 CVE(s) stored, 1 rejected removed (full download)" in captured.out
+    assert "no NVD API key" in captured.err
+    assert "virtualMatchString=cpe%3A2.3%3Aa%3Af5%3Anginx" in urls[0]
+
+    assert cli.main(["cve", "status", "--cache", cache]) == 0
+    out = capsys.readouterr().out
+    assert "2 CVEs" in out and "cpe:2.3:a:f5:nginx: synced" in out
+
+    assert cli.main(["cve", "show", "cve-2021-23017", "--cache", cache]) == 0
+    out = capsys.readouterr().out
+    assert "cvss_score: 7.7" in out
+    assert "affects: f5:nginx >= 0.6.18, < 1.20.1" in out
+    assert cli.main(["cve", "show", "CVE-1999-0001", "--cache", cache]) == 1
+
+
+def test_cve_sync_refuses_a_product_that_is_not_a_cpe_prefix(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cache = tmp_path / "cve.db"
+    assert cli.main(["cve", "sync", "--cache", str(cache), "--product", "nginx"]) == 2
+    assert "CPE 2.3 prefix" in capsys.readouterr().err
+    assert not cache.exists()
+
+
+def test_cve_status_of_a_missing_cache(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["cve", "status", "--cache", str(tmp_path / "nope.db")]) == 2
+    assert "reconkit cve sync" in capsys.readouterr().err
+
+
+def test_scan_matches_against_the_nvd_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _fake_nvd(monkeypatch)
+    cache = str(tmp_path / "cve.db")
+    cli.main(["cve", "sync", "--cache", cache])
+    svc = Service(port=80, name="http", product="nginx", version="1.14.2")
+    monkeypatch.setattr(cli, "NmapPlugin", lambda **_: FakePlugin([lab_asset(svc)]))
+    capsys.readouterr()
+
+    argv = ["scan", "scanme.lab", "--scope", _scope_file(tmp_path), "--db", str(tmp_path / "d")]
+    assert cli.main([*argv, "--cve-cache", cache]) == 0
+    out = capsys.readouterr().out
+    assert "(CVE-2021-23017)" in out
+    assert "Affected per NVD cache" in out
+
+    assert cli.main([*argv, "--cve-cache", str(tmp_path / "nope.db")]) == 2
+    assert "reconkit cve sync" in capsys.readouterr().err

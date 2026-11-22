@@ -149,9 +149,24 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     chính sản phẩm (quét cổng không thấy chắc hệ điều hành). Bảng alias vendor / tên sản phẩm
     viết tay, chỉ gồm các trường hợp đã gặp. Một số kiểu version lạ (`1.0.0rc1` so với `1.0`,
     chữ cái đơn kiểu `1.0b2` là beta hay bản sửa?) có thể so sai. Seed chỉ có 4 CVE (→ G9).
-- [ ] **G9. Dữ liệu CVE chỉ là seed 4 dòng.**
+- [x] **G9. Dữ liệu CVE chỉ là seed 4 dòng.**
   Sửa: `NvdCveSource` đồng bộ NVD API 2.0 về cache local (có API key, tôn trọng rate limit);
   cân nhắc OSV, CISA KEV.
+  - ✅ **Đã sửa (`feat/nvd-source`)**: `reconkit cve sync` tải CVE từ NVD API 2.0 về một file
+    SQLite riêng (`reconkit-cve.db`: bảng `cve`, `cve_range` có index theo sản phẩm,
+    `sync_state`). Chỉ dùng thư viện chuẩn (`urllib`). Mỗi trang 2.000 CVE; nghỉ 6 giây giữa
+    hai request (1 giây nếu có API key, đọc từ biến môi trường `NVD_API_KEY`, không bao giờ
+    nhận qua dòng lệnh); gặp 403 / 429 / 5xx thì chờ lâu dần rồi thử lại. Lần đầu tải hết,
+    các lần sau chỉ hỏi những CVE **đổi từ lần sync trước** (`lastModStartDate`, chia cửa sổ
+    ≤ 120 ngày). Chỉ ghi nhận "đã sync" khi mọi trang đã lưu: đứt mạng giữa chừng thì chạy lại.
+    `--product cpe:2.3:a:openbsd:openssh` để chỉ tải một sản phẩm. CVE bị NVD reject thì bị xóa
+    khỏi cache. `scan --cve-cache` khớp trên cache, **offline** (không lần quét nào gửi mục
+    tiêu ra ngoài). Đã kiểm với NVD thật: 192 CVE của OpenSSH / nginx / vsftpd; OpenSSH
+    `7.4p1 Debian 10+deb9u7` khớp 42 CVE, đều `tentative`.
+  - Còn lại: tải toàn bộ NVD lần đầu (~300.000 CVE) mất khoảng 15–20 phút nếu không có API
+    key. NVD đôi khi ghi dải theo bản phát hành mà bỏ patch level (vd OpenSSH `<= 9.8` trong
+    khi bản vá là `9.8p1`) → ReconKit theo đúng dữ liệu NVD nên có thể báo nhầm bản đã vá. Chưa
+    dùng OSV (dữ liệu theo gói của từng hệ sinh thái / distro).
 - [x] **G10. Không phân biệt "chắc chắn" và "có thể" bị lỗi** (backport của distro giữ nguyên
   số phiên bản). Sửa: thêm `Finding.confidence` (`tentative` / `confirmed`).
   - ✅ **Đã sửa (`feat/cve-matching`)**: `Finding.confidence` có 3 mức (theo thang của các

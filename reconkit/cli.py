@@ -5,16 +5,22 @@ build orchestrator with the nmap plugin -> run -> persist to SQLite -> print a s
 `reconkit raw <run id>` gives back the scanner's own output kept for a run.
 `reconkit runs` lists the stored runs; `reconkit report` turns one into a report.
 `reconkit profiles` shows the scan profiles (`scan --profile`).
+`reconkit cve sync|status|show` keeps a local copy of NVD to match CVEs against.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import ipaddress
+import os
+import re
 import sys
 from pathlib import Path
 
-from reconkit.cve import CveDataError, LocalCveSource
+from reconkit.cve import CveDataError, CveSource, LocalCveSource
+from reconkit.cve.cache import CacheError, CveCache, NvdCveSource, sync
+from reconkit.cve.nvd import API_KEY_ENV, NvdClient, NvdError
 from reconkit.orchestrator import NoPluginAvailableError, Orchestrator, ScanRun, now
 from reconkit.plugins.base import ScanError
 from reconkit.plugins.nmap import NmapPlugin
@@ -144,19 +150,27 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         print(f"error: invalid scope file: {exc}", file=sys.stderr)
         return 2
 
-    if args.no_cve:
-        cve_source = None
-    else:
+    with contextlib.ExitStack() as stack:
+        cve_source: CveSource | None = None
         try:
-            # The bundled seed unless another data file is given.
-            cve_source = LocalCveSource(args.cve_db) if args.cve_db else LocalCveSource()
-        except CveDataError as exc:
+            if args.cve_cache:
+                cve_source = NvdCveSource(stack.enter_context(CveCache(args.cve_cache)))
+            elif not args.no_cve:
+                # The bundled seed unless another data file is given.
+                cve_source = LocalCveSource(args.cve_db) if args.cve_db else LocalCveSource()
+        except (CveDataError, CacheError) as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
-    orch = Orchestrator(
-        plugins=[NmapPlugin(profile=profile)], scope=scope, cve_source=cve_source, profile=profile
-    )
+        orch = Orchestrator(
+            plugins=[NmapPlugin(profile=profile)],
+            scope=scope,
+            cve_source=cve_source,
+            profile=profile,
+        )
+        return _open_db_and_scan(args, orch)
 
+
+def _open_db_and_scan(args: argparse.Namespace, orch: Orchestrator) -> int:
     # Open the database before scanning: if the results cannot be saved, find out
     # now, not after probing the target for five minutes.
     try:
@@ -236,6 +250,99 @@ def _record_failure(
             file=sys.stderr,
         )
     return 4
+
+
+DEFAULT_CVE_CACHE = "reconkit-cve.db"
+
+# A CPE 2.3 prefix naming at least a vendor and a product.
+_CPE_PREFIX = re.compile(r"cpe:2\.3:[aoh]:[^:\s*]+:[^:\s*]+(?::[^:\s]+)*")
+
+
+def _cmd_cve_sync(args: argparse.Namespace) -> int:
+    """Download or update the local NVD cache."""
+    products: list[str | None] = list(args.product or [None])
+    for product in products:
+        if product is not None and not _CPE_PREFIX.fullmatch(product):
+            print(
+                "error: --product must be a CPE 2.3 prefix such as "
+                f"cpe:2.3:a:openbsd:openssh, not {product!r}",
+                file=sys.stderr,
+            )
+            return 2
+    api_key = os.environ.get(API_KEY_ENV) or None
+    client = NvdClient(api_key=api_key)
+    if not api_key:
+        print(
+            f"note: no NVD API key in {API_KEY_ENV}: NVD then allows 5 requests per 30 s, "
+            "so a large download is slow",
+            file=sys.stderr,
+        )
+
+    def progress(done: int, total: int) -> None:
+        print(f"  {done}/{total} CVEs", file=sys.stderr)
+
+    try:
+        with CveCache(args.cache, create=True) as cache:
+            for product in products:
+                what = product or "all of NVD"
+                print(f"syncing {what} into {args.cache} ...", file=sys.stderr)
+                result = sync(cache, client, product=product, full=args.full, progress=progress)
+                since = f"changed since {result.since[:19]}" if result.since else "full download"
+                print(
+                    f"{what}: {result.changed} CVE(s) stored, {result.removed} rejected "
+                    f"removed ({since})"
+                )
+    except CacheError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except NvdError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        print("what was downloaded so far is kept; run the same command again", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _cmd_cve_status(args: argparse.Namespace) -> int:
+    try:
+        with CveCache(args.cache) as cache:
+            status = cache.status()
+    except CacheError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(f"{args.cache}: {status.cves} CVEs, {status.ranges} affected product ranges")
+    for scope, synced in status.scopes.items():
+        print(f"  {scope}: synced {synced[:19]}")
+    return 0
+
+
+def _cmd_cve_show(args: argparse.Namespace) -> int:
+    try:
+        with CveCache(args.cache) as cache:
+            details = cache.details(args.cve_id.upper())
+    except CacheError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if details is None:
+        print(f"error: {args.cve_id} is not in {args.cache}", file=sys.stderr)
+        return 1
+    affects = details.pop("affects")
+    for key, value in details.items():
+        if value not in (None, ""):
+            print(f"{key:>14}: {value}")
+    for a in affects:
+        bounds = ", ".join(
+            f"{op} {a[k]}"
+            for k, op in (
+                ("start_incl", ">="),
+                ("start_excl", ">"),
+                ("end_incl", "<="),
+                ("end_excl", "<"),
+            )
+            if a[k]
+        )
+        exact = (a["version"] or "") + (a["update"] or "")
+        print(f"{'affects':>14}: {a['vendor']}:{a['product']} {exact}{bounds}")
+    return 0
 
 
 def _cmd_profiles(args: argparse.Namespace) -> int:
@@ -381,8 +488,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--scope", required=True, help="path to the allowlist file (one entry per line)"
     )
     scan.add_argument("--db", default="reconkit.db", help="SQLite database path")
-    scan.add_argument("--no-cve", action="store_true", help="skip the CVE matching stage")
-    scan.add_argument("--cve-db", help="path to a CVE seed JSON (default: bundled seed)")
+    cve_data = scan.add_mutually_exclusive_group()
+    cve_data.add_argument("--no-cve", action="store_true", help="skip the CVE matching stage")
+    cve_data.add_argument("--cve-db", help="path to a CVE data JSON (default: bundled seed)")
+    cve_data.add_argument(
+        "--cve-cache", help="match against a local NVD cache (see `reconkit cve sync`)"
+    )
     tuning = scan.add_argument_group(
         "scan profile", "how to scan; flags override single settings of the profile"
     )
@@ -411,6 +522,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="scan hosts that ignore ping (nmap -Pn); slow on ranges",
     )
     scan.set_defaults(func=_cmd_scan)
+
+    cve = sub.add_parser("cve", help="keep a local copy of NVD to match CVEs against")
+    cve_sub = cve.add_subparsers(dest="cve_command", required=True)
+    cve_sync = cve_sub.add_parser(
+        "sync",
+        help="download CVEs from the NVD API into the cache (only changes after the first time)",
+        description=f"An NVD API key, if you have one, is read from the {API_KEY_ENV} "
+        "environment variable: it allows ten times faster downloads.",
+    )
+    cve_sync.add_argument("--cache", default=DEFAULT_CVE_CACHE, help="cache file (SQLite)")
+    cve_sync.add_argument(
+        "--product",
+        action="append",
+        help="only CVEs of this product, as a CPE prefix, e.g. cpe:2.3:a:openbsd:openssh "
+        "(repeatable; default: all of NVD, a long first download)",
+    )
+    cve_sync.add_argument("--full", action="store_true", help="download everything again")
+    cve_sync.set_defaults(func=_cmd_cve_sync)
+    cve_status = cve_sub.add_parser("status", help="what the cache holds and when it was synced")
+    cve_status.add_argument("--cache", default=DEFAULT_CVE_CACHE, help="cache file (SQLite)")
+    cve_status.set_defaults(func=_cmd_cve_status)
+    cve_show = cve_sub.add_parser("show", help="one CVE as stored in the cache")
+    cve_show.add_argument("cve_id", help="e.g. CVE-2021-23017")
+    cve_show.add_argument("--cache", default=DEFAULT_CVE_CACHE, help="cache file (SQLite)")
+    cve_show.set_defaults(func=_cmd_cve_show)
 
     profiles = sub.add_parser("profiles", help="list the scan profiles")
     profiles.add_argument("--config", help="TOML file with more profiles")
