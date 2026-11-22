@@ -343,3 +343,19 @@ def test_failed_run_keeps_what_the_scanner_printed() -> None:
         orch.run("scanme.lab")
     run = orch.failed_run("scanme.lab", "2026-01-01T00:00:00+00:00", caught.value)
     assert run.raw_outputs == [printed]
+
+
+# --- scan profile is recorded with the run (G6, G7) -----------------------------------
+
+
+def test_run_and_failed_run_record_the_profile() -> None:
+    from reconkit.profiles import BUILTIN
+
+    orch = Orchestrator(
+        [FakePlugin([lab_asset()])], lab_scope(), resolver=lab_resolver, profile=BUILTIN["quick"]
+    )
+    run = orch.run("scanme.lab")
+    assert run.profile == "quick"
+    assert run.profile_settings == BUILTIN["quick"].settings()
+    failed = orch.failed_run("scanme.lab", run.started_at, RuntimeError("boom"))
+    assert failed.profile == "quick"

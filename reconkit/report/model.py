@@ -38,6 +38,8 @@ def report_model(run: ScanRun, run_id: int) -> dict[str, Any]:
             "started_at": run.started_at,
             "finished_at": run.finished_at,
             "reconkit_version": run.reconkit_version,
+            "profile": run.profile,
+            "profile_settings": run.profile_settings,
             "scanners": [
                 {"name": name, "version": version} for name, version in run.tool_versions.items()
             ],

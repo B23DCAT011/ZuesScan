@@ -10,7 +10,10 @@ called, and nmap receives those addresses, never a name it would resolve again. 
 is invoked with an argument list (never a shell string), so a target cannot be used to
 inject extra commands.
 
-Traceroute (`traceroute=True`, off by default) adds `--traceroute`: after the port
+How the scan is run (which ports, how fast, which extras) comes from a
+:class:`~reconkit.profiles.ScanProfile`; the default is the `standard` profile.
+
+Traceroute (profile `full`, or `traceroute=True`) adds `--traceroute`: after the port
 scan nmap sends probes to each live host with increasing TTL and records the routers
 that answer, which is what draws "scanner -> routers -> network" on the map. Its
 probes are addressed to the in-scope host only. It needs raw sockets (root on Linux,
@@ -25,6 +28,7 @@ import subprocess
 from xml.etree import ElementTree as ET
 
 from reconkit.plugins.base import ScanError, ScanResult
+from reconkit.profiles import BUILTIN, DEFAULT_PROFILE, ScanProfile
 from reconkit.schema import Asset, Hop, RawOutput, ScanTarget, Service
 
 
@@ -33,13 +37,17 @@ class NmapPlugin:
 
     name = "nmap"
 
-    def __init__(
-        self, extra_args: list[str] | None = None, timeout: int = 300, traceroute: bool = False
-    ) -> None:
-        # -sV = service/version detection; -T4 = reasonable speed for a lab.
-        self.extra_args = extra_args if extra_args is not None else ["-sV", "-T4"]
-        self.timeout = timeout
-        self.traceroute = traceroute
+    def __init__(self, profile: ScanProfile | None = None) -> None:
+        self.profile = profile if profile is not None else BUILTIN[DEFAULT_PROFILE]
+
+    @property
+    def timeout(self) -> int:
+        """Seconds before the whole nmap run is stopped."""
+        return self.profile.timeout
+
+    @property
+    def traceroute(self) -> bool:
+        return self.profile.traceroute
 
     def is_available(self) -> bool:
         return shutil.which("nmap") is not None
@@ -64,8 +72,7 @@ class NmapPlugin:
         # Only addresses reach nmap, never a name: nmap would resolve a name again
         # by itself, possibly to an address the scope guard never saw.
         exclude = ["--exclude", ",".join(target.exclude)] if target.exclude else []
-        trace = ["--traceroute"] if self.traceroute else []
-        return ["nmap", *self.extra_args, *trace, "-oX", "-", *exclude, *target.addresses]
+        return ["nmap", *self.profile.nmap_args(), "-oX", "-", *exclude, *target.addresses]
 
     def scan(self, target: ScanTarget) -> ScanResult:
         """Run nmap against `target`; return one `Asset` per host that responded,
@@ -89,9 +96,14 @@ class NmapPlugin:
                 check=True,
             )
         except subprocess.TimeoutExpired as exc:
+            # What nmap printed before it was stopped is incomplete, but it is still
+            # the record of what was probed: keep it with the failed run.
+            partial = _text(exc.stdout)
             raise ScanError(
                 f"nmap timed out after {self.timeout}s scanning {asked}",
                 plugin=self.name,
+                stderr=_text(exc.stderr).strip() or None,
+                output=self._raw(command, partial, _text(exc.stderr)) if partial else None,
             ) from exc
         except subprocess.CalledProcessError as exc:
             stderr = (exc.stderr or "").strip() or None
@@ -276,3 +288,12 @@ def _rtt(value: str | None) -> float | None:
     except ValueError:
         return None
     return rtt if rtt >= 0 else None
+
+
+def _text(output: bytes | str | None) -> str:
+    """Output captured by a timed-out run: always bytes, whatever `encoding` said."""
+    if output is None:
+        return ""
+    if isinstance(output, bytes):
+        return output.decode("utf-8", errors="replace")
+    return output

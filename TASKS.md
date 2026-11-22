@@ -62,7 +62,9 @@ Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây we
 - [ ] CVE thật: khớp CPE + dải phiên bản, chuẩn hóa version (G8); `NvdCveSource` đồng bộ
       NVD API 2.0 về cache local (G9); `Finding.confidence` cho vấn đề backport (G10);
       CVSS score/vector, CWE, KEV, EPSS + xếp ưu tiên (G11).
-- [ ] Scan profile `quick` / `full`, cấu hình tốc độ / timeout (G6, G7).
+- [x] `feat/scan-profiles` — profile `quick` / `standard` / `full` / `gentle`, file cấu hình TOML
+      (`--config`), cờ ghi đè (`--ports`, `--timing`, `--max-rate`, `--timeout`…), lệnh
+      `reconkit profiles`; mỗi run lưu profile + thông số (schema DB v6). (G6, G7)
 - [ ] IPv6: phân giải AAAA, kiểm scope, chạy nmap `-6` riêng (G22).
 - [ ] Dấu vết kiểm toán: `scan_run` lưu mã băm file scope, người chạy, tham chiếu giấy phép
       (G21).

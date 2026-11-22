@@ -17,10 +17,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Any
 
 from reconkit import __version__
 from reconkit.cve import CveSource
 from reconkit.plugins.base import ScanError, ScannerPlugin
+from reconkit.profiles import ScanProfile
 from reconkit.schema import Asset, Finding, RawOutput, ScanTarget
 from reconkit.scope import Resolver, Scope
 
@@ -67,6 +69,11 @@ class ScanRun:
     raw_outputs: list[RawOutput] = field(default_factory=list)
     # Plugins that were configured but could not run; the result is partial.
     skipped_plugins: list[str] = field(default_factory=list)
+    # The scan profile the scanners ran with, and its exact settings: a run is only
+    # comparable with another run of the same profile (a quick scan does not look at
+    # the ports a full scan does).
+    profile: str | None = None
+    profile_settings: dict[str, Any] | None = None
     # What the scope guard authorised for this run: resolved addresses, exclusions.
     plan: ScanTarget | None = None
     # Hosts a plugin reported that are outside the scope; dropped from `assets`.
@@ -82,11 +89,14 @@ class Orchestrator:
         scope: Scope,
         cve_source: CveSource | None = None,
         resolver: Resolver | None = None,
+        profile: ScanProfile | None = None,
     ) -> None:
         self.plugins = plugins
         self.scope = scope
         self.cve_source = cve_source
         self.resolver = resolver  # None = the system resolver
+        # Recorded with every run; the plugins were built with it.
+        self.profile = profile
 
     def run(self, target: str) -> ScanRun:
         # 1. Safety gate: refuse anything outside the authorised scope, and pin down
@@ -152,6 +162,7 @@ class Orchestrator:
             plan=plan,
             out_of_scope=out_of_scope,
             raw_outputs=raw_outputs,
+            **self._profile_record(),
         )
 
     def failed_run(self, target: str, started_at: str, error: Exception) -> ScanRun:
@@ -181,7 +192,13 @@ class Orchestrator:
             failed_plugin=failed_plugin,
             skipped_plugins=skipped,
             raw_outputs=raw_outputs,
+            **self._profile_record(),
         )
+
+    def _profile_record(self) -> dict[str, Any]:
+        if self.profile is None:
+            return {}
+        return {"profile": self.profile.name, "profile_settings": self.profile.settings()}
 
     def _split_plugins(self) -> tuple[list[ScannerPlugin], list[str]]:
         """The plugins that can run here, and the names of those that cannot."""

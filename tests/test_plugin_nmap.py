@@ -12,6 +12,7 @@ import pytest
 
 from reconkit.plugins.base import ScanError, ScannerPlugin
 from reconkit.plugins.nmap import NmapPlugin
+from reconkit.profiles import BUILTIN, override
 from reconkit.schema import ScanTarget
 
 DATA = Path(__file__).parent / "data"
@@ -20,6 +21,11 @@ TWO_HOSTS = (DATA / "nmap_two_hosts.xml").read_text(encoding="utf-8")
 
 # What the scope guard hands a plugin when the user asks for "scanme.lab".
 LAB = ScanTarget(requested="scanme.lab", addresses=("10.0.0.5",), hostname="scanme.lab")
+
+
+def _plugin(**settings: object) -> NmapPlugin:
+    """The plugin with the standard profile, some settings changed."""
+    return NmapPlugin(override(BUILTIN["standard"], settings))
 
 
 def _ip_target(address: str) -> ScanTarget:
@@ -162,7 +168,7 @@ def test_scan_wraps_nonzero_exit_and_keeps_stderr(monkeypatch: pytest.MonkeyPatc
 def test_scan_wraps_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     _fake_run(monkeypatch, subprocess.TimeoutExpired(cmd=["nmap"], timeout=5))
     with pytest.raises(ScanError, match="timed out after 5s"):
-        NmapPlugin(timeout=5).scan(LAB)
+        _plugin(timeout=5).scan(LAB)
 
 
 def test_scan_wraps_failure_to_start(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -294,10 +300,22 @@ def test_unreadable_output_is_kept_as_it_is(monkeypatch: pytest.MonkeyPatch) -> 
     assert caught.value.output.content == "<nmaprun><host>"
 
 
+def test_timed_out_scan_keeps_what_nmap_printed_so_far(monkeypatch: pytest.MonkeyPatch) -> None:
+    timeout = subprocess.TimeoutExpired(
+        cmd="nmap", timeout=5, output=b"<nmaprun><host>", stderr=b"Stats: 0:00:05 elapsed\n"
+    )
+    _fake_run(monkeypatch, timeout)
+    with pytest.raises(ScanError, match="timed out") as caught:
+        _plugin(timeout=5).scan(LAB)
+    assert caught.value.output is not None
+    assert caught.value.output.content == "<nmaprun><host>"
+    assert caught.value.stderr == "Stats: 0:00:05 elapsed"
+
+
 def test_scan_that_never_ran_has_no_output(monkeypatch: pytest.MonkeyPatch) -> None:
     _fake_run(monkeypatch, subprocess.TimeoutExpired(cmd="nmap", timeout=5))
     with pytest.raises(ScanError) as caught:
-        NmapPlugin(timeout=5).scan(LAB)
+        _plugin(timeout=5).scan(LAB)
     assert caught.value.output is None
 
 
@@ -311,7 +329,7 @@ def test_traceroute_is_off_by_default() -> None:
 
 
 def test_traceroute_adds_the_flag_and_still_scans_only_the_addresses() -> None:
-    cmd = NmapPlugin(traceroute=True)._command(LAB)
+    cmd = _plugin(traceroute=True)._command(LAB)
     assert "--traceroute" in cmd
     assert cmd[-1] == "10.0.0.5"  # the target list is unchanged
 
@@ -355,5 +373,30 @@ def test_unreadable_hops_are_skipped_and_the_rest_ordered() -> None:
 def test_scan_returns_routes(monkeypatch: pytest.MonkeyPatch) -> None:
     _fake_run(monkeypatch, subprocess.CompletedProcess(["nmap"], 0, stdout=TRACE, stderr=""))
     target = ScanTarget(requested="10.0.0.0/24", addresses=("10.0.0.0/24",))
-    assets = NmapPlugin(traceroute=True).scan(target).assets
+    assets = _plugin(traceroute=True).scan(target).assets
     assert [len(a.route) for a in assets] == [3, 3, 0]
+
+
+# --- scan profiles (G6, G7) -----------------------------------------------------------
+
+
+def test_profile_decides_the_command_line() -> None:
+    cmd = NmapPlugin(BUILTIN["full"])._command(LAB)
+    assert cmd == [
+        "nmap", "-sV", "-T4", "-p", "-", "--max-retries", "3", "--host-timeout", "3600s",
+        "--traceroute", "-oX", "-", "10.0.0.5",
+    ]  # fmt: skip
+    assert NmapPlugin()._command(LAB) == ["nmap", "-sV", "-T4", "-oX", "-", "10.0.0.5"]
+
+
+def test_profile_timeout_applies_to_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, object] = {}
+
+    def run(*args: object, **kwargs: object) -> object:
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(["nmap"], 0, stdout=SAMPLE, stderr="")
+
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/nmap")
+    monkeypatch.setattr(subprocess, "run", run)
+    NmapPlugin(BUILTIN["full"]).scan(LAB)
+    assert seen["timeout"] == 4 * 3600

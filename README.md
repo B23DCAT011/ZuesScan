@@ -31,8 +31,38 @@ printf 'scanme.lab\n10.0.0.0/24\n!10.0.0.1  # router, khong duoc quet\n' > scope
 
 reconkit scan scanme.lab --scope scope.txt --db reconkit.db
 reconkit scan 10.0.0.0/24 --scope scope.txt        # quét cả dải, tự loại trừ 10.0.0.1
-reconkit scan 10.0.0.0/24 --scope scope.txt --traceroute   # ghi cả đường đi tới từng host
+reconkit scan 10.0.0.0/24 --scope scope.txt --traceroute   # ghi cả đường đi tới từng host (profile full bật sẵn)
 ```
+
+### Scan profile
+
+```bash
+reconkit profiles                                   # liệt kê profile + tuỳ chọn nmap tương ứng
+reconkit scan 10.0.0.0/24 --scope scope.txt --profile full           # cả 65.535 cổng + traceroute
+reconkit scan 10.0.0.5 --scope scope.txt --profile quick --timing 3   # ghi đè một thông số
+reconkit scan 10.0.0.5 --scope scope.txt --ports 22,80,8000-8100
+reconkit scan 10.0.0.0/24 --scope scope.txt --config reconkit.toml --profile nightly
+```
+
+| Profile | Quét gì | Dùng khi |
+|---|---|---|
+| `quick` | 100 cổng phổ biến, `-T4`, timeout 5 phút | xem nhanh |
+| `standard` (mặc định) | 1.000 cổng phổ biến, `-T4`, timeout 15 phút | quét thường |
+| `full` | cả 65.535 cổng TCP + traceroute, timeout 4 giờ | quét định kỳ |
+| `gentle` | 1.000 cổng, `-T2`, tối đa 50 gói/giây | mạng yếu / thiết bị dễ treo |
+
+File cấu hình (TOML) thêm profile mới dựa trên một profile dựng sẵn:
+
+```toml
+[profiles.nightly]
+base = "full"
+timing = 3
+max_rate = 300        # gói/giây
+host_timeout = 1800   # bỏ một host sau 30 phút
+```
+
+Mỗi run lưu tên profile và toàn bộ thông số: hai run khác profile thì không nhìn cùng một tập
+cổng, nên không so sánh được với nhau.
 
 `--traceroute` ghi lại các router nằm giữa máy quét và từng host (dùng để vẽ bản đồ). Probe
 chỉ gửi tới host trong scope; router trên đường đi chỉ trả lời "TTL hết hạn", không bị quét.
@@ -90,6 +120,6 @@ nó chỉ được hiển thị dưới dạng chữ, và Content-Security-Polic
 |---|---|
 | 0 | Quét xong, kết quả đã lưu vào DB |
 | 1 | Không dùng được database (hỏng, không phải SQLite, hoặc schema mới hơn bản ReconKit này) — chưa quét gì |
-| 2 | Đầu vào sai: không thấy file scope, hoặc file scope có dòng không hợp lệ |
+| 2 | Đầu vào sai: không thấy file scope / file cấu hình, có dòng không hợp lệ, profile hoặc thông số quét sai |
 | 3 | Từ chối: target nằm ngoài scope, tên miền trỏ tới IP ngoài scope, hoặc target bị denylist phủ kín |
 | 4 | Quét thất bại, lưu thành run `failed` **không có kết quả**: thiếu nmap, nmap lỗi / quá thời gian, không phân giải được tên, không host nào trả lời |
