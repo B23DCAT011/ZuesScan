@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import zlib
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -29,6 +30,20 @@ SCHEMA_VERSION = 5
 
 class StorageError(Exception):
     """The database cannot be used: unreadable, inconsistent, or from a newer ReconKit."""
+
+
+@dataclass(frozen=True, slots=True)
+class RunSummary:
+    """One line of the list of runs: what was scanned, how it ended, how much it found."""
+
+    id: int
+    target: str
+    status: RunStatus
+    started_at: str
+    finished_at: str
+    hosts: int
+    services: int
+    findings: int
 
 
 # Version 1: the tables of the first vertical slice, exactly as they shipped.
@@ -550,6 +565,37 @@ class Storage:
             ]
             run.assets.append(asset)
         return run
+
+    def list_runs(self, limit: int | None = None) -> list[RunSummary]:
+        """The stored runs, newest first, with how much each one found."""
+        rows = self._conn.execute(
+            "SELECT r.id, r.target, r.status, r.started_at, r.finished_at, "
+            "  (SELECT COUNT(*) FROM asset a WHERE a.run_id = r.id) AS hosts, "
+            "  (SELECT COUNT(*) FROM service s JOIN asset a ON a.id = s.asset_id "
+            "   WHERE a.run_id = r.id) AS services, "
+            "  (SELECT COUNT(*) FROM finding f JOIN asset a ON a.id = f.asset_id "
+            "   WHERE a.run_id = r.id) AS findings "
+            "FROM scan_run r ORDER BY r.id DESC LIMIT ?",
+            (-1 if limit is None else limit,),
+        ).fetchall()
+        return [
+            RunSummary(
+                id=r["id"],
+                target=r["target"],
+                status=RunStatus(r["status"]),
+                started_at=r["started_at"],
+                finished_at=r["finished_at"],
+                hosts=r["hosts"],
+                services=r["services"],
+                findings=r["findings"],
+            )
+            for r in rows
+        ]
+
+    def latest_run_id(self) -> int | None:
+        """The id of the most recent run, or None if there is none."""
+        row = self._conn.execute("SELECT MAX(id) AS id FROM scan_run").fetchone()
+        return None if row["id"] is None else int(row["id"])
 
     def outputs_for_run(self, run_id: int) -> list[RawOutput]:
         """The raw scanner output kept for a run, checked against its stored hash."""

@@ -494,3 +494,23 @@ def test_route_is_deleted_with_its_run(tmp_path: Path) -> None:
     with _store(tmp_path) as store:
         store.delete_run(store.save_run(run))
         assert _count(store, "route_hop") == 0
+
+
+# --- list of runs (for `reconkit runs` / `report`) ------------------------------------
+
+
+def test_list_runs_newest_first_with_counts(tmp_path: Path) -> None:
+    failed = ScanRun("10.0.0.9", "2026-01-02T00:00:00+00:00", "2026-01-02T00:00:01+00:00")
+    failed.status, failed.error = RunStatus.FAILED, "nmap timed out"
+    with _store(tmp_path) as store:
+        assert store.list_runs() == []
+        assert store.latest_run_id() is None
+        first = store.save_run(_make_run())
+        second = store.save_run(failed)
+        runs = store.list_runs()
+        assert store.latest_run_id() == second
+        assert [(r.id, r.status, r.hosts, r.services, r.findings) for r in runs] == [
+            (second, RunStatus.FAILED, 0, 0, 0),
+            (first, RunStatus.COMPLETED, 1, 1, 1),
+        ]
+        assert [r.id for r in store.list_runs(limit=1)] == [second]
