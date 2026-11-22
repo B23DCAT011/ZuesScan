@@ -71,7 +71,8 @@ Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây we
 - [x] `feat/scan-profiles` — profile `quick` / `standard` / `full` / `gentle`, file cấu hình TOML
       (`--config`), cờ ghi đè (`--ports`, `--timing`, `--max-rate`, `--timeout`…), lệnh
       `reconkit profiles`; mỗi run lưu profile + thông số (schema DB v6). (G6, G7)
-- [ ] IPv6: phân giải AAAA, kiểm scope, chạy nmap `-6` riêng (G22).
+- [x] `feat/ipv6` — phân giải cả AAAA, mọi địa chỉ phải trong scope, nmap `-6` chạy riêng cho
+      nhóm IPv6, `--ipv4-only`, chặn quét dải IPv6 lớn hơn /112. (G22)
 - [ ] Dấu vết kiểm toán: `scan_run` lưu mã băm file scope, người chạy, tham chiếu giấy phép
       (G21).
 - [ ] `feat/diff` — so fingerprint giữa các lần quét: lỗi mới / đã hết / fix giả. Kèm mô hình
