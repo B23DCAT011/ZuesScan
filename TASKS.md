@@ -82,7 +82,7 @@ Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây we
       (lý do + hạn xem lại); chỉ kết luận "đã hết" khi run thực sự nhìn vào. `reconkit
       inventory`, `findings`, `finding`, `diff`. (D1)
 - [x] `feat/report-json-sarif` — `reconkit report --json` / `--sarif` (SARIF 2.1.0). (G18)
-- [ ] `feat/logging` — `logging` + `--verbose` / `--log-file`. (G19)
+- [x] `feat/logging` — logger theo module, `-v` / `-vv`, `--log-file`, `--log-format json`. (G19)
 - [ ] Plugin `subfinder` (subdomain, cần wildcard scope), `nuclei` (template checks).
 - [ ] (Nâng cao) Quét có đăng nhập — đối chiếu gói đã cài với Debian/Ubuntu security tracker.
 

@@ -178,6 +178,11 @@ reconkit raw 1 --db reconkit.db                 # in ra màn hình (pipe đượ
 reconkit raw 1 --db reconkit.db --out run1.xml  # ghi ra file
 ```
 
+## Log
+
+`-v` (tiến trình) / `-vv` (chi tiết) in log ra stderr; `--log-file scan.log` ghi log đầy đủ;
+`--log-format json` cho hệ thống gom log. Ví dụ: `reconkit scan 10.0.0.5 --scope scope.txt -v`.
+
 ## Báo cáo & bản đồ bề mặt tấn công
 
 ```bash

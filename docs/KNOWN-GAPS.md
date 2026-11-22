@@ -321,6 +321,12 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     chính thức, cũng chưa thử import vào DefectDojo thật. Mỗi báo cáo
     nặng ~470 KB vì nhúng nguyên Cytoscape.js. Host được nhóm theo /24 (/64) vì từ ngoài không
     thấy subnet mask thật.
-- [ ] **G19. Dùng `print`, chưa có logging.** Sửa: module `logging`, cờ `--verbose`.
+- [x] **G19. Dùng `print`, chưa có logging.** Sửa: module `logging`, cờ `--verbose`.
+  - ✅ **Đã sửa (`feat/logging`)**: mỗi module ghi log qua `logging.getLogger(__name__)` (cây
+    `reconkit`). Mặc định chỉ hiện cảnh báo; `-v` tiến trình, `-vv` chi tiết (lệnh nmap đầy đủ,
+    từng request NVD); `--log-file` luôn ghi đủ mức debug; `--log-format json` mỗi dòng một object
+    JSON (có trường `event`, `run_id`…) cho hệ thống gom log. Không bao giờ ghi API key (nó nằm
+    trong header, không trong URL) và không ghi output gốc của scanner (đã có trong DB, có băm).
+    `print` vẫn dùng cho phần trả lời người dùng ở CLI — đó là giao diện, không phải log.
 - [ ] **G20. Chưa có Docker, README chưa có demo.** Sửa: Dockerfile, ảnh/GIF demo, mục
   "Known limitations" trong README trỏ về file này.
