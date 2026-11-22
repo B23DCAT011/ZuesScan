@@ -73,8 +73,9 @@ Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây we
       `reconkit profiles`; mỗi run lưu profile + thông số (schema DB v6). (G6, G7)
 - [x] `feat/ipv6` — phân giải cả AAAA, mọi địa chỉ phải trong scope, nmap `-6` chạy riêng cho
       nhóm IPv6, `--ipv4-only`, chặn quét dải IPv6 lớn hơn /112. (G22)
-- [ ] Dấu vết kiểm toán: `scan_run` lưu mã băm file scope, người chạy, tham chiếu giấy phép
-      (G21).
+- [x] `feat/audit-trail` — mỗi run lưu người chạy, engagement, file scope (đường dẫn + SHA-256
+      + nội dung), kế hoạch quét đã duyệt; nhật ký audit dạng chuỗi băm (quét / từ chối / xóa),
+      `reconkit audit --verify`; scope có `@engagement`, `@expires`, `@window`. (G21)
 - [ ] `feat/diff` — so fingerprint giữa các lần quét: lỗi mới / đã hết / fix giả. Kèm mô hình
       dữ liệu lai: kho tài sản (`first_seen` / `last_seen`, trạng thái finding) + lịch sử
       từng run (`observation`, `finding_event`) — xem D1.

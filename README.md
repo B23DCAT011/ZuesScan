@@ -82,6 +82,31 @@ Quy tắc của scope:
 - **Kết quả được kiểm lại.** Máy nào scanner trả về mà nằm ngoài scope sẽ không được lưu và
   CLI in cảnh báo.
 
+### Giấy phép quét & audit trail
+
+File scope có thể ghi điều khoản của giấy phép, ReconKit sẽ tuân theo:
+
+```text
+@engagement PT-2026-014, ký 2026-11-01 với ACME IT   # ghi vào mỗi run
+@expires 2026-12-31 +07:00                           # sau ngày này: từ chối quét
+@window Mon-Fri 22:00-06:00 +07:00                   # chỉ quét trong khung giờ này
+10.0.0.0/24
+```
+
+Mỗi run lưu người chạy (`--operator`, mặc định `user@máy`), engagement, đường dẫn + SHA-256 của
+file scope (và nội dung của nó), cùng danh sách địa chỉ đã được duyệt. Mọi lần quét, mọi lần bị
+từ chối và mọi lần xóa run được ghi vào **audit trail dạng chuỗi băm**:
+
+```bash
+reconkit audit --db reconkit.db            # ai quét gì, lúc nào, theo giấy phép nào
+reconkit audit --db reconkit.db --verify   # kiểm chuỗi băm + bằng chứng; in mã băm đầu chuỗi
+reconkit audit --db reconkit.db --scope 21e2cba7   # nội dung file scope đã dùng
+reconkit delete 3 --db reconkit.db --yes   # xóa một run (việc xóa cũng được ghi lại)
+```
+
+Lưu mã băm đầu chuỗi ở nơi khác (ticket, email gửi khách hàng): so lại là biết lịch sử có bị
+viết lại hay không.
+
 Cần cài `nmap` trên PATH. Mỗi lần quét được lưu thành một *run* có trạng thái: `completed`,
 `partial` (thiếu scanner) hoặc `failed` (kèm lỗi, không có kết quả). Một run `completed` với
 0 service nghĩa là "đã quét và không thấy gì", không bao giờ là "chưa quét". Run còn ghi
@@ -159,5 +184,5 @@ nó chỉ được hiển thị dưới dạng chữ, và Content-Security-Polic
 | 0 | Quét xong, kết quả đã lưu vào DB |
 | 1 | Không dùng được database (hỏng, không phải SQLite, hoặc schema mới hơn bản ReconKit này) — chưa quét gì |
 | 2 | Đầu vào sai: không thấy file scope / file cấu hình, có dòng không hợp lệ, profile hoặc thông số quét sai |
-| 3 | Từ chối: target nằm ngoài scope, tên miền trỏ tới IP ngoài scope, hoặc target bị denylist phủ kín |
+| 3 | Từ chối (và được ghi vào audit trail): target nằm ngoài scope, tên miền trỏ tới IP ngoài scope, target bị denylist phủ kín, giấy phép đã hết hạn hoặc ngoài khung giờ cho phép |
 | 4 | Quét thất bại, lưu thành run `failed` **không có kết quả**: thiếu nmap, nmap lỗi / quá thời gian, không phân giải được tên, không host nào trả lời |
