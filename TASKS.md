@@ -76,9 +76,11 @@ Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây we
 - [x] `feat/audit-trail` — mỗi run lưu người chạy, engagement, file scope (đường dẫn + SHA-256
       + nội dung), kế hoạch quét đã duyệt; nhật ký audit dạng chuỗi băm (quét / từ chối / xóa),
       `reconkit audit --verify`; scope có `@engagement`, `@expires`, `@window`. (G21)
-- [ ] `feat/diff` — so fingerprint giữa các lần quét: lỗi mới / đã hết / fix giả. Kèm mô hình
-      dữ liệu lai: kho tài sản (`first_seen` / `last_seen`, trạng thái finding) + lịch sử
-      từng run (`observation`, `finding_event`) — xem D1.
+- [x] `feat/diff` — kho tài sản (`inv_host` / `inv_service` / `inv_finding`: lần thấy đầu /
+      cuối, trạng thái) + lịch sử (`finding_event`), schema DB v11; vòng đời lỗi: mới → mở →
+      báo sửa → **đã xác minh vá** / **fix giả** ⚠, biến mất, tái xuất hiện ⚠, chấp nhận rủi ro
+      (lý do + hạn xem lại); chỉ kết luận "đã hết" khi run thực sự nhìn vào. `reconkit
+      inventory`, `findings`, `finding`, `diff`. (D1)
 - [ ] Báo cáo JSON / SARIF (G18; HTML đã có từ M1); `logging` + `--verbose` (G19).
 - [ ] Plugin `subfinder` (subdomain, cần wildcard scope), `nuclei` (template checks).
 - [ ] (Nâng cao) Quét có đăng nhập — đối chiếu gói đã cài với Debian/Ubuntu security tracker.

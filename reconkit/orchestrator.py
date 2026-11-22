@@ -85,6 +85,9 @@ class ScanRun:
     scope_path: str | None = None
     scope_sha256: str | None = None
     scope_text: str | None = None  # the scope file as it was: kept once per version
+    # Which CVE data the run matched against (None: no CVE stage). Runs only compare
+    # CVE findings made with the same kind of data.
+    cve_source: str | None = None
     # What the scope guard authorised for this run: resolved addresses, exclusions.
     plan: ScanTarget | None = None
     # Hosts a plugin reported that are outside the scope; dropped from `assets`.
@@ -230,6 +233,7 @@ class Orchestrator:
             "scope_path": self.scope.path,
             "scope_sha256": self.scope.sha256,
             "scope_text": self.scope.text,
+            "cve_source": None if self.cve_source is None else self.cve_source.name,
         }
         if self.profile is not None:
             record["profile"] = self.profile.name

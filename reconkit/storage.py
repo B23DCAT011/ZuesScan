@@ -21,7 +21,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from reconkit import inventory_store
 from reconkit.audit import GENESIS, AuditEvent, AuditKind, ChainReport, chain_hash
+from reconkit.inventory import Status
+from reconkit.inventory_store import FindingEvent, FindingRow
 from reconkit.orchestrator import RunStatus, ScanRun
 from reconkit.schema import (
     Asset,
@@ -36,7 +39,7 @@ from reconkit.schema import (
 
 # The schema version this code reads and writes. Bump it together with a new entry
 # in `_MIGRATIONS`; never edit a migration that has already shipped.
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 
 class StorageError(Exception):
@@ -325,6 +328,111 @@ _V10 = (
     "CREATE INDEX idx_audit_run ON audit_event(run_id)",
 )
 
+# Version 11 (D1): the inventory — every host, service and finding across runs, with
+# first / last seen and, for findings, their status in the lifecycle — and each
+# finding's history (`finding_event`). Runs record which CVE data they used. The
+# audit trail also records people's decisions about findings ('finding' events), so
+# its CHECK constraint is rebuilt (rows and hashes are copied unchanged).
+_V11 = (
+    "ALTER TABLE scan_run ADD COLUMN cve_source TEXT",
+    """
+    CREATE TABLE inv_host (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        key          TEXT NOT NULL UNIQUE,
+        host         TEXT NOT NULL,
+        ip           TEXT,
+        first_seen   TEXT NOT NULL,
+        last_seen    TEXT NOT NULL,
+        first_run    INTEGER,
+        last_run     INTEGER,
+        state        TEXT NOT NULL CHECK (state IN ('up', 'not_responding')),
+        state_since  TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE inv_service (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        host_id       INTEGER NOT NULL REFERENCES inv_host(id) ON DELETE CASCADE,
+        port          INTEGER NOT NULL,
+        protocol      TEXT NOT NULL,
+        name          TEXT,
+        product       TEXT,
+        version       TEXT,
+        first_seen    TEXT NOT NULL,
+        last_seen     TEXT NOT NULL,
+        last_run      INTEGER,
+        seen_profile  TEXT,
+        state         TEXT NOT NULL CHECK (state IN ('open', 'closed')),
+        state_since   TEXT NOT NULL,
+        UNIQUE (host_id, port, protocol)
+    )
+    """,
+    """
+    CREATE TABLE inv_finding (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        fingerprint     TEXT NOT NULL UNIQUE,
+        host_id         INTEGER NOT NULL REFERENCES inv_host(id) ON DELETE CASCADE,
+        port            INTEGER,
+        protocol        TEXT,
+        cve             TEXT,
+        rule_id         TEXT,
+        title           TEXT NOT NULL,
+        severity        TEXT NOT NULL,
+        confidence      TEXT,
+        cvss_score      REAL,
+        kev_added       TEXT,
+        epss            REAL,
+        first_seen      TEXT NOT NULL,
+        last_seen       TEXT NOT NULL,
+        first_run       INTEGER,
+        last_run        INTEGER,
+        seen_profile    TEXT,
+        seen_cve_kind   TEXT,
+        status          TEXT NOT NULL CHECK (status IN ('new', 'open', 'fix_claimed', 'fixed',
+                            'fake_fix', 'gone', 'reappeared', 'accepted')),
+        status_since    TEXT NOT NULL,
+        accepted_until  TEXT,
+        note            TEXT
+    )
+    """,
+    "CREATE INDEX idx_inv_finding_host ON inv_finding(host_id)",
+    "CREATE INDEX idx_inv_finding_status ON inv_finding(status)",
+    """
+    CREATE TABLE finding_event (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        finding_id  INTEGER NOT NULL REFERENCES inv_finding(id) ON DELETE CASCADE,
+        run_id      INTEGER,
+        at          TEXT NOT NULL,
+        event       TEXT NOT NULL,
+        old_status  TEXT,
+        new_status  TEXT NOT NULL,
+        actor       TEXT,
+        note        TEXT
+    )
+    """,
+    "CREATE INDEX idx_finding_event_finding ON finding_event(finding_id)",
+    "CREATE INDEX idx_finding_event_run ON finding_event(run_id)",
+    """
+    CREATE TABLE audit_event_new (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        at            TEXT NOT NULL,
+        kind          TEXT NOT NULL CHECK (kind IN ('scan', 'refused', 'deleted', 'finding')),
+        run_id        INTEGER REFERENCES scan_run(id) ON DELETE SET NULL,
+        target        TEXT NOT NULL,
+        operator      TEXT,
+        engagement    TEXT,
+        scope_sha256  TEXT,
+        detail        TEXT NOT NULL,
+        prev_hash     TEXT NOT NULL UNIQUE,
+        hash          TEXT NOT NULL UNIQUE
+    )
+    """,
+    "INSERT INTO audit_event_new SELECT * FROM audit_event",
+    "DROP TABLE audit_event",
+    "ALTER TABLE audit_event_new RENAME TO audit_event",
+    "CREATE INDEX idx_audit_run ON audit_event(run_id)",
+)
+
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: _V1,
     2: _V2,
@@ -336,6 +444,7 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
     8: _V8,
     9: _V9,
     10: _V10,
+    11: _V11,
 }
 
 
@@ -352,8 +461,11 @@ class Storage:
             raise StorageError(f"cannot open database {self.path}: {exc}") from exc
         self._conn.row_factory = sqlite3.Row
         try:
+            before = self.schema_version()
             self._migrate()
             self._conn.execute("PRAGMA foreign_keys = ON")
+            if 0 < before < 11 <= SCHEMA_VERSION:
+                self.rebuild_inventory()  # runs stored before the inventory existed
         except sqlite3.Error as exc:
             self._conn.close()
             raise StorageError(f"cannot use database {self.path}: {exc}") from exc
@@ -455,7 +567,7 @@ class Storage:
                 "INSERT INTO scan_run "
                 "(target, status, error, started_at, finished_at, reconkit_version, "
                 "profile, profile_settings, notes, plan, operator, engagement, scope_path, "
-                "scope_sha256) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "scope_sha256, cve_source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     run.target,
                     str(run.status),
@@ -473,6 +585,7 @@ class Storage:
                     run.engagement,
                     run.scope_path,
                     run.scope_sha256,
+                    run.cve_source,
                 ),
             )
             run_id = int(cur.lastrowid or 0)
@@ -492,6 +605,8 @@ class Storage:
                 service_ids = self._insert_services(asset_id, asset.services)
                 self._insert_findings(asset_id, asset.findings, service_ids)
                 self._insert_route(asset_id, asset.route)
+            # The inventory moves with the run, in the same transaction (D1).
+            inventory_store.apply_run(self._conn, run_id, run)
             detail: dict[str, Any] = {
                 "run_id": run_id,
                 "status": str(run.status),
@@ -573,6 +688,87 @@ class Storage:
                 chain_hash(prev, event),
             ),
         )
+
+    # --- inventory (D1) ------------------------------------------------------------------
+
+    def rebuild_inventory(self) -> int:
+        """Rebuild the inventory by replaying every stored run, oldest first.
+
+        People's decisions (fixes claimed, risks accepted) are not replayed: they are
+        lost, but remain in the audit trail. Returns the number of runs replayed.
+        """
+        ids = [r["id"] for r in self._conn.execute("SELECT id FROM scan_run ORDER BY id")]
+        runs = [(run_id, self.load_run(run_id)) for run_id in ids]
+        self._conn.execute("BEGIN IMMEDIATE")
+        with self._conn:
+            inventory_store.clear(self._conn)
+            for run_id, run in runs:
+                if run is not None:
+                    inventory_store.apply_run(self._conn, run_id, run)
+        return len(runs)
+
+    def inventory_findings(self, statuses: set[str] | None = None) -> list[FindingRow]:
+        return inventory_store.findings(self._conn, statuses)
+
+    def inventory_finding(self, finding_id: int) -> FindingRow | None:
+        return inventory_store.finding(self._conn, finding_id)
+
+    def inventory_hosts(self) -> list[dict[str, Any]]:
+        return inventory_store.hosts(self._conn)
+
+    def finding_history(self, finding_id: int) -> list[FindingEvent]:
+        return inventory_store.events(self._conn, finding_id=finding_id)
+
+    def changes_in_run(self, run_id: int) -> list[FindingEvent]:
+        """What a run changed in the inventory: new, fixed, fake fixes, ..."""
+        return inventory_store.events(self._conn, run_id=run_id)
+
+    def finding_statuses(self) -> dict[str, str]:
+        """Lifecycle status of every inventoried finding, by fingerprint."""
+        return inventory_store.status_by_fingerprint(self._conn)
+
+    def decide_finding(
+        self,
+        finding_id: int,
+        action: str,
+        *,
+        actor: str,
+        note: str | None = None,
+        until: str | None = None,
+        at: str | None = None,
+    ) -> Status:
+        """Record a person's decision on a finding, in the inventory and the audit trail."""
+        at = at or datetime.now(UTC).isoformat()
+        self._conn.execute("BEGIN IMMEDIATE")
+        with self._conn:
+            old, new = inventory_store.decide(
+                self._conn, finding_id, action, actor=actor, at=at, note=note, until=until
+            )
+            row = inventory_store.finding(self._conn, finding_id)
+            assert row is not None
+            detail: dict[str, Any] = {
+                "finding_id": finding_id,
+                "fingerprint": row.fingerprint,
+                "action": action,
+                "from": old,
+                "to": str(new),
+            }
+            if note:
+                detail["note"] = note
+            if until:
+                detail["until"] = until
+            self._append_audit(
+                AuditEvent(
+                    at=at,
+                    kind=AuditKind.FINDING,
+                    target=row.ip or row.host,
+                    operator=actor,
+                    engagement=None,
+                    scope_sha256=None,
+                    detail=detail,
+                )
+            )
+        return new
 
     # --- audit trail ---------------------------------------------------------------------
 
@@ -782,7 +978,7 @@ class Storage:
         row = self._conn.execute(
             "SELECT target, status, error, started_at, finished_at, reconkit_version, "
             "profile, profile_settings, notes, plan, operator, engagement, scope_path, "
-            "scope_sha256 FROM scan_run WHERE id = ?",
+            "scope_sha256, cve_source FROM scan_run WHERE id = ?",
             (run_id,),
         ).fetchone()
         if row is None:
@@ -804,6 +1000,7 @@ class Storage:
             engagement=row["engagement"],
             scope_path=row["scope_path"],
             scope_sha256=row["scope_sha256"],
+            cve_source=row["cve_source"],
         )
         for p in self._conn.execute(
             "SELECT name, status, version FROM scan_run_plugin WHERE run_id = ? ORDER BY rowid",
