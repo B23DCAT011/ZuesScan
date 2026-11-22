@@ -83,7 +83,9 @@ Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây we
       inventory`, `findings`, `finding`, `diff`. (D1)
 - [x] `feat/report-json-sarif` — `reconkit report --json` / `--sarif` (SARIF 2.1.0). (G18)
 - [x] `feat/logging` — logger theo module, `-v` / `-vv`, `--log-file`, `--log-format json`. (G19)
-- [ ] Plugin `subfinder` (subdomain, cần wildcard scope), `nuclei` (template checks).
+- [x] `feat/plugin-subfinder` — `scan --discover`: subfinder tìm subdomain (thụ động), scope có
+      wildcard `*.example.com`; mỗi tên vẫn phải phân giải ra địa chỉ trong scope mới được quét.
+- [ ] `feat/plugin-nuclei` — nuclei (template checks) chạy trên các dịch vụ web nmap tìm được.
 - [ ] (Nâng cao) Quét có đăng nhập — đối chiếu gói đã cài với Debian/Ubuntu security tracker.
 
 ## Giai đoạn 3 — Dịch vụ chạy nền

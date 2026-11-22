@@ -57,6 +57,13 @@ class ScanTarget:
     addresses: tuple[str, ...]  # in-scope IPs / CIDR ranges to scan
     exclude: tuple[str, ...] = ()  # denied IPs / ranges inside `addresses`
     hostname: str | None = None  # set when the user asked for a name
+    # Every in-scope name and the address it resolved to, as (name, address) pairs,
+    # when names were discovered (subfinder): one address can carry several names.
+    names: tuple[tuple[str, str], ...] = ()
+
+    def names_for(self, address: str) -> list[str]:
+        """The names that point at `address`, sorted."""
+        return sorted({name for name, ip in self.names if ip == address})
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,6 +226,8 @@ class Asset:
     ip: str | None = None
     services: list[Service] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
+    # Every name known to point at this host (discovered names, virtual hosts).
+    names: list[str] = field(default_factory=list)
     # The path from the scanner to this host, ordered by TTL, when traceroute ran.
     # Hops that never answered are missing, so the TTLs can have gaps. The last hop
     # is usually the host itself.

@@ -68,7 +68,8 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     quả: host ngoài scope bị loại, ghi vào `ScanRun.out_of_scope`, CLI cảnh báo. Tên không
     phân giải được → `ResolutionError`, exit 4. Đã kiểm với nmap + DNS thật.
   - Hệ quả cho người dùng: file scope chỉ có tên miền là **không đủ**, phải khai cả IP/dải.
-  - Còn lại: wildcard `*.example.com` (→ plugin subfinder); IPv6 (→ G22); quét bằng IP làm
+  - Còn lại: ~~wildcard `*.example.com`~~ (✅ `feat/plugin-subfinder`: `*.example.com` cho phép
+    *tên* dưới example.com; mỗi tên vẫn phải có mọi địa chỉ trong allowlist); ~~IPv6~~ (✅ G22); quét bằng IP làm
     mất tên miền ở tầng HTTP (virtual host / SNI) — phải truyền lại tên khi làm plugin kiểm
     tra web (nuclei). ~~`out_of_scope` chưa lưu vào DB~~ (✅ F7).
   - Dẫn chứng: `scope.py` so khớp hostname, không phân giải DNS.

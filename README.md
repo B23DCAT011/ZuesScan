@@ -75,6 +75,10 @@ Quy tắc của scope:
   tới cũng phải nằm trong allowlist; nếu không sẽ từ chối và nêu rõ IP nào. Vì vậy file
   scope phải khai cả IP / dải của máy, không chỉ tên. nmap luôn được đưa **IP** đã kiểm tra,
   không bao giờ là tên.
+- **Wildcard.** `*.example.com` cho phép mọi *tên* dưới example.com (không gồm example.com).
+  `reconkit scan example.com --discover` dùng subfinder tìm subdomain (thụ động, không gửi gì
+  tới mục tiêu), rồi chỉ quét những tên có mọi địa chỉ nằm trong scope; tên bị loại được ghi
+  lại kèm lý do. Cần cài `subfinder` (ProjectDiscovery).
 - **IPv6 cũng vậy.** Tên được phân giải ra cả IPv4 và IPv6; địa chỉ IPv6 cũng phải có trong
   scope (vd `2001:db8::/64`), hoặc quét `--ipv4-only`. Không quét quét dải IPv6 lớn hơn /112.
 - **Deny thắng allow.** Quét một dải có chứa địa chỉ bị cấm thì địa chỉ đó được loại trừ

@@ -410,7 +410,8 @@
     } else if (d.kind === "host" && host) {
       details.appendChild(el("h3", null, host.host));
       details.appendChild(kv([
-        ["address", host.ip], ["open ports", host.services.length],
+        ["address", host.ip], ["names", (host.names || []).join(", ")],
+        ["open ports", host.services.length],
         ["findings", host.findings.length],
         ["route", host.route.length ? host.route.map(function (h) { return h.ip || "?"; })
           .join(" → ") : "not traced", "mono"]

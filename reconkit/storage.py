@@ -42,7 +42,7 @@ log = logging.getLogger(__name__)
 
 # The schema version this code reads and writes. Bump it together with a new entry
 # in `_MIGRATIONS`; never edit a migration that has already shipped.
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 
 class StorageError(Exception):
@@ -436,6 +436,10 @@ _V11 = (
     "CREATE INDEX idx_audit_run ON audit_event(run_id)",
 )
 
+# Version 12: every name known to point at a host (discovered subdomains, virtual
+# hosts), as a JSON list.
+_V12 = ("ALTER TABLE asset ADD COLUMN names TEXT NOT NULL DEFAULT '[]'",)
+
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: _V1,
     2: _V2,
@@ -448,6 +452,7 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
     9: _V9,
     10: _V10,
     11: _V11,
+    12: _V12,
 }
 
 
@@ -609,8 +614,8 @@ class Storage:
             self._insert_outputs(run_id, run.raw_outputs)
             for asset in run.assets:
                 cur = self._conn.execute(
-                    "INSERT INTO asset (run_id, host, ip) VALUES (?, ?, ?)",
-                    (run_id, asset.host, asset.ip),
+                    "INSERT INTO asset (run_id, host, ip, names) VALUES (?, ?, ?, ?)",
+                    (run_id, asset.host, asset.ip, json.dumps(asset.names)),
                 )
                 asset_id = int(cur.lastrowid or 0)
                 service_ids = self._insert_services(asset_id, asset.services)
@@ -1042,9 +1047,9 @@ class Storage:
 
         services_by_id: dict[int, Service] = {}
         for a in self._conn.execute(
-            "SELECT id, host, ip FROM asset WHERE run_id = ? ORDER BY id", (run_id,)
+            "SELECT id, host, ip, names FROM asset WHERE run_id = ? ORDER BY id", (run_id,)
         ).fetchall():
-            asset = Asset(host=a["host"], ip=a["ip"])
+            asset = Asset(host=a["host"], ip=a["ip"], names=list(json.loads(a["names"] or "[]")))
             for s in self._conn.execute(
                 "SELECT id, port, protocol, state, name, product, version, cpe, banner "
                 "FROM service WHERE asset_id = ? ORDER BY id",

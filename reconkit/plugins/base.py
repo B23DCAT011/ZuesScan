@@ -95,3 +95,31 @@ class ScannerPlugin(Protocol):
         empty result to signal failure.
         """
         ...
+
+
+@dataclass
+class DiscoveryResult:
+    """What a discovery plugin found: names, not yet checked against the scope."""
+
+    names: list[str] = field(default_factory=list)
+    raw: list[RawOutput] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+@runtime_checkable
+class DiscoveryPlugin(Protocol):
+    """A tool that finds *names* to scan (subdomains), without touching the targets.
+
+    It never decides what gets scanned: every name it returns goes through the scope
+    guard (`Scope.plan_discovered`), which resolves it and checks every address.
+    """
+
+    name: str
+
+    def is_available(self) -> bool: ...
+
+    def version(self) -> str | None: ...
+
+    def discover(self, domain: str) -> DiscoveryResult:
+        """Names under `domain`. Raises :class:`ScanError` if the tool fails."""
+        ...
