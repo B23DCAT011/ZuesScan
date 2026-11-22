@@ -32,6 +32,18 @@ class Severity(StrEnum):
     CRITICAL = "critical"
 
 
+class Confidence(StrEnum):
+    """How sure ReconKit is that a finding is real (G10)."""
+
+    # Inferred, with a known reason to doubt it: e.g. a version match on a
+    # distribution's package, which may carry a backported fix under the old version.
+    TENTATIVE = "tentative"
+    # Inferred from a precise observation (vendor, product and upstream version).
+    FIRM = "firm"
+    # Shown by a check that exercised the flaw itself.
+    CONFIRMED = "confirmed"
+
+
 @dataclass(frozen=True, slots=True)
 class ScanTarget:
     """What a plugin is allowed to touch for one scan, as decided by the scope guard.
@@ -118,6 +130,9 @@ class Finding:
     rule_id: str | None = None
     # Address of the host; the orchestrator fills it in from the asset.
     ip: str | None = None
+    # How sure the finding is; None when the producer did not say. NOT part of the
+    # fingerprint: becoming surer of an issue does not make it another issue.
+    confidence: Confidence | None = None
 
     def identity(self) -> dict[str, str | int | None]:
         """What makes this finding *this* finding, from one scan to the next.
@@ -130,7 +145,7 @@ class Finding:
 
         Deliberately left out: the title and description (rewording an entry must not
         turn an old issue into a new one), severity (scores get revised), evidence,
-        and the product version — a server upgraded from one vulnerable version to
+        confidence, and the product version — a server upgraded from one vulnerable version to
         another still has the same open issue, not a new one.
         """
         svc = self.service

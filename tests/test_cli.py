@@ -541,3 +541,26 @@ def test_profile_from_a_config_file(
     assert "standard  (default)" in out
     assert "nightly\n" in out
     assert "nmap -sV -T3 -p - --max-retries 3 --host-timeout 3600s --traceroute" in out
+
+
+# --- CVE data (G8, G10) -------------------------------------------------------------------
+
+
+def test_finding_shows_its_confidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    svc = Service(port=22, name="ssh", product="OpenSSH", version="7.4p1 Debian 10+deb9u7")
+    _scan_once(tmp_path, monkeypatch, FakePlugin([lab_asset(svc)]))
+    out = capsys.readouterr().out
+    assert "[MEDIUM, tentative] OpenSSH username enumeration (CVE-2018-15473)" in out
+
+
+def test_unusable_cve_file_stops_the_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli, "NmapPlugin", lambda **_: FakePlugin([lab_asset()]))
+    db = tmp_path / "out.db"
+    argv = ["scan", "scanme.lab", "--scope", _scope_file(tmp_path), "--db", str(db)]
+    assert cli.main([*argv, "--cve-db", str(tmp_path / "nope.json")]) == 2
+    assert "CVE data file not found" in capsys.readouterr().err
+    assert not db.exists()

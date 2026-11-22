@@ -345,7 +345,8 @@
       var f = host.findings[ref.finding];
       details.appendChild(el("h3", null, f.title));
       details.appendChild(kv([
-        ["severity", sevBadge(f.severity)], ["CVE", f.cve], ["rule", f.rule_id],
+        ["severity", sevBadge(f.severity)], ["confidence", f.confidence], ["CVE", f.cve],
+        ["rule", f.rule_id],
         ["host", host.host + (host.ip && host.ip !== host.host ? " (" + host.ip + ")" : "")],
         ["port", f.port !== null ? f.port + "/" + f.protocol : null],
         ["fingerprint", f.fingerprint, "mono"]
@@ -429,7 +430,8 @@
     }
     rows.forEach(function (r) {
       var tr = el("tr", null,
-        el("td", null, sevBadge(r.f.severity)),
+        el("td", null, sevBadge(r.f.severity),
+          r.f.confidence ? el("div", { class: "muted" }, r.f.confidence) : null),
         el("td", null, r.host.host),
         el("td", { class: "mono" }, r.f.port !== null ? r.f.port + "/" + r.f.protocol : "-"),
         el("td", { class: "wrap" }, r.f.title, r.f.cve ? el("div", { class: "mono muted" }, r.f.cve) : null),

@@ -14,7 +14,7 @@ import ipaddress
 import sys
 from pathlib import Path
 
-from reconkit.cve import LocalCveSource
+from reconkit.cve import CveDataError, LocalCveSource
 from reconkit.orchestrator import NoPluginAvailableError, Orchestrator, ScanRun, now
 from reconkit.plugins.base import ScanError
 from reconkit.plugins.nmap import NmapPlugin
@@ -55,7 +55,8 @@ def _print_summary(run: ScanRun, run_id: int, db_path: str) -> None:
             pv = " ".join(p for p in (s.product, s.version) if p) or "-"
             print(f"    {f'{s.port}/{s.protocol}':<11}{(s.name or '-'):<16}{pv}")
         for f in asset.findings:
-            print(f"    [{f.severity.upper()}] {f.title}" + (f" ({f.cve})" if f.cve else ""))
+            sure = f", {f.confidence}" if f.confidence else ""
+            print(f"    [{f.severity.upper()}{sure}] {f.title}" + (f" ({f.cve})" if f.cve else ""))
             if f.evidence:
                 print(f"        evidence: {f.evidence}")
     for o in run.raw_outputs:
@@ -145,10 +146,13 @@ def _cmd_scan(args: argparse.Namespace) -> int:
 
     if args.no_cve:
         cve_source = None
-    elif args.cve_db:
-        cve_source = LocalCveSource(args.cve_db)
     else:
-        cve_source = LocalCveSource()  # bundled seed
+        try:
+            # The bundled seed unless another data file is given.
+            cve_source = LocalCveSource(args.cve_db) if args.cve_db else LocalCveSource()
+        except CveDataError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
     orch = Orchestrator(
         plugins=[NmapPlugin(profile=profile)], scope=scope, cve_source=cve_source, profile=profile
     )

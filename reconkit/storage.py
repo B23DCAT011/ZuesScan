@@ -21,11 +21,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from reconkit.orchestrator import RunStatus, ScanRun
-from reconkit.schema import Asset, Finding, Hop, RawOutput, Service, Severity
+from reconkit.schema import Asset, Confidence, Finding, Hop, RawOutput, Service, Severity
 
 # The schema version this code reads and writes. Bump it together with a new entry
 # in `_MIGRATIONS`; never edit a migration that has already shipped.
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 class StorageError(Exception):
@@ -258,7 +258,22 @@ _V6 = (
     "ALTER TABLE scan_run ADD COLUMN profile_settings TEXT",
 )
 
-_MIGRATIONS: dict[int, tuple[str, ...]] = {1: _V1, 2: _V2, 3: _V3, 4: _V4, 5: _V5, 6: _V6}
+# Version 7 (G10): how sure each finding is (tentative / firm / confirmed). Findings
+# stored before it did not say: NULL, not a guess.
+_V7 = (
+    "ALTER TABLE finding ADD COLUMN confidence TEXT "
+    "CHECK (confidence IN ('tentative', 'firm', 'confirmed'))",
+)
+
+_MIGRATIONS: dict[int, tuple[str, ...]] = {
+    1: _V1,
+    2: _V2,
+    3: _V3,
+    4: _V4,
+    5: _V5,
+    6: _V6,
+    7: _V7,
+}
 
 
 class Storage:
@@ -471,12 +486,13 @@ class Storage:
                     f.description,
                     f.evidence,
                     fp,
+                    None if f.confidence is None else str(f.confidence),
                 )
             )
         self._conn.executemany(
             "INSERT INTO finding "
             "(asset_id, service_id, title, severity, cve, rule_id, description, evidence, "
-            "fingerprint) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "fingerprint, confidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
 
@@ -567,7 +583,7 @@ class Storage:
                 asset.services.append(service)
             for f in self._conn.execute(
                 "SELECT service_id, title, severity, cve, rule_id, description, evidence, "
-                "fingerprint FROM finding WHERE asset_id = ? ORDER BY id",
+                "fingerprint, confidence FROM finding WHERE asset_id = ? ORDER BY id",
                 (a["id"],),
             ):
                 asset.findings.append(_finding(f, asset, services_by_id.get(f["service_id"])))
@@ -683,4 +699,5 @@ def _finding(row: sqlite3.Row, asset: Asset, service: Service | None) -> Finding
         description=row["description"] or "",
         evidence=row["evidence"] or "",
         fingerprint=row["fingerprint"],
+        confidence=None if row["confidence"] is None else Confidence(row["confidence"]),
     )
