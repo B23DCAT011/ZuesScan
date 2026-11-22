@@ -4,11 +4,13 @@ Mục tiêu: một **sản phẩm chạy được thật**, đủ chuẩn để 
 dùng lý do "chỉ là lab" để bỏ qua điểm yếu: chỗ nào đã nhìn ra thì sửa; đường tắt nào cố ý
 giữ tạm phải ghi vào [`docs/KNOWN-GAPS.md`](docs/KNOWN-GAPS.md) (mã `G1`…`G20`).
 
-Quy trình: mỗi task = 1 nhánh = 1 PR, merge trên GitHub theo thứ tự dưới đây. Lộ trình học
+Quy trình: mỗi task = 1 nhánh (`feat/` · `fix/` · `refactor/` · `chore/` · `docs/`), chạy đủ
+pytest + ruff + mypy trước khi commit, rồi `git merge --no-ff` vào `main` và push (từ
+2026-11-07 merge ở local thay cho PR; `--no-ff` giữ nhánh hiện rõ trong lịch sử). Lộ trình học
 song song: [`docs/LO-TRINH-HOC.md`](docs/LO-TRINH-HOC.md). Tầm nhìn & các quyết định thiết kế
 đã chốt (D1–D8): [`docs/THIET-KE.md`](docs/THIET-KE.md).
 
-Cập nhật lần cuối: 2026-11-16.
+Cập nhật lần cuối: 2026-11-22.
 
 ## Giai đoạn 1 — Lát cắt dọc (CLI) ✅
 
@@ -43,8 +45,11 @@ format cũ), và lớp an toàn scope.
 Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây web server. Chỉ làm được sau F5
 (dữ liệu theo từng host) và F7 (finding gắn với service).
 
-- [ ] `feat/nmap-traceroute` — plugin nmap thêm `--traceroute` (bật theo profile), lưu các
-      hop của từng host → vẽ đường đi máy quét → router → dải mạng.
+- [x] `feat/nmap-traceroute` — plugin nmap thêm `--traceroute` (cờ `scan --traceroute`; profile
+      `full` sẽ bật sẵn), lưu các hop của từng host (bảng `route_hop`, schema DB v5) → vẽ đường
+      đi máy quét → router → dải mạng. Hop chỉ được *nhìn thấy*, không bị quét: probe luôn gửi
+      tới host trong scope. Đã kiểm với nmap thật trên 127.0.0.1 (không có route, CLI giải
+      thích); hop thật sẽ được kiểm trên lab Docker có router (Giai đoạn 3).
 - [ ] `feat/report-html` — `reconkit report --run <id> --html <file>`: một file HTML duy nhất,
       nhúng sẵn dữ liệu đồ thị (JSON) + Cytoscape.js, mở offline. Phần Python chỉ dùng thư
       viện chuẩn. (G18)
