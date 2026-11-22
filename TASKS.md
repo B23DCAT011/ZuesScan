@@ -88,7 +88,9 @@ Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây we
 - [x] `feat/plugin-nuclei` — `scan --nuclei`: nuclei chạy trên dịch vụ web nmap tìm được, URL
       theo địa chỉ đã duyệt, vhost qua Host/SNI, mặc định an toàn (không interactsh, không
       template dos/fuzz/intrusive, giới hạn tốc độ); lỗi CVE quan sát được là `confirmed`.
-- [ ] (Nâng cao) Quét có đăng nhập — đối chiếu gói đã cài với Debian/Ubuntu security tracker.
+- [x] `feat/authenticated-scan` — `scan --credentials`: đăng nhập SSH bằng key, đọc gói đã cài,
+      đối chiếu Debian Security Tracker; rút lại các finding đoán theo banner khi gói đã có bản vá
+      (backport). Ubuntu chưa hỗ trợ.
 
 ## Giai đoạn 3 — Dịch vụ chạy nền
 
