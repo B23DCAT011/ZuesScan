@@ -525,3 +525,13 @@ def test_profile_is_stored_with_the_run(tmp_path: Path) -> None:
         assert (loaded.profile, loaded.profile_settings) == (run.profile, run.profile_settings)
         bare = store.load_run(store.save_run(_make_run()))
         assert bare is not None and (bare.profile, bare.profile_settings) == (None, None)
+
+
+def test_finding_confidence_is_stored(tmp_path: Path) -> None:
+    from reconkit.schema import Confidence
+
+    run = _make_run()
+    run.assets[0].findings[0].confidence = Confidence.TENTATIVE
+    with _store(tmp_path) as store:
+        (finding,) = store.findings_for_run(store.save_run(run))
+    assert finding.confidence == Confidence.TENTATIVE

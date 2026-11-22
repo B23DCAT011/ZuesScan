@@ -93,6 +93,7 @@ def _finding(f: Finding) -> dict[str, Any]:
         "severity": str(f.severity),
         "cve": f.cve,
         "rule_id": f.rule_id,
+        "confidence": None if f.confidence is None else str(f.confidence),
         "port": f.service.port if f.service else None,
         "protocol": f.service.protocol if f.service else None,
         "description": f.description,

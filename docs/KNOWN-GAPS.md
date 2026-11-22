@@ -126,7 +126,7 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     `-oN file`). nmap quá thời gian → giữ lại phần output đã in làm bằng chứng.
   - Còn lại: chưa tự giảm tốc khi mạng báo nghẽn (nmap đã tự làm một phần trong `-T`); chưa
     có khung giờ được phép quét (→ G21).
-- [ ] **G8. CVE khớp đúng phiên bản, bỏ qua CPE.**
+- [x] **G8. CVE khớp đúng phiên bản, bỏ qua CPE.**
   Sửa: khớp theo CPE + **dải phiên bản** (`versionStartIncluding`, `versionEndExcluding`…).
   - Thêm: nmap thật trả version kiểu `7.4p1 Debian 10+deb9u7`, không phải `7.4` → so khớp
     chính xác với seed **trượt ngay cả ví dụ OpenSSH 7.4**. `tests/data/nmap_sample.xml` đang
@@ -135,11 +135,34 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     Fixture test nên lấy từ output nmap thật.
   - Tên sản phẩm của nmap ≠ tên trong CPE (`Apache httpd` ↔ `apache:http_server`) — thêm lý
     do phải khớp theo CPE thay vì theo tên.
+  - ✅ **Đã sửa (`feat/cve-matching`)**: `reconkit/cve/` thành package. Dữ liệu CVE (seed và
+    sau này cache NVD) dùng định dạng 2: mỗi CVE có danh sách `affects` y như `cpeMatch` của NVD
+    (CPE + `versionStart/EndIncluding/Excluding`); seed được viết lại theo dữ liệu NVD thật.
+    Khớp theo **vendor + product của CPE** (nmap không có CPE thì tra bảng tên sản phẩm nmap →
+    CPE), có bảng alias vendor cho những chỗ nmap và NVD gọi khác nhau (`igor_sysoev` ↔ `f5`
+    cho nginx, `vsftpd` ↔ `vsftpd_project`). Version được **tách ra** trước khi so:
+    `7.4p1 Debian 10+deb9u7` → bản upstream `7.4`, patch level `p1`, dấu hiệu gói distro; so
+    sánh **theo số** (`7.10 > 7.9`, `1.0rc1 < 1.0`, `1.0.2k < 1.0.2l`). Fixture mới mô phỏng
+    đúng chuỗi version nmap trả cho gói Debian/Ubuntu. File CVE định dạng cũ hoặc hỏng → lỗi
+    rõ ràng, exit 2.
+  - Còn lại: cấu hình AND của NVD ("… chạy trên Debian 9") không được kiểm, chỉ dùng mục của
+    chính sản phẩm (quét cổng không thấy chắc hệ điều hành). Bảng alias vendor / tên sản phẩm
+    viết tay, chỉ gồm các trường hợp đã gặp. Một số kiểu version lạ (`1.0.0rc1` so với `1.0`,
+    chữ cái đơn kiểu `1.0b2` là beta hay bản sửa?) có thể so sai. Seed chỉ có 4 CVE (→ G9).
 - [ ] **G9. Dữ liệu CVE chỉ là seed 4 dòng.**
   Sửa: `NvdCveSource` đồng bộ NVD API 2.0 về cache local (có API key, tôn trọng rate limit);
   cân nhắc OSV, CISA KEV.
-- [ ] **G10. Không phân biệt "chắc chắn" và "có thể" bị lỗi** (backport của distro giữ nguyên
+- [x] **G10. Không phân biệt "chắc chắn" và "có thể" bị lỗi** (backport của distro giữ nguyên
   số phiên bản). Sửa: thêm `Finding.confidence` (`tentative` / `confirmed`).
+  - ✅ **Đã sửa (`feat/cve-matching`)**: `Finding.confidence` có 3 mức (theo thang của các
+    scanner thương mại): `tentative` — suy ra từ version nhưng có lý do để nghi (gói của distro:
+    Debian/Ubuntu/RHEL… thường vá bằng backport mà giữ nguyên số version; evidence nhắc kiểm
+    security tracker của distro), `firm` — vendor + product + version upstream rõ ràng,
+    `confirmed` — chỉ khi một bài kiểm thực sự chạm vào lỗi (dành cho plugin nuclei). Lưu trong
+    cột `finding.confidence` (schema DB v7), hiện ở CLI và báo cáo HTML. Không nằm trong
+    fingerprint.
+  - Còn lại: nhận diện distro dựa trên chuỗi version / banner (heuristic). Muốn chắc phải quét
+    có đăng nhập và đối chiếu số phiên bản gói với security tracker (→ GĐ 2, mục nâng cao).
 - [ ] **G11. Severity là nhãn gõ tay.** Sửa: lưu điểm + vector CVSS; cân nhắc EPSS để ưu tiên.
 - [x] **G12. Fingerprint có `title`.** Sửa câu chữ title là lỗi cũ thành "lỗi mới".
   Sửa: định danh theo asset + port + protocol + CVE/rule id (đổi schema fingerprint có version).

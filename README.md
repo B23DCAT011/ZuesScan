@@ -88,6 +88,13 @@ phiên bản của từng scanner đã chạy.
 Database có số phiên bản schema. Mở một DB cũ thì ReconKit tự nâng cấp, sau khi sao lưu
 bản cũ ra `<db>.v<N>.bak`; DB do bản ReconKit mới hơn tạo ra thì từ chối mở.
 
+CVE được khớp theo CPE và **dải phiên bản** (dữ liệu kiểu NVD), sau khi tách version nmap
+báo về (`7.4p1 Debian 10+deb9u7` → bản upstream 7.4). Mỗi lỗi có **độ tin cậy**: `tentative`
+khi dịch vụ là gói của một distro (có thể đã được vá bằng backport mà không đổi số version),
+`firm` khi version upstream rõ ràng, `confirmed` chỉ khi có bài kiểm chạm vào lỗi thật.
+`--cve-db file.json` dùng file dữ liệu CVE khác seed đi kèm (định dạng như
+`reconkit/data/cve_seed.json`).
+
 Output gốc của scanner (XML của nmap) được giữ lại theo từng run làm bằng chứng, kèm mã băm
 SHA-256, kể cả khi lần quét thất bại. Lấy lại bằng:
 

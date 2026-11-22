@@ -59,9 +59,12 @@ Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây we
 
 ## Giai đoạn 2 — Mở rộng theo chuẩn thực tế
 
-- [ ] CVE thật: khớp CPE + dải phiên bản, chuẩn hóa version (G8); `NvdCveSource` đồng bộ
-      NVD API 2.0 về cache local (G9); `Finding.confidence` cho vấn đề backport (G10);
-      CVSS score/vector, CWE, KEV, EPSS + xếp ưu tiên (G11).
+- [x] `feat/cve-matching` — khớp CVE theo CPE + dải phiên bản (định dạng `cpeMatch` của NVD),
+      chuẩn hoá version (`7.4p1 Debian 10+deb9u7` → 7.4 + p1 + gói distro), alias vendor
+      nmap ↔ NVD, `Finding.confidence` (`tentative` khi là gói của distro vì có backport).
+      (G8, G10)
+- [ ] `feat/nvd-source` — đồng bộ NVD API 2.0 về cache local, khớp trên cache. (G9)
+- [ ] `feat/cve-priority` — CVSS score/vector, CWE, KEV, EPSS + xếp ưu tiên. (G11)
 - [x] `feat/scan-profiles` — profile `quick` / `standard` / `full` / `gentle`, file cấu hình TOML
       (`--config`), cờ ghi đè (`--ports`, `--timing`, `--max-rate`, `--timeout`…), lệnh
       `reconkit profiles`; mỗi run lưu profile + thông số (schema DB v6). (G6, G7)

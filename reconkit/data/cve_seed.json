@@ -1,37 +1,43 @@
 {
-  "_comment": "Sample/seed CVE data for lab use only. Each entry maps an exact product+version to a REAL published CVE. Real deployments would pull this from the NVD API; this offline seed keeps scans deterministic and testable.",
+  "format": "reconkit-cve",
+  "version": 2,
+  "_comment": "Seed CVE data, bundled so that scans work offline and stay testable. Each entry is a real published CVE; 'affects' follows NVD's cpeMatch (CPE + version bounds), copied from NVD on 2026-11-22. Only the product's own entries are kept, not 'running on' platform conditions. Use an NVD cache for real coverage.",
   "entries": [
     {
-      "product": "openssh",
-      "version": "7.4",
       "cve": "CVE-2018-15473",
       "severity": "medium",
       "title": "OpenSSH username enumeration",
-      "description": "OpenSSH through 7.7 allows remote attackers to enumerate valid usernames by timing the response to malformed authentication requests."
+      "description": "OpenSSH through 7.7 is prone to a user enumeration vulnerability due to not delaying bailout for an invalid authenticating user until after the packet containing the request has been fully parsed.",
+      "affects": [
+        {"cpe": "cpe:2.3:a:openbsd:openssh:*:*:*:*:*:*:*:*", "versionEndIncluding": "7.7"}
+      ]
     },
     {
-      "product": "nginx",
-      "version": "1.18.0",
       "cve": "CVE-2021-23017",
       "severity": "high",
       "title": "nginx DNS resolver off-by-one heap write",
-      "description": "A security issue in nginx resolver (< 1.21.0) could allow an attacker to overwrite heap memory via a crafted DNS response, potentially leading to remote code execution."
+      "description": "A security issue in nginx resolver was identified, which might allow an attacker who is able to forge UDP packets from the DNS server to cause 1-byte memory overwrite, resulting in worker process crash or potential other impact.",
+      "affects": [
+        {"cpe": "cpe:2.3:a:f5:nginx:*:*:*:*:*:*:*:*", "versionStartIncluding": "0.6.18", "versionEndExcluding": "1.20.1"}
+      ]
     },
     {
-      "product": "vsftpd",
-      "version": "2.3.4",
       "cve": "CVE-2011-2523",
       "severity": "critical",
       "title": "vsftpd 2.3.4 backdoor command execution",
-      "description": "vsftpd 2.3.4 shipped with a malicious backdoor that opens a shell on port 6200 when a username containing ':)' is supplied."
+      "description": "vsftpd 2.3.4 downloaded between 20110630 and 20110703 contains a backdoor which opens a shell on port 6200/tcp.",
+      "affects": [
+        {"cpe": "cpe:2.3:a:vsftpd_project:vsftpd:2.3.4:*:*:*:*:*:*:*"}
+      ]
     },
     {
-      "product": "apache httpd",
-      "version": "2.4.49",
       "cve": "CVE-2021-41773",
-      "severity": "high",
+      "severity": "critical",
       "title": "Apache HTTP Server 2.4.49 path traversal and RCE",
-      "description": "A path traversal flaw in Apache HTTP Server 2.4.49 can map URLs to files outside the document root and, with mod_cgi enabled, lead to remote code execution."
+      "description": "A flaw was found in a change made to path normalization in Apache HTTP Server 2.4.49. An attacker could use a path traversal attack to map URLs to files outside the directories configured by Alias-like directives; if CGI scripts are also enabled, this could allow for remote code execution.",
+      "affects": [
+        {"cpe": "cpe:2.3:a:apache:http_server:2.4.49:*:*:*:*:*:*:*"}
+      ]
     }
   ]
 }
