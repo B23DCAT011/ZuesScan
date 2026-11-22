@@ -45,15 +45,15 @@ class FeedError(Exception):
     """A feed could not be downloaded or read."""
 
 
-def http_get(url: str, timeout: float = 120) -> bytes:
+def http_get(url: str, timeout: float = 300, max_bytes: int = MAX_FEED_BYTES) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": f"reconkit/{__version__}"})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            data: bytes = response.read(MAX_FEED_BYTES + 1)
+            data: bytes = response.read(max_bytes + 1)
     except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
         raise FeedError(f"cannot download {url}: {exc}") from exc
-    if len(data) > MAX_FEED_BYTES:
-        raise FeedError(f"{url} is larger than {MAX_FEED_BYTES} bytes; refusing it")
+    if len(data) > max_bytes:
+        raise FeedError(f"{url} is larger than {max_bytes} bytes; refusing it")
     log.info("downloaded %s (%d bytes)", url, len(data), extra={"event": "feed.download"})
     return data
 

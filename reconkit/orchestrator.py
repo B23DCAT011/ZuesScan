@@ -26,7 +26,7 @@ from reconkit import __version__
 from reconkit.cve import CveSource
 from reconkit.plugins.base import CheckPlugin, DiscoveryPlugin, ScanError, ScannerPlugin
 from reconkit.profiles import ScanProfile
-from reconkit.schema import Asset, Finding, RawOutput, ScanTarget
+from reconkit.schema import Asset, Confidence, Finding, RawOutput, ScanTarget
 from reconkit.scope import Resolver, Scope, ScopeError
 
 log = logging.getLogger(__name__)
@@ -210,6 +210,7 @@ class Orchestrator:
 
         # 3b. Checks (nuclei): test what was found. Before the CVE stage, so that an
         #     observed issue is kept over the same CVE inferred from a version.
+        cleared: dict[str, set[str]] = {}
         for check in self.checks:
             if not check.is_available():
                 skipped.append(check.name)
@@ -219,6 +220,8 @@ class Orchestrator:
             result = check.check(plan, assets)
             raw_outputs.extend(result.raw)
             notes.extend(f"{check.name}: {note}" for note in result.notes)
+            for ip, cves in result.cleared.items():
+                cleared.setdefault(ip, set()).update(cves)
             for found in result.assets:
                 known = next((a for a in assets if _same_host(a, found)), None)
                 if known is None or not self.scope.is_allowed(found.ip or found.host):
@@ -243,6 +246,25 @@ class Orchestrator:
                 sum(len(a.findings) for a in assets),
                 extra={"event": "cve.done"},
             )
+
+        # 4b. A check that saw the installed packages outranks a guess from a banner: a
+        #     tentative version match for a CVE it showed fixed on that host is withdrawn.
+        for asset in assets:
+            fixed = cleared.get(asset.ip or "", set())
+            if not fixed:
+                continue
+            kept = [
+                f
+                for f in asset.findings
+                if not (f.cve in fixed and f.confidence in (Confidence.TENTATIVE, Confidence.FIRM))
+                or (f.rule_id or "").startswith("debian:")
+            ]
+            if len(kept) < len(asset.findings):
+                notes.append(
+                    f"{asset.ip}: {len(asset.findings) - len(kept)} version-based finding(s) "
+                    "withdrawn: the installed packages carry the fix"
+                )
+                asset.findings = kept
 
         # 5. Identify every finding the same way, whichever plugin or stage produced
         #    it: tie it to the merged asset, then fingerprint it. Done here, once,
