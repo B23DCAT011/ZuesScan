@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import ipaddress
+import json
 import os
 import re
 import sys
@@ -44,6 +45,7 @@ from reconkit.plugins.base import ScanError
 from reconkit.plugins.nmap import NmapPlugin
 from reconkit.profiles import DEFAULT_PROFILE, ProfileError, ScanProfile, load_profiles, override
 from reconkit.report import render_html, report_model
+from reconkit.report.sarif import to_sarif
 from reconkit.schema import Asset, Finding, Severity
 from reconkit.scope import ResolutionError, Scope, ScopeError
 from reconkit.storage import SCHEMA_VERSION, Storage, StorageError
@@ -754,6 +756,9 @@ def _cmd_runs(args: argparse.Namespace) -> int:
 
 def _cmd_report(args: argparse.Namespace) -> int:
     """Write the report of one run (the latest by default)."""
+    if not (args.html or args.json or args.sarif):
+        print("error: choose at least one output: --html, --json or --sarif", file=sys.stderr)
+        return 2
     if not _db_exists(args.db):
         return 2
     try:
@@ -782,13 +787,22 @@ def _cmd_report(args: argparse.Namespace) -> int:
         print(f"error: no run #{run_id} in {args.db}", file=sys.stderr)
         return 2
 
-    page = render_html(report_model(run, run_id, statuses=statuses, changes=changes))
-    try:
-        Path(args.html).write_text(page, encoding="utf-8", newline="\n")
-    except OSError as exc:
-        print(f"error: cannot write {args.html}: {exc}", file=sys.stderr)
-        return 1
-    print(f"report of run #{run_id} ({run.target}, {run.status}) written to {args.html}")
+    model = report_model(run, run_id, statuses=statuses, changes=changes)
+    outputs = []
+    if args.html:
+        outputs.append((args.html, "HTML", render_html(model)))
+    if args.json:
+        outputs.append((args.json, "JSON", json.dumps(model, indent=2, ensure_ascii=False) + "\n"))
+    if args.sarif:
+        sarif = json.dumps(to_sarif(model), indent=2, ensure_ascii=False) + "\n"
+        outputs.append((args.sarif, "SARIF", sarif))
+    for path, kind, text in outputs:
+        try:
+            Path(path).write_text(text, encoding="utf-8", newline="\n")
+        except OSError as exc:
+            print(f"error: cannot write {path}: {exc}", file=sys.stderr)
+            return 1
+        print(f"{kind} report of run #{run_id} ({run.target}, {run.status}) written to {path}")
     print(
         "note: the report contains the scan results; share it only with people "
         "authorised to see them.",
@@ -1016,12 +1030,12 @@ def build_parser() -> argparse.ArgumentParser:
     runs.add_argument("--limit", type=int, default=20, help="how many runs (default 20)")
     runs.set_defaults(func=_cmd_runs)
 
-    report = sub.add_parser("report", help="write the report of a run (map + tables)")
+    report = sub.add_parser("report", help="write the report of a run (HTML map, JSON, SARIF)")
     report.add_argument("--run", type=int, help="id of the run (default: the latest)")
     report.add_argument("--db", default="reconkit.db", help="SQLite database path")
-    report.add_argument(
-        "--html", required=True, help="write a self-contained HTML report to this file"
-    )
+    report.add_argument("--html", help="a self-contained HTML report (map + tables)")
+    report.add_argument("--json", help="the report data as JSON (format reconkit-report)")
+    report.add_argument("--sarif", help="findings as SARIF 2.1.0 (DefectDojo, dashboards)")
     report.set_defaults(func=_cmd_report)
     return parser
 

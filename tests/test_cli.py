@@ -758,3 +758,28 @@ def test_scan_summary_shows_the_most_urgent_findings_only(
     assert len(re.findall(r"^    P[1-4] ", out, re.M)) == 10
     assert "P1 [INFO] issue 12" in out
     assert "... and 3 less urgent finding(s)" in out
+
+
+def test_report_writes_json_and_sarif_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import json
+
+    svc = Service(port=22, name="ssh", product="OpenSSH", version="7.4")
+    db = _scan_once(tmp_path, monkeypatch, FakePlugin([lab_asset(svc)]))
+    capsys.readouterr()
+    out_json, out_sarif = tmp_path / "r.json", tmp_path / "r.sarif"
+    argv = ["report", "--db", str(db), "--json", str(out_json), "--sarif", str(out_sarif)]
+    assert cli.main(argv) == 0
+    out = capsys.readouterr().out
+    assert "JSON report of run #1" in out and "SARIF report of run #1" in out
+    model = json.loads(out_json.read_text(encoding="utf-8"))
+    assert model["format"] == "reconkit-report"
+    assert model["hosts"][0]["findings"][0]["cve"] == "CVE-2018-15473"
+    sarif = json.loads(out_sarif.read_text(encoding="utf-8"))
+    assert sarif["runs"][0]["results"][0]["ruleId"] == "CVE-2018-15473"
+
+
+def test_report_needs_an_output(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["report", "--db", str(tmp_path / "x.db")]) == 2
+    assert "choose at least one output" in capsys.readouterr().err
