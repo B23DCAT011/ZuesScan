@@ -9,7 +9,8 @@ machines, and is rebuilt at will.
     cve_range  the products / versions it affects (NVD cpeMatch), indexed by product
     kev        CISA's Known Exploited Vulnerabilities (catalog, plus NVD's own copy)
     epss       FIRST EPSS scores, all CVEs, replaced daily
-    feed_state when the KEV catalog / EPSS scores were last downloaded
+    feed_state when the KEV catalog / EPSS scores / Debian tracker were last downloaded
+    debian_tracker  per Debian release and source package: CVE status, fixed version
     sync_state when each download scope ("all", or one product) was last brought up
                to date, so the next sync asks NVD only for what changed since
 """
@@ -24,8 +25,17 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from reconkit import debian
 from reconkit.cve.cpe import Cpe
-from reconkit.cve.feeds import EpssScore, FetchBytes, KevEntry, http_get, parse_epss, parse_kev
+from reconkit.cve.feeds import (
+    EpssScore,
+    FeedError,
+    FetchBytes,
+    KevEntry,
+    http_get,
+    parse_epss,
+    parse_kev,
+)
 from reconkit.cve.match import affected_range, identify, to_finding
 from reconkit.cve.nvd import NvdClient, NvdEntry, parse_cve
 from reconkit.cve.records import AffectedRange, CveRecord
@@ -33,7 +43,7 @@ from reconkit.schema import Finding, Service, Severity
 
 log = logging.getLogger(__name__)
 
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 SCOPE_ALL = "all"
 
 _SCHEMA = (
@@ -91,6 +101,18 @@ _SCHEMA = (
         fetched_at  TEXT NOT NULL,
         version     TEXT,
         rows        INTEGER NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS debian_tracker (
+        release        TEXT NOT NULL,
+        source         TEXT NOT NULL,
+        cve            TEXT NOT NULL,
+        status         TEXT NOT NULL,
+        fixed_version  TEXT,
+        urgency        TEXT NOT NULL DEFAULT '',
+        description    TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (release, source, cve)
     )
     """,
     """
@@ -238,6 +260,72 @@ class CveCache:
             "VALUES (?, ?, ?, ?)",
             (feed, at.isoformat(), version, rows),
         )
+
+    def replace_tracker(
+        self, releases: set[str], entries: list[debian.TrackerEntry], at: datetime
+    ) -> None:
+        """Replace the Debian tracker data of `releases`."""
+        with self._conn:
+            self._conn.executemany(
+                "DELETE FROM debian_tracker WHERE release = ?", [(r,) for r in releases]
+            )
+            self._conn.executemany(
+                "INSERT OR REPLACE INTO debian_tracker (release, source, cve, status, "
+                "fixed_version, urgency, description) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        e.release,
+                        e.source,
+                        e.cve,
+                        e.status,
+                        e.fixed_version,
+                        e.urgency,
+                        e.description,
+                    )
+                    for e in entries
+                ],
+            )
+            self._mark_feed("debian:" + ",".join(sorted(releases)), at, None, len(entries))
+
+    def tracker_entries(self, release: str, sources: set[str]) -> list[debian.TrackerEntry]:
+        """Tracker data for these source packages in `release`."""
+        result = []
+        names = sorted(sources)
+        for start in range(0, len(names), 500):  # SQLite caps the number of parameters
+            chunk = names[start : start + 500]
+            marks = ",".join("?" * len(chunk))
+            for r in self._conn.execute(
+                f"SELECT * FROM debian_tracker WHERE release = ? AND source IN ({marks})",
+                (release, *chunk),
+            ):
+                result.append(
+                    debian.TrackerEntry(
+                        source=r["source"],
+                        cve=r["cve"],
+                        release=r["release"],
+                        status=r["status"],
+                        fixed_version=r["fixed_version"],
+                        urgency=r["urgency"],
+                        description=r["description"],
+                    )
+                )
+        return result
+
+    def risk(self, cve: str) -> dict[str, Any]:
+        """CVSS / CWE / KEV / EPSS known for `cve`, as Finding fields (empty if unknown)."""
+        row = self._conn.execute(
+            "SELECT c.cvss_score, c.cvss_vector, c.cwe, k.date_added, e.score FROM "
+            "(SELECT ? AS id) q LEFT JOIN cve c ON c.id = q.id "
+            "LEFT JOIN kev k ON k.cve_id = q.id LEFT JOIN epss e ON e.cve_id = q.id",
+            (cve,),
+        ).fetchone()
+        return {
+            "cvss_score": row[0],
+            "cvss_vector": row[1],
+            "cwe": tuple(c for c in (row[2] or "").split(",") if c),
+            "kev_added": row[3],
+            "epss": row[4],
+        }
 
     def feeds(self) -> dict[str, tuple[str, str | None, int]]:
         """feed -> (fetched at, version or score date, rows)."""
@@ -448,3 +536,21 @@ def refresh_epss(
     date, scores = parse_epss(fetch(EPSS_URL))
     cache.replace_epss(date, scores, now())
     return date, len(scores)
+
+
+def refresh_debian(
+    cache: CveCache,
+    releases: set[str],
+    fetch: FetchBytes = lambda url: http_get(url, max_bytes=400 * 1024 * 1024),
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> int:
+    """Download the Debian Security Tracker; keep `releases`. Returns the rows stored."""
+    text = fetch(debian.TRACKER_URL).decode("utf-8")
+    try:
+        entries = list(debian.iter_tracker(text, releases))
+    except ValueError as exc:
+        raise FeedError(f"the Debian tracker data is not in the expected format: {exc}") from exc
+    if not entries:
+        raise FeedError(f"the Debian tracker has nothing for {', '.join(sorted(releases))}")
+    cache.replace_tracker(releases, entries, now())
+    return len(entries)

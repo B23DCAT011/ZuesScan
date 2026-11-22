@@ -180,8 +180,15 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
   - ✅ `confirmed` đã có nguồn (`feat/plugin-nuclei`): template CVE của nuclei gửi đúng request
     khai thác (an toàn) và kiểm câu trả lời; nếu cùng CVE cũng khớp theo version, finding quan
     sát được giữ lại.
-  - Còn lại: nhận diện distro dựa trên chuỗi version / banner (heuristic). Muốn chắc phải quét
-    có đăng nhập và đối chiếu số phiên bản gói với security tracker (→ GĐ 2, mục nâng cao).
+  - ✅ **Quét có đăng nhập (`feat/authenticated-scan`)**: với host có khai báo SSH key
+    (`--credentials`), ReconKit đọc gói đã cài (`dpkg-query`) và đối chiếu Debian Security
+    Tracker (so version theo đúng thuật toán của dpkg). CVE mà gói đã cài **có bản vá** thì
+    finding đoán theo banner cho CVE đó trên host bị **rút lại** (ghi chú trong run). An toàn:
+    chỉ key (không mật khẩu), host key phải có sẵn trong file known_hosts riêng (không tin lần
+    đầu), lệnh từ xa cố định, chỉ đọc, không sudo.
+  - Còn lại: chỉ Debian (Ubuntu dùng dữ liệu riêng — USN/OVAL — chưa làm; RHEL cũng vậy). Chưa
+    thử trên một máy Debian thật qua SSH (đã thử với dữ liệu tracker thật). Không đăng nhập thì
+    vẫn là heuristic như trên.
 - [x] **G11. Severity là nhãn gõ tay.** Sửa: lưu điểm + vector CVSS; cân nhắc EPSS để ưu tiên.
   - ✅ **Đã sửa (`feat/cve-priority`)**: mỗi finding mang **CVSS** (điểm + vector, ưu tiên điểm
     của NVD, v3.1 > v3.0 > v4.0 > v2), **CWE**, ngày vào **CISA KEV** (đã bị khai thác ngoài

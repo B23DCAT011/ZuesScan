@@ -58,6 +58,9 @@ class ScanResult:
     raw: list[RawOutput] = field(default_factory=list)
     # What a person should know about how the scan went, e.g. "IPv6: no host answered".
     notes: list[str] = field(default_factory=list)
+    # CVEs shown NOT to affect a host (address -> CVE ids), e.g. because an installed
+    # package carries the fix: version-based guesses for them are withdrawn.
+    cleared: dict[str, set[str]] = field(default_factory=dict)
 
 
 @runtime_checkable

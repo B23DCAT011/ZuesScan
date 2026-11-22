@@ -33,6 +33,7 @@ from reconkit.cve.cache import (
     CacheError,
     CveCache,
     NvdCveSource,
+    refresh_debian,
     refresh_epss,
     refresh_kev,
     sync,
@@ -43,9 +44,10 @@ from reconkit.diff import diff_runs
 from reconkit.inventory import ACTIVE, Status
 from reconkit.inventory_store import FindingEvent, FindingRow, InventoryError
 from reconkit.orchestrator import NoPluginAvailableError, Orchestrator, RunStatus, ScanRun, now
-from reconkit.plugins.base import ScanError
+from reconkit.plugins.base import CheckPlugin, ScanError
 from reconkit.plugins.nmap import NmapPlugin
 from reconkit.plugins.nuclei import NucleiPlugin
+from reconkit.plugins.ssh_packages import CredentialError, SshPackagesPlugin, load_credentials
 from reconkit.plugins.subfinder import SubfinderPlugin
 from reconkit.profiles import DEFAULT_PROFILE, ProfileError, ScanProfile, load_profiles, override
 from reconkit.report import render_html, report_model
@@ -214,15 +216,26 @@ def _cmd_scan(args: argparse.Namespace) -> int:
 
     with contextlib.ExitStack() as stack:
         cve_source: CveSource | None = None
+        checks: list[CheckPlugin] = []
         try:
-            if args.cve_cache:
-                cve_source = NvdCveSource(stack.enter_context(CveCache(args.cve_cache)))
+            cache = stack.enter_context(CveCache(args.cve_cache)) if args.cve_cache else None
+            if cache is not None:
+                cve_source = NvdCveSource(cache)
             elif not args.no_cve:
                 # The bundled seed unless another data file is given.
                 cve_source = LocalCveSource(args.cve_db) if args.cve_db else LocalCveSource()
-        except (CveDataError, CacheError) as exc:
+            if args.credentials:
+                if cache is None:
+                    raise CacheError(
+                        "--credentials needs --cve-cache with Debian tracker data "
+                        "(reconkit cve sync --debian <release>)"
+                    )
+                checks.append(SshPackagesPlugin(load_credentials(args.credentials), cache))
+        except (CveDataError, CacheError, CredentialError) as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
+        if args.nuclei:
+            checks.append(NucleiPlugin(profile=profile))
         orch = Orchestrator(
             plugins=[NmapPlugin(profile=profile)],
             scope=scope,
@@ -232,7 +245,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             operator=args.operator or default_operator(),
             engagement=args.engagement,
             discovery=[SubfinderPlugin()] if args.discover else None,
-            checks=[NucleiPlugin(profile=profile)] if args.nuclei else None,
+            checks=checks,
         )
         return _open_db_and_scan(args, orch)
 
@@ -377,6 +390,9 @@ def _cmd_cve_sync(args: argparse.Namespace) -> int:
             if not args.no_epss:
                 date, count = refresh_epss(cache)
                 print(f"FIRST EPSS scores of {(date or '?')[:10]}: {count} CVEs")
+            if args.debian:
+                count = refresh_debian(cache, set(args.debian))
+                print(f"Debian security tracker ({', '.join(args.debian)}): {count} entries")
     except CacheError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -948,6 +964,11 @@ def build_parser() -> argparse.ArgumentParser:
         "in the scope), then scan those in scope",
     )
     tuning.add_argument(
+        "--credentials",
+        help="TOML file of SSH keys ([[ssh]]): log in to Debian hosts and check their "
+        "installed packages against the Debian security tracker",
+    )
+    tuning.add_argument(
         "--nuclei",
         action="store_true",
         help="also run nuclei templates on the web services found (active checks: "
@@ -985,6 +1006,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-kev", action="store_true", help="do not refresh the CISA KEV catalog"
     )
     cve_sync.add_argument("--no-epss", action="store_true", help="do not refresh EPSS scores")
+    cve_sync.add_argument(
+        "--debian",
+        action="append",
+        metavar="RELEASE",
+        help="also keep the Debian security tracker for this release, e.g. bookworm "
+        "(repeatable; for `scan --credentials`)",
+    )
     cve_sync.set_defaults(func=_cmd_cve_sync)
     cve_status = cve_sub.add_parser("status", help="what the cache holds and when it was synced")
     cve_status.add_argument("--cache", default=DEFAULT_CVE_CACHE, help="cache file (SQLite)")

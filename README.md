@@ -42,6 +42,26 @@ dùng interactsh (không để mục tiêu gọi ra máy chủ công cộng), b�
 `intrusive`, `bruteforce`, giới hạn số request/giây theo profile. URL luôn dùng địa chỉ đã
 duyệt; tên miền (vhost) được gửi qua Host header + SNI. Cần cài `nuclei`.
 
+### Quét có đăng nhập (Debian)
+
+```toml
+# creds.toml — chỉ SSH key, không nhận mật khẩu
+[[ssh]]
+hosts = ["10.0.0.0/24"]
+user = "audit"                                 # tài khoản thường, không cần sudo
+key = "~/.ssh/reconkit_audit"
+known_hosts = "~/.ssh/reconkit_known_hosts"    # host key phải có sẵn ở đây
+```
+
+```bash
+reconkit cve sync --debian bookworm      # tải Debian Security Tracker (~90 MB)
+reconkit scan 10.0.0.0/24 --scope scope.txt --cve-cache reconkit-cve.db --credentials creds.toml
+```
+
+ReconKit đọc gói đã cài và báo những CVE mà bản vá chưa được cài — chính xác hơn đoán theo
+banner, vì Debian vá bằng backport mà không đổi số version của phần mềm. Ngược lại, CVE nào gói
+đã có bản vá thì các finding đoán theo banner cho CVE đó bị rút lại.
+
 ### Scan profile
 
 ```bash
