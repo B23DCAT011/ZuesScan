@@ -16,6 +16,15 @@ The allowlist is loaded from a plain-text file, one entry per line:
 `#` starts a comment anywhere on a line. Any entry that is not a valid IP, CIDR or
 hostname is an error (with its line number) — never silently reinterpreted.
 
+Lines starting with `@` state the terms of the authorisation itself (G21):
+
+    @engagement PT-2026-014, signed 2026-11-01 by ACME IT    # recorded with each run
+    @expires 2026-12-31 +07:00     # no scan after that day (offset: +07:00, default UTC)
+    @window Mon-Fri 22:00-06:00 +07:00   # only then; repeatable; may cross midnight
+
+A scan outside the expiry date or every window is refused like an out-of-scope
+target. An unknown directive is an error.
+
 A hostname entry authorises the *name* only. Before a scan the name is resolved and
 every address it points at must itself be in the allowlist (see `Scope.plan`), so a
 scope that lists `scanme.lab` must also list the address or range it lives in.
@@ -23,11 +32,13 @@ scope that lists `scanme.lab` must also list the address or range it lives in.
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import re
 import socket
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 
 from reconkit.schema import ScanTarget
@@ -109,6 +120,33 @@ def _overlaps(a: Network, b: Network) -> bool:
     return a.overlaps(b)
 
 
+_DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
+
+@dataclass(frozen=True, slots=True)
+class TimeWindow:
+    """When scanning is allowed: some days of the week, from `start` to `end`.
+
+    An `end` before `start` crosses midnight: "Fri 22:00-06:00" runs from Friday 22:00
+    to Saturday 06:00.
+    """
+
+    days: frozenset[int]  # 0 = Monday
+    start: time
+    end: time
+    offset: timedelta  # the UTC offset the times are given in
+    text: str  # as written, for messages
+
+    def allows(self, moment: datetime) -> bool:
+        local = moment.astimezone(timezone(self.offset))
+        now, day = local.time(), local.weekday()
+        if self.start <= self.end:
+            return day in self.days and self.start <= now < self.end
+        if now >= self.start:
+            return day in self.days
+        return now < self.end and (day - 1) % 7 in self.days
+
+
 @dataclass
 class Scope:
     """An allowlist (with optional denylist) of hostnames and IP/CIDR targets."""
@@ -117,6 +155,15 @@ class Scope:
     allow_nets: list[Network] = field(default_factory=list)
     deny_hosts: set[str] = field(default_factory=set)
     deny_nets: list[Network] = field(default_factory=list)
+    # The terms of the authorisation (`@` directives).
+    engagement: str | None = None
+    expires: datetime | None = None  # first moment it no longer holds
+    windows: list[TimeWindow] = field(default_factory=list)
+    # Where the scope came from, and the SHA-256 of its exact bytes: recorded with
+    # every run, so that "which scope authorised this?" has an answer.
+    path: str | None = None
+    text: str | None = None
+    sha256: str | None = None
 
     def add(self, entry: str) -> None:
         """Add one allow (or deny, if prefixed with '!') entry.
@@ -129,6 +176,9 @@ class Scope:
         entry = entry.split("#", 1)[0].strip()  # drop comments, incl. trailing ones
         if not entry:
             return
+        if entry.startswith("@"):
+            self._directive(entry)
+            return
         deny = entry.startswith("!")
         if deny:
             entry = entry[1:].strip()
@@ -140,11 +190,44 @@ class Scope:
         else:
             raise ScopeError(f"invalid scope entry {raw.strip()!r}")
 
+    def _directive(self, line: str) -> None:
+        name, _, value = line[1:].partition(" ")
+        name, value = name.lower(), value.strip()
+        if name == "engagement":
+            if not value:
+                raise ScopeError("@engagement needs a reference, e.g. a contract number")
+            self.engagement = value
+        elif name == "expires":
+            self.expires = _parse_expiry(value)
+        elif name == "window":
+            self.windows.append(_parse_window(value))
+        else:
+            raise ScopeError(f"unknown directive @{name} (known: @engagement, @expires, @window)")
+
+    def check_time(self, moment: datetime) -> None:
+        """Refuse a scan at `moment` if the authorisation has expired or is not open."""
+        source = f" in {self.path}" if self.path else ""
+        if self.expires is not None and moment >= self.expires:
+            raise ScopeError(
+                f"The authorisation{source} expired on {self.expires.isoformat()}: no scan "
+                "may start after it. Renew the authorisation, then update @expires."
+            )
+        if self.windows and not any(w.allows(moment) for w in self.windows):
+            allowed = "; ".join(w.text for w in self.windows)
+            raise ScopeError(
+                f"Scanning is only authorised{source} during: {allowed} "
+                f"(now: {moment.isoformat(timespec='minutes')})."
+            )
+
     @classmethod
     def from_file(cls, path: str | Path) -> Scope:
         """Load a scope from an allowlist file (one entry per line)."""
         scope = cls()
-        lines = Path(path).read_text(encoding="utf-8").splitlines()
+        data = Path(path).read_bytes()
+        scope.path = str(path)
+        scope.sha256 = hashlib.sha256(data).hexdigest()
+        scope.text = data.decode("utf-8")
+        lines = scope.text.splitlines()
         for lineno, line in enumerate(lines, start=1):
             try:
                 scope.add(line)
@@ -250,6 +333,69 @@ class Scope:
         if target in self.deny_hosts:
             return False
         return target in self.allow_hosts
+
+
+def _offset(text: str | None) -> timedelta:
+    """ "+07:00", "-05:30", "UTC" or nothing (UTC) -> a UTC offset."""
+    if not text or text.upper() in ("UTC", "Z"):
+        return timedelta(0)
+    match = re.fullmatch(r"([+-])(\d{2}):(\d{2})", text)
+    if match is None:
+        raise ScopeError(f"invalid UTC offset {text!r}: write it like +07:00")
+    sign = 1 if match.group(1) == "+" else -1
+    hours, minutes = int(match.group(2)), int(match.group(3))
+    if hours > 14 or minutes > 59:
+        raise ScopeError(f"invalid UTC offset {text!r}")
+    return sign * timedelta(hours=hours, minutes=minutes)
+
+
+def _parse_expiry(value: str) -> datetime:
+    """ "2026-12-31 +07:00": valid through that whole day; returns the first moment after."""
+    parts = value.split()
+    if not parts or len(parts) > 2:
+        raise ScopeError("@expires needs a date, e.g. @expires 2026-12-31 +07:00")
+    try:
+        day = date.fromisoformat(parts[0])
+    except ValueError:
+        raise ScopeError(f"@expires: {parts[0]!r} is not a date (YYYY-MM-DD)") from None
+    offset = _offset(parts[1] if len(parts) > 1 else None)
+    return datetime.combine(day + timedelta(days=1), time(), tzinfo=timezone(offset))
+
+
+def _parse_window(value: str) -> TimeWindow:
+    """ "[Mon-Fri|Sat,Sun|daily] HH:MM-HH:MM [+07:00]"."""
+    parts = value.split()
+    days = frozenset(range(7))
+    if parts and not re.match(r"\d", parts[0]):
+        days = _parse_days(parts.pop(0))
+    if not parts or len(parts) > 2:
+        raise ScopeError(f"@window {value!r}: write it like @window Mon-Fri 22:00-06:00 +07:00")
+    match = re.fullmatch(r"(\d{2}):(\d{2})-(\d{2}):(\d{2})", parts[0])
+    if match is None:
+        raise ScopeError(f"@window {value!r}: the hours must look like 22:00-06:00")
+    h1, m1, h2, m2 = (int(g) for g in match.groups())
+    if h1 > 23 or h2 > 24 or m1 > 59 or m2 > 59 or (h2 == 24 and m2):
+        raise ScopeError(f"@window {value!r}: not a time of day")
+    start = time(h1, m1)
+    # "until 24:00" is the end of the day, not its start.
+    end = time(23, 59, 59, 999999) if h2 == 24 else time(h2, m2)
+    if start == end:
+        raise ScopeError(f"@window {value!r}: start and end are the same")
+    offset = _offset(parts[1] if len(parts) > 1 else None)
+    return TimeWindow(days=days, start=start, end=end, offset=offset, text=value)
+
+
+def _parse_days(text: str) -> frozenset[int]:
+    if text.lower() == "daily":
+        return frozenset(range(7))
+    days: set[int] = set()
+    for item in text.lower().split(","):
+        first, _, last = item.partition("-")
+        if first not in _DAYS or (last and last not in _DAYS):
+            raise ScopeError(f"@window: {text!r} is not a list of days (e.g. Mon-Fri, Sat,Sun)")
+        a, b = _DAYS.index(first), _DAYS.index(last or first)
+        days.update(range(a, b + 1) if a <= b else [*range(a, 7), *range(0, b + 1)])
+    return frozenset(days)
 
 
 def _outside(target: str) -> str:

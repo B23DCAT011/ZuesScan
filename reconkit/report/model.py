@@ -47,6 +47,17 @@ def report_model(run: ScanRun, run_id: int) -> dict[str, Any]:
             "failed_scanner": run.failed_plugin,
             "out_of_scope": list(run.out_of_scope),
             "notes": list(run.notes),
+            "operator": run.operator,
+            "engagement": run.engagement,
+            "scope_path": run.scope_path,
+            "scope_sha256": run.scope_sha256,
+            "plan": None
+            if run.plan is None
+            else {
+                "addresses": list(run.plan.addresses),
+                "exclude": list(run.plan.exclude),
+                "hostname": run.plan.hostname,
+            },
             "raw_outputs": [
                 {"plugin": o.plugin, "format": o.format, "size": o.size, "sha256": o.sha256}
                 for o in run.raw_outputs

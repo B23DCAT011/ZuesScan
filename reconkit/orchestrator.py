@@ -14,6 +14,7 @@ is still worth remembering, as a run whose status is `failed` (see `failed_run`)
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -77,6 +78,13 @@ class ScanRun:
     # What a person should know about how the run went (a scanner's notes, choices
     # such as "IPv4 only" that narrowed what was looked at).
     notes: list[str] = field(default_factory=list)
+    # Under which authorisation the run happened (G21): who ran it, the engagement
+    # it belongs to, and the scope file (path + SHA-256 of its exact content).
+    operator: str | None = None
+    engagement: str | None = None
+    scope_path: str | None = None
+    scope_sha256: str | None = None
+    scope_text: str | None = None  # the scope file as it was: kept once per version
     # What the scope guard authorised for this run: resolved addresses, exclusions.
     plan: ScanTarget | None = None
     # Hosts a plugin reported that are outside the scope; dropped from `assets`.
@@ -94,6 +102,9 @@ class Orchestrator:
         resolver: Resolver | None = None,
         profile: ScanProfile | None = None,
         ipv4_only: bool = False,
+        operator: str | None = None,
+        engagement: str | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.plugins = plugins
         self.scope = scope
@@ -103,10 +114,15 @@ class Orchestrator:
         self.profile = profile
         # Do not look up IPv6 (AAAA) addresses of a name: narrower, and noted as such.
         self.ipv4_only = ipv4_only
+        self.operator = operator
+        # The engagement given for this run, else the one the scope file states.
+        self.engagement = engagement or scope.engagement
+        self.clock = clock or (lambda: datetime.now(UTC))
 
     def run(self, target: str) -> ScanRun:
         # 1. Safety gate: refuse anything outside the authorised scope, and pin down
         #    the exact addresses to scan (names are resolved here, once).
+        self.scope.check_time(self.clock())  # expired, or outside the agreed hours?
         plan = self.scope.plan(target, self.resolver, ipv4_only=self.ipv4_only)
 
         # 2. Fail loudly if nothing can scan: saving an empty run would look "clean".
@@ -207,9 +223,18 @@ class Orchestrator:
         )
 
     def _profile_record(self) -> dict[str, Any]:
-        if self.profile is None:
-            return {}
-        return {"profile": self.profile.name, "profile_settings": self.profile.settings()}
+        """What every run records about how and under which authorisation it ran."""
+        record: dict[str, Any] = {
+            "operator": self.operator,
+            "engagement": self.engagement,
+            "scope_path": self.scope.path,
+            "scope_sha256": self.scope.sha256,
+            "scope_text": self.scope.text,
+        }
+        if self.profile is not None:
+            record["profile"] = self.profile.name
+            record["profile_settings"] = self.profile.settings()
+        return record
 
     def _split_plugins(self) -> tuple[list[ScannerPlugin], list[str]]:
         """The plugins that can run here, and the names of those that cannot."""

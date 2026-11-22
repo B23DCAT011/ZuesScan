@@ -6,6 +6,8 @@ build orchestrator with the nmap plugin -> run -> persist to SQLite -> print a s
 `reconkit runs` lists the stored runs; `reconkit report` turns one into a report.
 `reconkit profiles` shows the scan profiles (`scan --profile`).
 `reconkit cve sync|status|show` keeps a local copy of NVD to match CVEs against.
+`reconkit audit` shows (and `--verify` checks) the audit trail; `reconkit delete`
+removes a run, on the record.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ import sys
 from pathlib import Path
 
 from reconkit import priority
+from reconkit.audit import default_operator
 from reconkit.cve import CveDataError, CveSource, LocalCveSource
 from reconkit.cve.cache import (
     CacheError,
@@ -48,6 +51,12 @@ def _print_summary(run: ScanRun, run_id: int, db_path: str) -> None:
         f"{name} {version or '(unknown version)'}" for name, version in run.tool_versions.items()
     )
     print(f"  scanners: {tools}")
+    if run.scope_sha256:
+        engagement = f", engagement {run.engagement!r}" if run.engagement else ""
+        print(
+            f"  authorised by: {run.scope_path} (sha256 {run.scope_sha256[:12]}...)"
+            f"{engagement}; operator {run.operator}"
+        )
     if run.profile:
         print(f"  profile: {run.profile} ({_profile_line(run)})")
     plan = run.plan
@@ -195,6 +204,8 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             cve_source=cve_source,
             profile=profile,
             ipv4_only=args.ipv4_only,
+            operator=args.operator or default_operator(),
+            engagement=args.engagement,
         )
         return _open_db_and_scan(args, orch)
 
@@ -222,8 +233,16 @@ def _scan(args: argparse.Namespace, orch: Orchestrator, store: Storage) -> int:
     try:
         run = orch.run(args.target)
     except ScopeError as exc:
-        # Refused before anything was probed: there is no run to record.
+        # Refused before anything was probed: no run, but the refusal is on record.
         print(f"refused: {exc}", file=sys.stderr)
+        store.record_refusal(
+            args.target,
+            str(exc),
+            operator=orch.operator,
+            engagement=orch.engagement,
+            scope_sha256=orch.scope.sha256,
+            scope_text=orch.scope.text,
+        )
         return 3
     except (NoPluginAvailableError, ResolutionError) as exc:
         print(f"scan failed: {exc}", file=sys.stderr)
@@ -403,6 +422,74 @@ def _cmd_profiles(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_audit(args: argparse.Namespace) -> int:
+    """Print the audit trail, verify it, or show a recorded scope file."""
+    if not _db_exists(args.db):
+        return 2
+    try:
+        with Storage(args.db) as store:
+            if args.scope:
+                text = store.scope_snapshot(args.scope)
+                if text is None:
+                    print(f"error: no single scope recorded as {args.scope}", file=sys.stderr)
+                    return 1
+                # Bytes: the console's newline translation must not alter the record.
+                sys.stdout.flush()
+                sys.stdout.buffer.write(text.encode("utf-8"))
+                sys.stdout.buffer.flush()
+                return 0
+            events = store.audit_events()
+            report = store.verify_audit() if args.verify else None
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    for event_id, event, _hash in events:
+        detail = event.detail
+        what = {
+            "scan": f"run #{detail.get('run_id')} {detail.get('status')}",
+            "refused": f"refused: {detail.get('reason', '')}",
+            "deleted": f"deleted run #{detail.get('run_id')}",
+        }.get(event.kind, event.kind)
+        scope = f" scope {event.scope_sha256[:12]}" if event.scope_sha256 else ""
+        engagement = f" [{event.engagement}]" if event.engagement else ""
+        print(
+            f"#{event_id:<4} {event.at[:19]}  {event.operator or '?'}{engagement}  "
+            f"{event.target}: {what}{scope}"
+        )
+    if report is None:
+        return 0
+    print(f"\n{report.events} event(s); head of the chain: {report.head}")
+    if report.intact:
+        print("chain intact; every scan's evidence matches what was recorded")
+        print("keep the head hash outside this database to detect a rewritten history")
+        return 0
+    for problem in report.problems:
+        print(f"PROBLEM: {problem}", file=sys.stderr)
+    return 1
+
+
+def _cmd_delete(args: argparse.Namespace) -> int:
+    if not args.yes:
+        print(
+            f"error: deleting run #{args.run_id} cannot be undone; add --yes to confirm",
+            file=sys.stderr,
+        )
+        return 2
+    if not _db_exists(args.db):
+        return 2
+    try:
+        with Storage(args.db) as store:
+            deleted = store.delete_run(args.run_id, operator=args.operator or default_operator())
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if not deleted:
+        print(f"error: no run #{args.run_id} in {args.db}", file=sys.stderr)
+        return 1
+    print(f"run #{args.run_id} deleted; the deletion is recorded in the audit trail")
+    return 0
+
+
 def _db_exists(path: str) -> bool:
     """Reading commands never create a database: say so if there is none."""
     if Path(path).is_file():
@@ -541,6 +628,13 @@ def build_parser() -> argparse.ArgumentParser:
     cve_data.add_argument(
         "--cve-cache", help="match against a local NVD cache (see `reconkit cve sync`)"
     )
+    who = scan.add_argument_group("authorisation", "recorded with the run (audit trail)")
+    who.add_argument("--operator", help="who runs the scan (default: user@host)")
+    who.add_argument(
+        "--engagement",
+        help="the authorisation this scan belongs to, e.g. a contract number "
+        "(default: @engagement in the scope file)",
+    )
     tuning = scan.add_argument_group(
         "scan profile", "how to scan; flags override single settings of the profile"
     )
@@ -617,6 +711,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     raw.add_argument("--out", help="write the output to this file instead of the screen")
     raw.set_defaults(func=_cmd_raw)
+
+    audit = sub.add_parser("audit", help="the audit trail: who scanned what, when, how")
+    audit.add_argument("--db", default="reconkit.db", help="SQLite database path")
+    audit.add_argument(
+        "--verify", action="store_true", help="check the hash chain and the stored evidence"
+    )
+    audit.add_argument("--scope", metavar="SHA256", help="print a recorded scope file")
+    audit.set_defaults(func=_cmd_audit)
+
+    delete = sub.add_parser("delete", help="delete a stored run (recorded in the audit trail)")
+    delete.add_argument("run_id", type=int)
+    delete.add_argument("--db", default="reconkit.db", help="SQLite database path")
+    delete.add_argument("--yes", action="store_true", help="confirm: the run cannot be restored")
+    delete.add_argument("--operator", help="who deletes it (default: user@host)")
+    delete.set_defaults(func=_cmd_delete)
 
     runs = sub.add_parser("runs", help="list the stored runs, newest first")
     runs.add_argument("--db", default="reconkit.db", help="SQLite database path")

@@ -97,7 +97,7 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     finding, trạng thái, scanner, host ngoài scope); `findings_for_run()` trả finding kèm
     `service`, nên tính lại fingerprint từ dữ liệu đọc ra cho đúng giá trị đã lưu.
   - Còn lại: finding của DB cũ (schema v1) không có thông tin này → `service_id` để NULL,
-    không đoán. `ScanRun.plan` (địa chỉ đã duyệt, danh sách loại trừ) chưa được lưu (→ G21).
+    không đoán. ~~`ScanRun.plan` (địa chỉ đã duyệt, danh sách loại trừ) chưa được lưu~~ (✅ G21).
   - Dẫn chứng: bảng `finding` không có cột `service_id`; `Storage.findings_for_run()` trả
     `Finding.service = None`.
   - Hậu quả: không biết lỗi nằm ở cổng nào; diff giữa các lần quét thiếu dữ liệu.
@@ -229,7 +229,8 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     - Chưa giới hạn kích thước output; quét `-p-` cả dải lớn có thể vài chục MB mỗi run.
     - Finding chưa trỏ tới *đoạn* cụ thể trong output gốc, chỉ mô tả bằng chữ.
     - Mã băm chống sửa nhầm / hỏng dữ liệu, **không** chống người có quyền ghi DB (họ sửa được
-      cả mã băm). Muốn chống thì phải ký số hoặc lưu mã băm ở nơi khác (→ G21).
+      cả mã băm). ✅ G21: mã băm output gốc nằm trong chuỗi audit; lưu mã băm đầu chuỗi ở nơi
+      khác thì phát hiện được cả việc viết lại lịch sử.
 - [x] **G14. `scan_run` không có trạng thái / lỗi / phiên bản tool.**
   Sửa: thêm `status`, `error`, `tool_version`.
   - ✅ **Đã sửa (F7)**: `scan_run` có `status` (`completed` / `partial` / `failed`, có ràng
@@ -241,8 +242,8 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     thông báo lỗi và stderr của tool, không có host nào. Lý do: khi quét theo lịch, "quét bị
     hỏng" mà không để lại gì thì trông y hệt "chưa ai quét". Run `failed` không thể bị đọc
     nhầm thành "đã quét, không thấy gì". Bị scope từ chối (exit 3) vẫn không tạo run.
-  - Còn lại: ~~chưa có lệnh CLI xem danh sách run~~ (✅ M1: `reconkit runs`); lần bị scope từ
-    chối chưa để lại dấu vết (→ G21).
+  - Còn lại: ~~chưa có lệnh CLI xem danh sách run~~ (✅ M1: `reconkit runs`); ~~lần bị scope từ
+    chối chưa để lại dấu vết~~ (✅ G21: sự kiện `refused` trong audit trail).
 - [x] **G15. Thiếu index khóa ngoại, thiếu `ON DELETE CASCADE`, chưa có migration.**
   Sửa: index FK, cascade, bảng `schema_version` + migration đơn giản.
   - ✅ **Đã sửa (F7)**: mọi khóa ngoại có index và `ON DELETE CASCADE` (riêng
@@ -256,7 +257,25 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     không tự dọn.
 - [x] **G16. `Asset.ip` không bao giờ được điền.** (sửa cùng G1) ✅ F5: plugin nmap điền từ
   `<address addrtype="ipv4|ipv6">`.
-- [ ] **G21. Không có dấu vết kiểm toán về uỷ quyền.** (từ Bài 3)
+- [x] **G21. Không có dấu vết kiểm toán về uỷ quyền.** (từ Bài 3)
+  - ✅ **Đã sửa (`feat/audit-trail`)**: mỗi run lưu **người chạy** (mặc định `user@host`,
+    `--operator`), **engagement** (`--engagement` hoặc dòng `@engagement` trong file scope),
+    **file scope** (đường dẫn + SHA-256 của đúng từng byte; nội dung được lưu một lần cho mỗi
+    phiên bản, xem lại bằng `reconkit audit --scope <sha>`) và **kế hoạch quét đã duyệt** (địa
+    chỉ, loại trừ) — schema DB v10. File scope có thể ghi **điều khoản của giấy phép**:
+    `@expires 2026-12-31 +07:00` (hết hạn thì từ chối), `@window Mon-Fri 22:00-06:00 +07:00`
+    (chỉ quét trong khung giờ, qua nửa đêm được). Bảng `audit_event` ghi **mọi lần quét, mọi
+    lần bị từ chối (exit 3) và mọi lần xóa run** thành một **chuỗi băm SHA-256**: mỗi sự kiện
+    băm cả nội dung của nó lẫn mã băm sự kiện trước; sự kiện quét chứa mã băm output gốc.
+    `reconkit audit --verify` tính lại cả chuỗi và kiểm từng bằng chứng: sửa / xóa / đổi thứ tự
+    một sự kiện, thay output gốc, hay xóa run mà không qua `reconkit delete` đều bị phát hiện.
+    Ghi chuỗi lấy khóa ghi trước (`BEGIN IMMEDIATE`) và `prev_hash` là UNIQUE nên hai tiến
+    trình không thể làm chuỗi rẽ nhánh. Đã kiểm với nmap thật.
+  - Còn lại: người có quyền ghi DB vẫn dựng lại được *cả* chuỗi — phải lưu **mã băm đầu chuỗi**
+    (in ra bởi `--verify`) ở nơi họ không sửa được (ticket, email cho khách hàng, máy chủ log);
+    chưa có chữ ký số hay gửi tự động đi đâu. Người chạy lấy từ hệ điều hành, không có xác thực
+    (→ web app có đăng nhập, GĐ 3). Khung giờ dùng độ lệch UTC cố định, không theo múi giờ có
+    giờ mùa hè.
   - Dẫn chứng: `scan_run` chỉ lưu `target`, `started_at`, `finished_at`. Không biết lần quét
     đó dùng file scope nào (nội dung lúc đó ra sao), ai chạy, theo giấy phép / đợt kiểm thử
     nào. Scope cũng không có khung giờ được phép quét.
