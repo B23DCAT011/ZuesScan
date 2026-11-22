@@ -4,6 +4,7 @@
 build orchestrator with the nmap plugin -> run -> persist to SQLite -> print a summary.
 `reconkit raw <run id>` gives back the scanner's own output kept for a run.
 `reconkit runs` lists the stored runs; `reconkit report` turns one into a report.
+`reconkit profiles` shows the scan profiles (`scan --profile`).
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from reconkit.cve import LocalCveSource
 from reconkit.orchestrator import NoPluginAvailableError, Orchestrator, ScanRun, now
 from reconkit.plugins.base import ScanError
 from reconkit.plugins.nmap import NmapPlugin
+from reconkit.profiles import DEFAULT_PROFILE, ProfileError, ScanProfile, load_profiles, override
 from reconkit.report import render_html, report_model
 from reconkit.schema import Asset
 from reconkit.scope import ResolutionError, Scope, ScopeError
@@ -31,6 +33,8 @@ def _print_summary(run: ScanRun, run_id: int, db_path: str) -> None:
         f"{name} {version or '(unknown version)'}" for name, version in run.tool_versions.items()
     )
     print(f"  scanners: {tools}")
+    if run.profile:
+        print(f"  profile: {run.profile} ({_profile_line(run)})")
     plan = run.plan
     if plan is not None and plan.hostname:
         print(f"  resolved: {plan.hostname} -> {', '.join(plan.addresses)}")
@@ -59,6 +63,13 @@ def _print_summary(run: ScanRun, run_id: int, db_path: str) -> None:
             f"\n  raw output kept: {o.plugin} ({o.format}, {o.size} bytes, "
             f"sha256 {o.sha256[:12]}...)  ->  reconkit raw {run_id} --db {db_path}"
         )
+
+
+def _profile_line(run: ScanRun) -> str:
+    try:
+        return ScanProfile(**(run.profile_settings or {})).summary()
+    except (TypeError, ProfileError):
+        return "settings unreadable"
 
 
 def _route_line(asset: Asset) -> str:
@@ -95,7 +106,34 @@ def _indent(text: str, prefix: str = "  | ") -> str:
     return "\n".join(prefix + line for line in text.splitlines())
 
 
+def _profile(args: argparse.Namespace) -> ScanProfile:
+    """The profile chosen with --profile (and --config), with the flags applied on top."""
+    profiles = load_profiles(args.config)
+    if args.profile not in profiles:
+        raise ProfileError(
+            f"unknown profile {args.profile!r}; choose one of: {', '.join(profiles)}"
+        )
+    return override(
+        profiles[args.profile],
+        {
+            "ports": args.ports,
+            "top_ports": args.top_ports,
+            "timing": args.timing,
+            "max_rate": args.max_rate,
+            "host_timeout": args.host_timeout,
+            "timeout": args.timeout,
+            "traceroute": args.traceroute,
+            "assume_up": True if args.assume_up else None,
+        },
+    )
+
+
 def _cmd_scan(args: argparse.Namespace) -> int:
+    try:
+        profile = _profile(args)
+    except ProfileError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     try:
         scope = Scope.from_file(args.scope)
     except FileNotFoundError:
@@ -112,7 +150,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     else:
         cve_source = LocalCveSource()  # bundled seed
     orch = Orchestrator(
-        plugins=[NmapPlugin(traceroute=args.traceroute)], scope=scope, cve_source=cve_source
+        plugins=[NmapPlugin(profile=profile)], scope=scope, cve_source=cve_source, profile=profile
     )
 
     # Open the database before scanning: if the results cannot be saved, find out
@@ -163,7 +201,7 @@ def _scan(args: argparse.Namespace, orch: Orchestrator, store: Storage) -> int:
         )
 
     untraced = [a.host for a in run.assets if not a.route]
-    if args.traceroute and untraced:
+    if orch.profile is not None and orch.profile.traceroute and untraced:
         # Not an error: the scan itself is fine, only the map will lack these paths.
         print(
             f"note: no route recorded for {len(untraced)} of {len(run.assets)} host(s). "
@@ -194,6 +232,23 @@ def _record_failure(
             file=sys.stderr,
         )
     return 4
+
+
+def _cmd_profiles(args: argparse.Namespace) -> int:
+    """List the built-in profiles and those of the config file."""
+    try:
+        profiles = load_profiles(args.config)
+    except ProfileError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    for profile in profiles.values():
+        default = "  (default)" if profile.name == DEFAULT_PROFILE else ""
+        print(f"{profile.name}{default}")
+        if profile.description:
+            print(f"    {profile.description}")
+        print(f"    {profile.summary()}")
+        print(f"    nmap {' '.join(profile.nmap_args())}")
+    return 0
 
 
 def _db_exists(path: str) -> bool:
@@ -324,12 +379,38 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--db", default="reconkit.db", help="SQLite database path")
     scan.add_argument("--no-cve", action="store_true", help="skip the CVE matching stage")
     scan.add_argument("--cve-db", help="path to a CVE seed JSON (default: bundled seed)")
-    scan.add_argument(
+    tuning = scan.add_argument_group(
+        "scan profile", "how to scan; flags override single settings of the profile"
+    )
+    tuning.add_argument(
+        "--profile",
+        default=DEFAULT_PROFILE,
+        help=f"quick | standard | full | gentle, or one from --config (default {DEFAULT_PROFILE})",
+    )
+    tuning.add_argument("--config", help="TOML file with more profiles ([profiles.<name>])")
+    ports = tuning.add_mutually_exclusive_group()
+    ports.add_argument("--ports", help="TCP ports, e.g. 22,80,8000-8100; '-' for all")
+    ports.add_argument("--top-ports", type=int, help="the N most common ports")
+    tuning.add_argument("--timing", type=int, choices=range(6), help="nmap -T0 ... -T5")
+    tuning.add_argument("--max-rate", type=int, help="send at most N packets per second")
+    tuning.add_argument("--host-timeout", type=int, help="give up on one host after N seconds")
+    tuning.add_argument("--timeout", type=int, help="stop the whole scan after N seconds")
+    tuning.add_argument(
         "--traceroute",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="record the network path to each host (for the map; slower)",
+    )
+    tuning.add_argument(
+        "--assume-up",
         action="store_true",
-        help="also record the network path to each host (for the map; slower)",
+        help="scan hosts that ignore ping (nmap -Pn); slow on ranges",
     )
     scan.set_defaults(func=_cmd_scan)
+
+    profiles = sub.add_parser("profiles", help="list the scan profiles")
+    profiles.add_argument("--config", help="TOML file with more profiles")
+    profiles.set_defaults(func=_cmd_profiles)
 
     raw = sub.add_parser("raw", help="show the raw scanner output kept for a run")
     raw.add_argument("run_id", type=int, help="id of the run, as printed by `scan`")

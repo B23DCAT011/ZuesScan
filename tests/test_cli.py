@@ -1,6 +1,7 @@
 """End-to-end CLI tests using a fake plugin and fake DNS injected via monkeypatch."""
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from conftest import FakePlugin, fake_resolver, lab_asset, lab_resolver
@@ -353,7 +354,7 @@ def test_traceroute_flag_reaches_the_plugin_and_route_is_shown_and_stored(
     asset = lab_asset(Service(port=22, name="ssh"))
     asset.route = [Hop(ttl=1, ip="192.168.1.1"), Hop(ttl=3, ip="10.0.0.5")]
     fake = FakePlugin([asset])
-    options: dict[str, object] = {}
+    options: dict[str, Any] = {}
 
     def make(**kwargs: object) -> FakePlugin:
         options.update(kwargs)
@@ -365,7 +366,7 @@ def test_traceroute_flag_reaches_the_plugin_and_route_is_shown_and_stored(
 
     assert cli.main([*argv, "--traceroute"]) == 0
     captured = capsys.readouterr()
-    assert options["traceroute"] is True
+    assert options["profile"].traceroute is True
     assert "route: 192.168.1.1 -> ? -> 10.0.0.5 (3 hops)" in captured.out
     assert "no route recorded" not in captured.err
     assert _count(db, "route_hop") == 2
@@ -374,7 +375,7 @@ def test_traceroute_flag_reaches_the_plugin_and_route_is_shown_and_stored(
 def test_traceroute_is_off_unless_asked(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    options: dict[str, object] = {}
+    options: dict[str, Any] = {}
 
     def make(**kwargs: object) -> FakePlugin:
         options.update(kwargs)
@@ -382,7 +383,7 @@ def test_traceroute_is_off_unless_asked(
 
     monkeypatch.setattr(cli, "NmapPlugin", make)
     cli.main(["scan", "scanme.lab", "--scope", _scope_file(tmp_path), "--db", str(tmp_path / "d")])
-    assert options["traceroute"] is False
+    assert options["profile"].traceroute is False
     assert "route:" not in capsys.readouterr().out
 
 
@@ -464,3 +465,79 @@ def test_report_that_cannot_be_written_is_an_error(
     out = str(tmp_path / "no-such-dir" / "r.html")
     assert cli.main(["report", "--db", str(db), "--html", out]) == 1
     assert "cannot write" in capsys.readouterr().err
+
+
+# --- scan profiles (G6, G7) -----------------------------------------------------------
+
+
+def _capture_profile(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    options: dict[str, Any] = {}
+
+    def make(**kwargs: object) -> FakePlugin:
+        options.update(kwargs)
+        return FakePlugin([lab_asset(Service(port=22))])
+
+    monkeypatch.setattr(cli, "NmapPlugin", make)
+    return options
+
+
+def test_scan_uses_the_chosen_profile_and_records_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    options = _capture_profile(monkeypatch)
+    db = tmp_path / "out.db"
+    argv = ["scan", "scanme.lab", "--scope", _scope_file(tmp_path), "--db", str(db)]
+
+    assert cli.main([*argv, "--profile", "quick"]) == 0
+    assert options["profile"].top_ports == 100
+    assert "profile: quick (top 100 ports, -T4, timeout 5min)" in capsys.readouterr().out
+    with Storage(db) as store:
+        run = store.load_run(1)
+    assert run is not None
+    assert run.profile == "quick"
+    assert run.profile_settings is not None and run.profile_settings["top_ports"] == 100
+
+
+def test_flags_override_the_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    options = _capture_profile(monkeypatch)
+    argv = ["scan", "scanme.lab", "--scope", _scope_file(tmp_path), "--db", str(tmp_path / "d")]
+    flags = ["--profile", "full", "--ports", "22,80", "--timing", "3", "--max-rate", "100"]
+    assert cli.main([*argv, *flags, "--no-traceroute", "--assume-up", "--timeout", "60"]) == 0
+    profile = options["profile"]
+    assert (profile.name, profile.ports, profile.timing) == ("full", "22,80", 3)
+    assert (profile.max_rate, profile.traceroute, profile.assume_up) == (100, False, True)
+    assert profile.timeout == 60
+
+
+def test_bad_profile_or_setting_stops_before_anything_happens(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _capture_profile(monkeypatch)
+    db = tmp_path / "out.db"
+    argv = ["scan", "scanme.lab", "--scope", _scope_file(tmp_path), "--db", str(db)]
+
+    assert cli.main([*argv, "--profile", "turbo"]) == 2
+    assert "unknown profile 'turbo'; choose one of: quick, standard" in capsys.readouterr().err
+    assert cli.main([*argv, "--ports", "-oN /tmp/x"]) == 2
+    assert "invalid port list" in capsys.readouterr().err
+    assert not db.exists()
+
+
+def test_profile_from_a_config_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    options = _capture_profile(monkeypatch)
+    config = tmp_path / "reconkit.toml"
+    config.write_text('[profiles.nightly]\nbase = "full"\ntiming = 3\n', encoding="utf-8")
+    argv = ["scan", "scanme.lab", "--scope", _scope_file(tmp_path), "--db", str(tmp_path / "d")]
+    assert cli.main([*argv, "--config", str(config), "--profile", "nightly"]) == 0
+    assert (options["profile"].name, options["profile"].timing) == ("nightly", 3)
+
+    capsys.readouterr()
+    assert cli.main(["profiles", "--config", str(config)]) == 0
+    out = capsys.readouterr().out
+    assert "standard  (default)" in out
+    assert "nightly\n" in out
+    assert "nmap -sV -T3 -p - --max-retries 3 --host-timeout 3600s --traceroute" in out

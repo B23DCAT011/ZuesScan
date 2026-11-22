@@ -78,6 +78,7 @@
       return s.name + " " + (s.version || "(unknown version)");
     });
     if (scanners.length) meta.appendChild(el("span", null, "scanners: " + scanners.join(", ")));
+    if (run.profile) meta.appendChild(el("span", null, "profile: " + run.profile));
 
     if (run.error) {
       var box = document.getElementById("error");
@@ -462,6 +463,13 @@
     table.appendChild(body);
   }
 
+  function settingsLine(settings) {
+    if (!settings) return "";
+    return Object.keys(settings).filter(function (k) {
+      return k !== "name" && settings[k] !== null && settings[k] !== false;
+    }).map(function (k) { return k + "=" + settings[k]; }).join(" ");
+  }
+
   function renderRun() {
     var outputs = run.raw_outputs.map(function (o) {
       return o.plugin + " (" + o.format + ", " + o.size + " bytes, sha256 " + o.sha256 + ")";
@@ -470,6 +478,8 @@
     var pairs = [
       ["target", run.target], ["status", run.status], ["started", run.started_at],
       ["finished", run.finished_at], ["ReconKit", run.reconkit_version],
+      ["profile", run.profile ? run.profile + "  " + settingsLine(run.profile_settings) : null,
+        "mono"],
       ["skipped scanners", run.skipped_scanners.join(", ")],
       ["out of scope (dropped)", run.out_of_scope.join(", ")],
       ["raw output kept", outputs.join("\n")]

@@ -25,7 +25,7 @@ from reconkit.schema import Asset, Finding, Hop, RawOutput, Service, Severity
 
 # The schema version this code reads and writes. Bump it together with a new entry
 # in `_MIGRATIONS`; never edit a migration that has already shipped.
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 class StorageError(Exception):
@@ -251,7 +251,14 @@ _V5 = (
     """,
 )
 
-_MIGRATIONS: dict[int, tuple[str, ...]] = {1: _V1, 2: _V2, 3: _V3, 4: _V4, 5: _V5}
+# Version 6 (G6, G7): the scan profile of each run, by name and with its exact settings
+# (JSON), so that two runs can be compared only when they looked at the same things.
+_V6 = (
+    "ALTER TABLE scan_run ADD COLUMN profile TEXT",
+    "ALTER TABLE scan_run ADD COLUMN profile_settings TEXT",
+)
+
+_MIGRATIONS: dict[int, tuple[str, ...]] = {1: _V1, 2: _V2, 3: _V3, 4: _V4, 5: _V5, 6: _V6}
 
 
 class Storage:
@@ -364,8 +371,8 @@ class Storage:
         with self._conn:  # BEGIN ... COMMIT, or ROLLBACK on exception
             cur = self._conn.execute(
                 "INSERT INTO scan_run "
-                "(target, status, error, started_at, finished_at, reconkit_version) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "(target, status, error, started_at, finished_at, reconkit_version, "
+                "profile, profile_settings) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     run.target,
                     str(run.status),
@@ -373,6 +380,10 @@ class Storage:
                     run.started_at,
                     run.finished_at,
                     run.reconkit_version,
+                    run.profile,
+                    None
+                    if run.profile_settings is None
+                    else json.dumps(run.profile_settings, sort_keys=True),
                 ),
             )
             run_id = int(cur.lastrowid or 0)
@@ -504,8 +515,8 @@ class Storage:
         as None — see G21.
         """
         row = self._conn.execute(
-            "SELECT target, status, error, started_at, finished_at, reconkit_version "
-            "FROM scan_run WHERE id = ?",
+            "SELECT target, status, error, started_at, finished_at, reconkit_version, "
+            "profile, profile_settings FROM scan_run WHERE id = ?",
             (run_id,),
         ).fetchone()
         if row is None:
@@ -517,6 +528,10 @@ class Storage:
             status=RunStatus(row["status"]),
             error=row["error"],
             reconkit_version=row["reconkit_version"],
+            profile=row["profile"],
+            profile_settings=(
+                None if row["profile_settings"] is None else json.loads(row["profile_settings"])
+            ),
         )
         for p in self._conn.execute(
             "SELECT name, status, version FROM scan_run_plugin WHERE run_id = ? ORDER BY rowid",

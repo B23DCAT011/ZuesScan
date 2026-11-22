@@ -178,6 +178,7 @@ def test_model_summarises_the_run() -> None:
     assert model["format"] == "reconkit-report"
     assert model["run"]["id"] == 7
     assert model["run"]["scanners"] == [{"name": "nmap", "version": "7.992"}]
+    assert model["run"]["profile"] is None
     assert model["summary"] == {
         "hosts": 2,
         "services": 2,

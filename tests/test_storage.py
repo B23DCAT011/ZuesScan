@@ -514,3 +514,14 @@ def test_list_runs_newest_first_with_counts(tmp_path: Path) -> None:
             (first, RunStatus.COMPLETED, 1, 1, 1),
         ]
         assert [r.id for r in store.list_runs(limit=1)] == [second]
+
+
+def test_profile_is_stored_with_the_run(tmp_path: Path) -> None:
+    run = _make_run()
+    run.profile, run.profile_settings = "full", {"ports": "-", "timing": 4, "traceroute": True}
+    with _store(tmp_path) as store:
+        loaded = store.load_run(store.save_run(run))
+        assert loaded is not None
+        assert (loaded.profile, loaded.profile_settings) == (run.profile, run.profile_settings)
+        bare = store.load_run(store.save_run(_make_run()))
+        assert bare is not None and (bare.profile, bare.profile_settings) == (None, None)
