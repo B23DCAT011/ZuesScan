@@ -542,6 +542,12 @@
       ["skipped scanners", run.skipped_scanners.join(", ")],
       ["out of scope (dropped)", run.out_of_scope.join(", ")],
       ["notes", (run.notes || []).join("\n")],
+      ["operator", run.operator],
+      ["engagement", run.engagement],
+      ["scope", run.scope_sha256 ? run.scope_path + "  (sha256 " + run.scope_sha256 + ")" : null,
+        "mono"],
+      ["authorised addresses", run.plan ? run.plan.addresses.join(", ") +
+        (run.plan.exclude.length ? "  minus " + run.plan.exclude.join(", ") : "") : null, "mono"],
       ["raw output kept", outputs.join("\n")]
     ];
     var built = kv(pairs);

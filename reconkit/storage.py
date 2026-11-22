@@ -19,13 +19,24 @@ import zlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
+from reconkit.audit import GENESIS, AuditEvent, AuditKind, ChainReport, chain_hash
 from reconkit.orchestrator import RunStatus, ScanRun
-from reconkit.schema import Asset, Confidence, Finding, Hop, RawOutput, Service, Severity
+from reconkit.schema import (
+    Asset,
+    Confidence,
+    Finding,
+    Hop,
+    RawOutput,
+    ScanTarget,
+    Service,
+    Severity,
+)
 
 # The schema version this code reads and writes. Bump it together with a new entry
 # in `_MIGRATIONS`; never edit a migration that has already shipped.
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 class StorageError(Exception):
@@ -279,6 +290,41 @@ _V8 = (
 # JSON list.
 _V9 = ("ALTER TABLE scan_run ADD COLUMN notes TEXT NOT NULL DEFAULT '[]'",)
 
+# Version 10 (G21): the audit trail. Each run records who ran it, the engagement, the
+# scope file (path + SHA-256; its content once per version in `scope_snapshot`) and the
+# exact plan the scope guard authorised. `audit_event` is a hash chain of every scan,
+# refusal and deletion (see reconkit/audit.py); `prev_hash` is UNIQUE so that two
+# writers can never fork the chain.
+_V10 = (
+    "ALTER TABLE scan_run ADD COLUMN plan TEXT",
+    "ALTER TABLE scan_run ADD COLUMN operator TEXT",
+    "ALTER TABLE scan_run ADD COLUMN engagement TEXT",
+    "ALTER TABLE scan_run ADD COLUMN scope_path TEXT",
+    "ALTER TABLE scan_run ADD COLUMN scope_sha256 TEXT",
+    """
+    CREATE TABLE scope_snapshot (
+        sha256   TEXT PRIMARY KEY,
+        content  TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE audit_event (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        at            TEXT NOT NULL,
+        kind          TEXT NOT NULL CHECK (kind IN ('scan', 'refused', 'deleted')),
+        run_id        INTEGER REFERENCES scan_run(id) ON DELETE SET NULL,
+        target        TEXT NOT NULL,
+        operator      TEXT,
+        engagement    TEXT,
+        scope_sha256  TEXT,
+        detail        TEXT NOT NULL,
+        prev_hash     TEXT NOT NULL UNIQUE,
+        hash          TEXT NOT NULL UNIQUE
+    )
+    """,
+    "CREATE INDEX idx_audit_run ON audit_event(run_id)",
+)
+
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: _V1,
     2: _V2,
@@ -289,6 +335,7 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
     7: _V7,
     8: _V8,
     9: _V9,
+    10: _V10,
 }
 
 
@@ -398,12 +445,17 @@ class Storage:
     # --- writing -----------------------------------------------------------------------
 
     def save_run(self, run: ScanRun) -> int:
-        """Persist a whole scan run atomically; return the new run id."""
-        with self._conn:  # BEGIN ... COMMIT, or ROLLBACK on exception
+        """Persist a whole scan run atomically, with its audit event; return its id."""
+        # IMMEDIATE: take the write lock before reading the chain's head, so that two
+        # processes saving at once cannot both link to the same previous event.
+        self._conn.execute("BEGIN IMMEDIATE")
+        with self._conn:  # COMMIT, or ROLLBACK on exception
+            plan = run.plan
             cur = self._conn.execute(
                 "INSERT INTO scan_run "
                 "(target, status, error, started_at, finished_at, reconkit_version, "
-                "profile, profile_settings, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "profile, profile_settings, notes, plan, operator, engagement, scope_path, "
+                "scope_sha256) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     run.target,
                     str(run.status),
@@ -416,9 +468,15 @@ class Storage:
                     if run.profile_settings is None
                     else json.dumps(run.profile_settings, sort_keys=True),
                     json.dumps(run.notes),
+                    None if plan is None else json.dumps(_plan_json(plan)),
+                    run.operator,
+                    run.engagement,
+                    run.scope_path,
+                    run.scope_sha256,
                 ),
             )
             run_id = int(cur.lastrowid or 0)
+            self._keep_scope(run.scope_sha256, run.scope_text)
             self._insert_plugins(run_id, run)
             self._conn.executemany(
                 "INSERT INTO scan_run_out_of_scope (run_id, host) VALUES (?, ?)",
@@ -434,7 +492,153 @@ class Storage:
                 service_ids = self._insert_services(asset_id, asset.services)
                 self._insert_findings(asset_id, asset.findings, service_ids)
                 self._insert_route(asset_id, asset.route)
+            detail: dict[str, Any] = {
+                "run_id": run_id,
+                "status": str(run.status),
+                "started_at": run.started_at,
+                "hosts": len(run.assets),
+                "findings": sum(len(a.findings) for a in run.assets),
+                # The evidence, tied into the chain: rewriting it breaks the chain.
+                "raw_sha256": [o.sha256 for o in run.raw_outputs],
+            }
+            if plan is not None:
+                detail["plan"] = _plan_json(plan)
+            if run.error:
+                detail["error"] = run.error
+            self._append_audit(
+                AuditEvent(
+                    at=run.finished_at,
+                    kind=AuditKind.SCAN,
+                    target=run.target,
+                    operator=run.operator,
+                    engagement=run.engagement,
+                    scope_sha256=run.scope_sha256,
+                    detail=detail,
+                ),
+                run_id=run_id,
+            )
         return run_id
+
+    def record_refusal(
+        self,
+        target: str,
+        reason: str,
+        *,
+        operator: str | None,
+        engagement: str | None,
+        scope_sha256: str | None,
+        scope_text: str | None = None,
+        at: str | None = None,
+    ) -> None:
+        """Keep a trace of a scan the scope guard refused (nothing was probed)."""
+        self._conn.execute("BEGIN IMMEDIATE")
+        with self._conn:
+            self._keep_scope(scope_sha256, scope_text)
+            self._append_audit(
+                AuditEvent(
+                    at=at or datetime.now(UTC).isoformat(),
+                    kind=AuditKind.REFUSED,
+                    target=target,
+                    operator=operator,
+                    engagement=engagement,
+                    scope_sha256=scope_sha256,
+                    detail={"reason": reason},
+                )
+            )
+
+    def _keep_scope(self, sha256: str | None, text: str | None) -> None:
+        if sha256 and text is not None:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO scope_snapshot (sha256, content) VALUES (?, ?)",
+                (sha256, text),
+            )
+
+    def _append_audit(self, event: AuditEvent, run_id: int | None = None) -> None:
+        """Link `event` after the current head of the chain (inside a transaction)."""
+        row = self._conn.execute("SELECT hash FROM audit_event ORDER BY id DESC LIMIT 1").fetchone()
+        prev = GENESIS if row is None else row["hash"]
+        self._conn.execute(
+            "INSERT INTO audit_event (at, kind, run_id, target, operator, engagement, "
+            "scope_sha256, detail, prev_hash, hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                event.at,
+                event.kind,
+                run_id,
+                event.target,
+                event.operator,
+                event.engagement,
+                event.scope_sha256,
+                json.dumps(event.detail, sort_keys=True),
+                prev,
+                chain_hash(prev, event),
+            ),
+        )
+
+    # --- audit trail ---------------------------------------------------------------------
+
+    def audit_events(self) -> list[tuple[int, AuditEvent, str]]:
+        """Every audit event, oldest first: (id, event, hash)."""
+        return [
+            (row["id"], _event(row), row["hash"])
+            for row in self._conn.execute("SELECT * FROM audit_event ORDER BY id")
+        ]
+
+    def scope_snapshot(self, sha256: str) -> str | None:
+        """The scope file content recorded under `sha256` (a prefix is enough)."""
+        rows = self._conn.execute(
+            "SELECT content FROM scope_snapshot WHERE sha256 LIKE ? || '%' LIMIT 2",
+            (sha256.lower(),),
+        ).fetchall()
+        return rows[0]["content"] if len(rows) == 1 else None
+
+    def verify_audit(self) -> ChainReport:
+        """Recompute the chain, and check each scan's evidence against it."""
+        problems: list[str] = []
+        prev = GENESIS
+        rows = self._conn.execute("SELECT * FROM audit_event ORDER BY id").fetchall()
+        for row in rows:
+            event = _event(row)
+            if row["prev_hash"] != prev:
+                problems.append(
+                    f"event #{row['id']}: does not follow the event before it "
+                    "(an event was removed or reordered)"
+                )
+            expected = chain_hash(row["prev_hash"], event)
+            if row["hash"] != expected:
+                problems.append(f"event #{row['id']}: its content was changed after it was written")
+            prev = row["hash"]
+            if event.kind == AuditKind.SCAN:
+                problems.extend(self._check_evidence(row["id"], event))
+        return ChainReport(events=len(rows), head=prev, problems=problems)
+
+    def _check_evidence(self, event_id: int, event: AuditEvent) -> list[str]:
+        run_id = event.detail.get("run_id")
+        if run_id is None:
+            return []
+        exists = self._conn.execute("SELECT 1 FROM scan_run WHERE id = ?", (run_id,)).fetchone()
+        if exists is None:
+            deleted = any(
+                json.loads(r["detail"]).get("run_id") == run_id
+                for r in self._conn.execute(
+                    "SELECT detail FROM audit_event WHERE kind = 'deleted'"
+                ).fetchall()
+            )
+            if deleted:
+                return []
+            return [f"event #{event_id}: run #{run_id} is gone, with no record of its deletion"]
+        stored = [
+            row["sha256"]
+            for row in self._conn.execute(
+                "SELECT sha256 FROM scan_run_output WHERE run_id = ? ORDER BY id", (run_id,)
+            )
+        ]
+        if stored != event.detail.get("raw_sha256", []):
+            return [f"event #{event_id}: the raw output of run #{run_id} is not what was recorded"]
+        try:
+            self.outputs_for_run(run_id)  # each output still matches its own hash
+        except StorageError as exc:
+            return [f"event #{event_id}: {exc}"]
+        return []
 
     def _insert_route(self, asset_id: int, route: list[Hop]) -> None:
         self._conn.executemany(
@@ -539,11 +743,33 @@ class Storage:
             ],
         )
 
-    def delete_run(self, run_id: int) -> bool:
-        """Delete a run and everything recorded for it; False if there is no such run."""
+    def delete_run(self, run_id: int, operator: str | None = None) -> bool:
+        """Delete a run and everything recorded for it; False if there is no such run.
+
+        The deletion itself is recorded in the audit trail: data may go, its history
+        may not.
+        """
+        self._conn.execute("BEGIN IMMEDIATE")
         with self._conn:
-            cur = self._conn.execute("DELETE FROM scan_run WHERE id = ?", (run_id,))
-        return cur.rowcount > 0
+            row = self._conn.execute(
+                "SELECT target, status, engagement, scope_sha256 FROM scan_run WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            self._conn.execute("DELETE FROM scan_run WHERE id = ?", (run_id,))
+            self._append_audit(
+                AuditEvent(
+                    at=datetime.now(UTC).isoformat(),
+                    kind=AuditKind.DELETED,
+                    target=row["target"],
+                    operator=operator,
+                    engagement=row["engagement"],
+                    scope_sha256=row["scope_sha256"],
+                    detail={"run_id": run_id, "status": row["status"]},
+                )
+            )
+        return True
 
     # --- reading -----------------------------------------------------------------------
 
@@ -555,7 +781,8 @@ class Storage:
         """
         row = self._conn.execute(
             "SELECT target, status, error, started_at, finished_at, reconkit_version, "
-            "profile, profile_settings, notes FROM scan_run WHERE id = ?",
+            "profile, profile_settings, notes, plan, operator, engagement, scope_path, "
+            "scope_sha256 FROM scan_run WHERE id = ?",
             (run_id,),
         ).fetchone()
         if row is None:
@@ -572,6 +799,11 @@ class Storage:
                 None if row["profile_settings"] is None else json.loads(row["profile_settings"])
             ),
             notes=list(json.loads(row["notes"] or "[]")),
+            plan=None if row["plan"] is None else _plan_from_json(json.loads(row["plan"])),
+            operator=row["operator"],
+            engagement=row["engagement"],
+            scope_path=row["scope_path"],
+            scope_sha256=row["scope_sha256"],
         )
         for p in self._conn.execute(
             "SELECT name, status, version FROM scan_run_plugin WHERE run_id = ? ORDER BY rowid",
@@ -730,4 +962,34 @@ def _finding(row: sqlite3.Row, asset: Asset, service: Service | None) -> Finding
         cwe=tuple(c for c in (row["cwe"] or "").split(",") if c),
         kev_added=row["kev_added"],
         epss=row["epss"],
+    )
+
+
+def _plan_json(plan: ScanTarget) -> dict[str, Any]:
+    return {
+        "requested": plan.requested,
+        "addresses": list(plan.addresses),
+        "exclude": list(plan.exclude),
+        "hostname": plan.hostname,
+    }
+
+
+def _plan_from_json(data: dict[str, Any]) -> ScanTarget:
+    return ScanTarget(
+        requested=data["requested"],
+        addresses=tuple(data["addresses"]),
+        exclude=tuple(data.get("exclude", [])),
+        hostname=data.get("hostname"),
+    )
+
+
+def _event(row: sqlite3.Row) -> AuditEvent:
+    return AuditEvent(
+        at=row["at"],
+        kind=row["kind"],
+        target=row["target"],
+        operator=row["operator"],
+        engagement=row["engagement"],
+        scope_sha256=row["scope_sha256"],
+        detail=json.loads(row["detail"]),
     )
