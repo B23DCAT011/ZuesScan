@@ -95,6 +95,22 @@ khi dịch vụ là gói của một distro (có thể đã được vá bằng 
 `--cve-db file.json` dùng file dữ liệu CVE khác seed đi kèm (định dạng như
 `reconkit/data/cve_seed.json`).
 
+### Dữ liệu CVE thật: cache NVD
+
+Seed đi kèm chỉ có vài CVE để chạy thử. Dữ liệu thật lấy từ NVD về một cache ở máy:
+
+```bash
+export NVD_API_KEY=...        # không bắt buộc; có key thì tải nhanh gấp 10 lần
+reconkit cve sync                                        # lần đầu: cả NVD (lâu)
+reconkit cve sync --product cpe:2.3:a:openbsd:openssh    # hoặc chỉ vài sản phẩm
+reconkit cve status                                      # cache có gì, sync lúc nào
+reconkit cve show CVE-2024-6387
+reconkit scan 10.0.0.5 --scope scope.txt --cve-cache reconkit-cve.db
+```
+
+Các lần `sync` sau chỉ tải những CVE NVD đã sửa từ lần trước. Lúc quét, việc khớp CVE chạy
+hoàn toàn trên cache: không có thông tin nào về mục tiêu bị gửi ra ngoài.
+
 Output gốc của scanner (XML của nmap) được giữ lại theo từng run làm bằng chứng, kèm mã băm
 SHA-256, kể cả khi lần quét thất bại. Lấy lại bằng:
 

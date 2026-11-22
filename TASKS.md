@@ -63,7 +63,8 @@ Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây we
       chuẩn hoá version (`7.4p1 Debian 10+deb9u7` → 7.4 + p1 + gói distro), alias vendor
       nmap ↔ NVD, `Finding.confidence` (`tentative` khi là gói của distro vì có backport).
       (G8, G10)
-- [ ] `feat/nvd-source` — đồng bộ NVD API 2.0 về cache local, khớp trên cache. (G9)
+- [x] `feat/nvd-source` — `reconkit cve sync` tải NVD API 2.0 về cache SQLite (phân trang,
+      tôn trọng rate limit, retry, lần sau chỉ tải phần thay đổi), `scan --cve-cache`. (G9)
 - [ ] `feat/cve-priority` — CVSS score/vector, CWE, KEV, EPSS + xếp ưu tiên. (G11)
 - [x] `feat/scan-profiles` — profile `quick` / `standard` / `full` / `gentle`, file cấu hình TOML
       (`--config`), cờ ghi đè (`--ports`, `--timing`, `--max-rate`, `--timeout`…), lệnh
