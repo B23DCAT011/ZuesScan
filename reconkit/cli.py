@@ -45,6 +45,7 @@ from reconkit.inventory_store import FindingEvent, FindingRow, InventoryError
 from reconkit.orchestrator import NoPluginAvailableError, Orchestrator, RunStatus, ScanRun, now
 from reconkit.plugins.base import ScanError
 from reconkit.plugins.nmap import NmapPlugin
+from reconkit.plugins.nuclei import NucleiPlugin
 from reconkit.plugins.subfinder import SubfinderPlugin
 from reconkit.profiles import DEFAULT_PROFILE, ProfileError, ScanProfile, load_profiles, override
 from reconkit.report import render_html, report_model
@@ -231,6 +232,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             operator=args.operator or default_operator(),
             engagement=args.engagement,
             discovery=[SubfinderPlugin()] if args.discover else None,
+            checks=[NucleiPlugin(profile=profile)] if args.nuclei else None,
         )
         return _open_db_and_scan(args, orch)
 
@@ -944,6 +946,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="first find the names under the target domain (subfinder; needs *.domain "
         "in the scope), then scan those in scope",
+    )
+    tuning.add_argument(
+        "--nuclei",
+        action="store_true",
+        help="also run nuclei templates on the web services found (active checks: "
+        "only if the authorisation covers them)",
     )
     tuning.add_argument(
         "--ipv4-only",
