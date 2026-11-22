@@ -13,8 +13,8 @@ Ghi chú thiết kế ban đầu: [`GHI-CHU.md`](../GHI-CHU.md).
 | 2 | CVE, CPE, CVSS, NVD, KEV, EPSS | `cve.py`, `cve_seed.json` | ✅ 2026-10-28 |
 | 3 | Scope & pháp lý: Rules of Engagement, xin phép quét, luật VN | `scope.py` | ✅ 2026-11-11 |
 | 4 | Vòng đời finding: mới / còn mở / đã vá / tái xuất hiện | fingerprint, `feat/diff` | ✅ 2026-11-16 |
-| 5 | Kiến trúc: pipeline, plugin, repository, transaction, migration | orchestrator, storage | ⏭️ tiếp theo |
-| 6 | Công cụ thật (OpenVAS, Nessus, nuclei, DefectDojo) so với ReconKit | toàn dự án | |
+| 5 | Kiến trúc: pipeline, plugin, repository, transaction, migration | orchestrator, storage | ✅ 2026-11-22 |
+| 6 | Công cụ thật (OpenVAS, Nessus, nuclei, DefectDojo) so với ReconKit | toàn dự án | ✅ 2026-11-22 |
 
 ---
 
@@ -180,13 +180,137 @@ công cụ là làm cho quét nhầm thật khó (F2, F6) và để lại bằng
 | Công thức băm có số phiên bản | ✅ F8: `v2:<sha256>`; băm cũ giữ nguyên, không so với băm mới |
 | Một lỗi do nhiều tool báo → một finding | ✅ F8: orchestrator gộp theo fingerprint |
 | Finding nối được về đúng cổng, đúng máy | ✅ F7: `finding.service_id` |
-| Biết lần quét có thật sự kiểm tra hay không | ⚠️ F7 lưu `status` + scanner đã chạy; chưa lưu danh sách cổng đã quét, chưa lưu host im lặng (→ D1) |
-| Trạng thái, first seen / last seen, diff | ❌ → `feat/diff` + D1 (Giai đoạn 2) |
+| Biết lần quét có thật sự kiểm tra hay không | ✅ `feat/diff`: host trả lời + cổng chắc chắn được quét + cùng loại dữ liệu CVE; host im lặng → `not_responding` |
+| Trạng thái, first seen / last seen, diff | ✅ `feat/diff` (kho tài sản + `finding_event`, `reconkit diff`) |
 | Định danh máy bền hơn IP | ❌ chỉ có IP → D1 |
-| Risk accepted / false positive có lý do và hạn | ❌ → D1 |
+| Risk accepted / false positive có lý do và hạn | ⚠️ risk accepted (lý do + hạn, hết hạn tự mở lại) ✅; false positive: dùng accepted kèm lý do |
 | SLA, MTTR | ❌ → sau khi có first seen / last seen |
 
 Kết luận: fingerprint là **nền** của vòng đời, nhưng tự nó chưa phải vòng đời. Sau F8,
 ReconKit trả lời được "hai finding này có phải một lỗi không"; còn "lỗi này đang ở trạng thái
 nào, mở bao lâu rồi" cần kho tài sản và lịch sử của D1. Sơ đồ trạng thái đã chốt nằm trong
 [`THIET-KE.md`](THIET-KE.md), mục "Vòng đời một lỗ hổng".
+
+---
+
+## Bài 5 — Kiến trúc: pipeline, plugin, repository, transaction, migration
+
+**Thuật ngữ**
+
+- **Pipeline / stage**: một việc lớn chia thành các bước nối tiếp, mỗi bước nhận đầu ra của
+  bước trước. Lợi ích: mỗi bước kiểm thử được riêng, thêm bước mới không phải sửa bước cũ.
+- **Plugin / adapter** (còn gọi *ports & adapters*, *hexagonal architecture*): lõi định nghĩa
+  một **hợp đồng** (port); mỗi công cụ ngoài được bọc bởi một adapter thực hiện hợp đồng đó.
+  Lõi không biết nmap hay nuclei là gì, chỉ biết "một thứ có `scan(target)`".
+- **Structural typing / Protocol** (Python `typing.Protocol`): một class "là" plugin nếu nó có
+  đúng các method, không cần kế thừa. Hợp đồng nằm ở kiểu, mypy kiểm tra.
+- **Repository**: một lớp giấu SQL sau các method nghiệp vụ (`save_run`, `load_run`…). Phần
+  còn lại của chương trình không viết SQL, nên đổi cơ sở dữ liệu là việc của một lớp.
+- **Transaction / unit of work**: một nhóm thay đổi được ghi **tất cả hoặc không gì cả**
+  (ACID: Atomicity, Consistency, Isolation, Durability). Máy sập giữa chừng thì DB vẫn nhất
+  quán.
+- **Schema migration**: mỗi thay đổi cấu trúc DB là một bước có số thứ tự, áp dụng một lần,
+  theo thứ tự, ghi lại đã áp dụng tới đâu. **Forward-only**: không sửa migration đã phát hành.
+- **Dependency injection**: thứ gì phụ thuộc thế giới bên ngoài (DNS, đồng hồ, mạng, tiến
+  trình con) được *truyền vào* thay vì gọi thẳng, để test thay bằng bản giả.
+- **Lõi thuần (pure core), vỏ I/O (imperative shell)**: logic quyết định viết thành hàm thuần
+  (không đọc mạng, không đọc đĩa); phần I/O mỏng bọc bên ngoài.
+- **Append-only log + hash chain**: nhật ký chỉ được thêm, mỗi bản ghi băm cả bản ghi trước
+  (như git, Certificate Transparency): sửa quá khứ là lộ.
+
+**Thực tế người ta làm thế nào**
+
+- Scanner lớn đều là **lõi + plugin**: OpenVAS/Greenbone có `gvmd` (quản lý) nói chuyện với các
+  scanner qua giao thức OSP, và hàng chục nghìn *NVT* (plugin kiểm tra) viết riêng; Nessus có
+  hơn 200.000 plugin; nuclei = engine + template YAML. Không ai sửa lõi để thêm một kiểm tra.
+- Hợp đồng plugin là thứ **khó đổi nhất**: đổi nó là sửa mọi plugin. Vì thế người ta đóng băng
+  nó sớm và thêm trường *tuỳ chọn* thay vì đổi nghĩa trường cũ (ReconKit: `ScanResult` thêm
+  `notes`, `cleared` mà không plugin cũ nào phải sửa).
+- Migration: Alembic (SQLAlchemy), Django migrations, Flyway, Liquibase — đều có **bảng phiên
+  bản** trong DB, chạy tự động khi khởi động, và **sao lưu** trước khi chạy ở production.
+  Migration "down" hiếm khi dùng thật; thay vào đó là *expand → migrate → contract* (thêm cột
+  mới, chuyển dữ liệu, rồi mới bỏ cột cũ) để không phải dừng dịch vụ.
+- Mỗi "đơn vị nghiệp vụ" là một transaction: một lần quét được lưu trọn vẹn hoặc không lưu.
+  Những thứ phải luôn khớp nhau (run, kho tài sản, nhật ký audit) nằm **cùng một transaction**.
+- Hệ thống thật tách **trạng thái hiện tại** (kho tài sản) và **lịch sử** (các run, các sự kiện).
+  Một số đi xa hơn với *event sourcing*: chỉ lưu sự kiện, trạng thái là kết quả phát lại sự
+  kiện — ReconKit dùng đúng ý này cho `rebuild_inventory`.
+- Test được nhờ injection: CI không có nmap, không có mạng, không có DNS thật; mọi thứ đó phải
+  thay được bằng bản giả.
+
+**ReconKit có theo không**
+
+| Thực tế | ReconKit |
+|---|---|
+| Lõi + plugin, lõi không biết tool | ✅ `ScannerPlugin`, `DiscoveryPlugin`, `CheckPlugin`, `CveSource` là `Protocol`; orchestrator chỉ biết thứ tự các bước |
+| Pipeline nhiều bước, mỗi bước test riêng | ✅ scope → (discovery) → scanner → check → CVE → rút lại đoán sai → fingerprint → lưu (run + kho + audit) |
+| Hợp đồng plugin mở rộng mà không phá | ✅ chỉ thêm trường có giá trị mặc định (`notes`, `cleared`, `no_response`) |
+| Repository giấu SQL | ✅ `Storage`, `CveCache`; `inventory_store` cho phần kho |
+| Một run = một transaction (kể cả kho + audit) | ✅ `save_run` (`BEGIN IMMEDIATE`), lỗi giữa chừng → rollback |
+| Migration có phiên bản, chạy tự động, sao lưu trước | ✅ v1 → v12, `schema_version`, `<db>.v<N>.bak`, `foreign_key_check` trước commit, từ chối DB mới hơn |
+| Trạng thái hiện tại tách lịch sử, phát lại được | ✅ kho tài sản + run + `finding_event`; `inventory --rebuild` |
+| Lõi thuần, I/O tiêm vào | ✅ `inventory.py`, `diff.py`, `version.py`, `debian.py`, `graph.py` là hàm thuần; resolver, clock, fetch, sleep, subprocess đều thay được |
+| Nhật ký chống sửa | ✅ chuỗi băm audit (G21) |
+| Nạp plugin động (entry points) | ❌ danh sách plugin viết trong CLI; thêm tool là sửa CLI một dòng |
+| Chạy plugin song song | ❌ tuần tự; một lần quét = một tiến trình |
+| Nhiều tiến trình ghi đồng thời, quy mô lớn | ⚠️ SQLite + khoá ghi; đủ cho vài worker, không cho hàng trăm (→ PostgreSQL) |
+| ORM | ❌ SQL viết tay, có chủ đích: lõi không phụ thuộc thư viện ngoài |
+
+Kết luận: kiến trúc theo đúng các mẫu chuẩn, và các chỗ chưa theo (nạp plugin động, song
+song, PostgreSQL) đều là bài toán **quy mô**, không phải bài toán **đúng/sai** — thứ tự ưu tiên
+đúng cho một công cụ mà dữ liệu sai còn nguy hiểm hơn chậm.
+
+---
+
+## Bài 6 — Công cụ thật so với ReconKit
+
+**Thuật ngữ**
+
+- **Vulnerability scanner** (OpenVAS/Greenbone, Nessus, Qualys VMDR, Rapid7 InsightVM): quét
+  mạng + kiểm tra lỗ hổng bằng thư viện plugin riêng, có quét có đăng nhập, quản lý tài sản,
+  báo cáo, lập lịch.
+- **Template scanner** (nuclei): engine nhỏ + template cộng đồng; mạnh ở web và lỗi mới.
+- **Vulnerability management / ASPM** (DefectDojo, Faraday): không tự quét; **gom** kết quả của
+  nhiều scanner, khử trùng lặp, theo dõi vòng đời, SLA, ticket.
+- **Attack surface management (ASM/EASM)**: liên tục tìm tài sản lộ ra Internet (subdomain,
+  chứng chỉ, IP) — Censys, Shodan, ProjectDiscovery Cloud.
+- **Authenticated scan / agent**: đăng nhập (SSH/WinRM) hoặc cài agent để đọc gói đã cài — kết
+  quả chính xác hơn đoán theo banner.
+- **Risk-based prioritization**: xếp theo khả năng bị khai thác (KEV, EPSS, VPR của Tenable,
+  TruRisk của Qualys) chứ không chỉ CVSS.
+
+**Thực tế người ta làm thế nào**
+
+- Doanh nghiệp thường **kết hợp**: một scanner hạ tầng (Nessus/OpenVAS) + nuclei cho web + một
+  nền tảng quản lý (DefectDojo) làm "nguồn sự thật" về lỗi, nối với Jira để giao việc.
+- Phát hiện lỗi chủ yếu vẫn là **so phiên bản** (banner hoặc gói đã cài); kiểm tra chủ động
+  (gửi payload) chỉ cho một phần nhỏ, vì rủi ro làm hỏng dịch vụ. Quét có đăng nhập được
+  khuyến nghị cho mạng nội bộ vì loại bỏ phần lớn báo sai do backport.
+- Xếp ưu tiên: CISA khuyến nghị xử lý **KEV trước**; EPSS dùng để lọc phần còn lại.
+- Pháp lý / RoE: công cụ thương mại có **scan window**, giới hạn băng thông, danh sách loại trừ,
+  nhật ký ai chạy gì — vì quét nhầm là sự cố thật.
+
+**ReconKit có theo không**
+
+| Khả năng | OpenVAS / Nessus | nuclei | DefectDojo | ReconKit |
+|---|---|---|---|---|
+| Quét cổng / dịch vụ | ✅ riêng | — | — | ✅ qua nmap (IPv4 + IPv6) |
+| Tìm subdomain | ⚠️ ít | — | — | ✅ qua subfinder, mỗi tên kiểm scope |
+| Thư viện kiểm tra lỗi riêng | ✅ hàng chục / trăm nghìn plugin | ✅ template | — | ❌ không có; dùng NVD (theo version) + nuclei (chủ động) |
+| Quét có đăng nhập | ✅ Linux, Windows, mạng | — | — | ⚠️ chỉ Debian qua SSH key |
+| Kho tài sản, vòng đời lỗi, fix giả | ✅ | — | ✅ (mạnh nhất) | ✅ D1: mới / mở / báo sửa / xác minh vá / fix giả / tái xuất hiện / chấp nhận rủi ro |
+| Xếp ưu tiên theo khai thác | ✅ (VPR…) | ⚠️ EPSS trong template | ⚠️ | ✅ KEV → EPSS → CVSS |
+| Bằng chứng gốc giữ lại, có băm | ⚠️ | ⚠️ | ⚠️ | ✅ output gốc nén + SHA-256, nằm trong chuỗi audit |
+| Cổng scope trước mọi gói tin, kiểm lại kết quả | ⚠️ danh sách target | ❌ | — | ✅ phân giải một lần, mọi IP phải trong scope, `@expires`, `@window` |
+| Nhật ký audit chống sửa | ⚠️ log | ❌ | ⚠️ | ✅ chuỗi băm, `audit --verify` |
+| Báo cáo | ✅ PDF/HTML/CSV | JSON | ✅ | ✅ HTML (bản đồ offline), JSON, SARIF |
+| Lập lịch, nhiều scanner phân tán | ✅ | — | — | ⚠️ GĐ 3: hàng đợi + worker |
+| Giao diện web, phân quyền | ✅ | ❌ | ✅ | ⚠️ GĐ 3 |
+
+Kết luận: ReconKit **không** thay được Nessus hay OpenVAS — nó không có thư viện kiểm tra
+riêng, và cũng không nên tự viết. Vị trí đúng của nó là một **bộ điều phối** bọc các công cụ
+mở (nmap, subfinder, nuclei, NVD), mạnh ở những chỗ các công cụ đó yếu: **đúng phạm vi** (scope
+gate, giấy phép, khung giờ), **dữ liệu đúng qua thời gian** (fingerprint, vòng đời, chỉ kết
+luận "đã vá" khi thật sự kiểm tra lại), **bằng chứng và trách nhiệm** (output gốc có băm, chuỗi
+audit). Muốn dùng trong doanh nghiệp, bước tự nhiên là xuất SARIF sang DefectDojo và để
+ReconKit lo phần quét định kỳ có kiểm soát.
