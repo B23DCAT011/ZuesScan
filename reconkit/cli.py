@@ -16,6 +16,7 @@ from reconkit.cve import LocalCveSource
 from reconkit.orchestrator import NoPluginAvailableError, Orchestrator, ScanRun, now
 from reconkit.plugins.base import ScanError
 from reconkit.plugins.nmap import NmapPlugin
+from reconkit.schema import Asset
 from reconkit.scope import ResolutionError, Scope, ScopeError
 from reconkit.storage import SCHEMA_VERSION, Storage, StorageError
 
@@ -37,6 +38,8 @@ def _print_summary(run: ScanRun, run_id: int, db_path: str) -> None:
     for asset in run.assets:
         label = asset.host if asset.ip in (None, asset.host) else f"{asset.host} ({asset.ip})"
         print(f"\n  {label}")
+        if asset.route:
+            print(f"    route: {_route_line(asset)}")
         if not asset.services:
             print("    no open ports found")
             continue
@@ -54,6 +57,21 @@ def _print_summary(run: ScanRun, run_id: int, db_path: str) -> None:
             f"\n  raw output kept: {o.plugin} ({o.format}, {o.size} bytes, "
             f"sha256 {o.sha256[:12]}...)  ->  reconkit raw {run_id} --db {db_path}"
         )
+
+
+def _route_line(asset: Asset) -> str:
+    """The path to a host, e.g. "192.168.1.1 -> ? -> 10.0.0.5 (3 hops)".
+
+    A "?" stands for routers that never answered (a gap in the TTLs).
+    """
+    parts: list[str] = []
+    expected = 1
+    for hop in asset.route:
+        if hop.ttl > expected:
+            parts.append("?")
+        parts.append(hop.ip or "?")
+        expected = hop.ttl + 1
+    return f"{' -> '.join(parts)} ({asset.route[-1].ttl} hops)"
 
 
 def _hosts_summary(run: ScanRun) -> str:
@@ -91,7 +109,9 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         cve_source = LocalCveSource(args.cve_db)
     else:
         cve_source = LocalCveSource()  # bundled seed
-    orch = Orchestrator(plugins=[NmapPlugin()], scope=scope, cve_source=cve_source)
+    orch = Orchestrator(
+        plugins=[NmapPlugin(traceroute=args.traceroute)], scope=scope, cve_source=cve_source
+    )
 
     # Open the database before scanning: if the results cannot be saved, find out
     # now, not after probing the target for five minutes.
@@ -137,6 +157,16 @@ def _scan(args: argparse.Namespace, orch: Orchestrator, store: Storage) -> int:
         dropped = ", ".join(run.out_of_scope)
         print(
             f"warning: a scanner reported hosts outside the scope; not saved: {dropped}",
+            file=sys.stderr,
+        )
+
+    untraced = [a.host for a in run.assets if not a.route]
+    if args.traceroute and untraced:
+        # Not an error: the scan itself is fine, only the map will lack these paths.
+        print(
+            f"note: no route recorded for {len(untraced)} of {len(run.assets)} host(s). "
+            "Traceroute needs raw-socket privileges (root on Linux, Npcap on Windows), "
+            "and a local target has no route.",
             file=sys.stderr,
         )
 
@@ -226,6 +256,11 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--db", default="reconkit.db", help="SQLite database path")
     scan.add_argument("--no-cve", action="store_true", help="skip the CVE matching stage")
     scan.add_argument("--cve-db", help="path to a CVE seed JSON (default: bundled seed)")
+    scan.add_argument(
+        "--traceroute",
+        action="store_true",
+        help="also record the network path to each host (for the map; slower)",
+    )
     scan.set_defaults(func=_cmd_scan)
 
     raw = sub.add_parser("raw", help="show the raw scanner output kept for a run")

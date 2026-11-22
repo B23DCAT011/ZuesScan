@@ -64,7 +64,13 @@ class FakePlugin:
             raise self._error
         # Hand out copies: the orchestrator merges into and adds findings to them.
         assets = [
-            Asset(host=a.host, ip=a.ip, services=list(a.services), findings=list(a.findings))
+            Asset(
+                host=a.host,
+                ip=a.ip,
+                services=list(a.services),
+                findings=list(a.findings),
+                route=list(a.route),
+            )
             for a in self._assets
         ]
         return ScanResult(assets=assets, raw=[self.raw(target)])

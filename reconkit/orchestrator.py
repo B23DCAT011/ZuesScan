@@ -210,6 +210,8 @@ def _merge_into(known: Asset, found: Asset) -> None:
     """Add what another plugin learnt about the same host to `known`."""
     if known.ip is None:
         known.ip = found.ip
+    if not known.route:
+        known.route = list(found.route)  # one path per host: the first one traced wins
     seen = {(s.port, s.protocol) for s in known.services}
     for service in found.services:
         if (service.port, service.protocol) not in seen:

@@ -20,11 +20,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from reconkit.orchestrator import RunStatus, ScanRun
-from reconkit.schema import Asset, Finding, RawOutput, Service, Severity
+from reconkit.schema import Asset, Finding, Hop, RawOutput, Service, Severity
 
 # The schema version this code reads and writes. Bump it together with a new entry
 # in `_MIGRATIONS`; never edit a migration that has already shipped.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 class StorageError(Exception):
@@ -219,7 +219,24 @@ _V4 = (
     "CREATE INDEX idx_output_run ON scan_run_output(run_id)",
 )
 
-_MIGRATIONS: dict[int, tuple[str, ...]] = {1: _V1, 2: _V2, 3: _V3, 4: _V4}
+# Version 5 (M1): the network path to each host, as traceroute saw it — the routers
+# between the scanner and the host, for the attack-surface map. A hop belongs to the
+# asset of one run: the path can change from one scan to the next.
+_V5 = (
+    """
+    CREATE TABLE route_hop (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        asset_id  INTEGER NOT NULL REFERENCES asset(id) ON DELETE CASCADE,
+        ttl       INTEGER NOT NULL CHECK (ttl > 0),
+        ip        TEXT,
+        rtt_ms    REAL,
+        name      TEXT,
+        UNIQUE (asset_id, ttl)  -- one router per distance; also indexes asset_id
+    )
+    """,
+)
+
+_MIGRATIONS: dict[int, tuple[str, ...]] = {1: _V1, 2: _V2, 3: _V3, 4: _V4, 5: _V5}
 
 
 class Storage:
@@ -358,7 +375,14 @@ class Storage:
                 asset_id = int(cur.lastrowid or 0)
                 service_ids = self._insert_services(asset_id, asset.services)
                 self._insert_findings(asset_id, asset.findings, service_ids)
+                self._insert_route(asset_id, asset.route)
         return run_id
+
+    def _insert_route(self, asset_id: int, route: list[Hop]) -> None:
+        self._conn.executemany(
+            "INSERT INTO route_hop (asset_id, ttl, ip, rtt_ms, name) VALUES (?, ?, ?, ?, ?)",
+            [(asset_id, h.ttl, h.ip, h.rtt_ms, h.name) for h in route],
+        )
 
     def _insert_plugins(self, run_id: int, run: ScanRun) -> None:
         # One row per scanner. Later states win: a scanner that ran and then failed
@@ -517,6 +541,13 @@ class Storage:
                 (a["id"],),
             ):
                 asset.findings.append(_finding(f, asset, services_by_id.get(f["service_id"])))
+            asset.route = [
+                Hop(ttl=h["ttl"], ip=h["ip"], rtt_ms=h["rtt_ms"], name=h["name"])
+                for h in self._conn.execute(
+                    "SELECT ttl, ip, rtt_ms, name FROM route_hop WHERE asset_id = ? ORDER BY ttl",
+                    (a["id"],),
+                )
+            ]
             run.assets.append(asset)
         return run
 

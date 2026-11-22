@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from reconkit.orchestrator import RunStatus, ScanRun
-from reconkit.schema import Asset, Finding, RawOutput, Service, Severity
+from reconkit.schema import Asset, Finding, Hop, RawOutput, Service, Severity
 from reconkit.storage import _V1, SCHEMA_VERSION, Storage, StorageError
 
 SSH = Service(port=22, name="ssh", product="OpenSSH", version="7.4")
@@ -454,3 +454,43 @@ def test_finding_evidence_is_stored(tmp_path: Path) -> None:
     with _store(tmp_path) as store:
         (finding,) = store.findings_for_run(store.save_run(run))
     assert finding.evidence == "22/tcp open: scanner reported product 'OpenSSH'"
+
+
+# --- route (traceroute hops), schema v5 ----------------------------------------------
+
+
+def test_route_comes_back_in_order(tmp_path: Path) -> None:
+    run = _make_run()
+    run.assets[0].route = [
+        Hop(ttl=1, ip="192.168.1.1", rtt_ms=0.52, name="gateway.lan"),
+        Hop(ttl=3, ip="10.0.0.1", rtt_ms=None),  # gap at ttl 2, untimed hop
+        Hop(ttl=4, ip="10.0.0.5", rtt_ms=3.4),
+    ]
+    with _store(tmp_path) as store:
+        loaded = store.load_run(store.save_run(run))
+    assert loaded is not None
+    assert loaded.assets[0].route == run.assets[0].route
+
+
+def test_host_without_route_has_none(tmp_path: Path) -> None:
+    with _store(tmp_path) as store:
+        loaded = store.load_run(store.save_run(_make_run()))
+    assert loaded is not None
+    assert loaded.assets[0].route == []
+
+
+def test_one_hop_per_ttl(tmp_path: Path) -> None:
+    run = _make_run()
+    run.assets[0].route = [Hop(ttl=1, ip="192.168.1.1"), Hop(ttl=1, ip="172.16.0.1")]
+    with _store(tmp_path) as store:
+        with pytest.raises(sqlite3.IntegrityError):
+            store.save_run(run)
+        assert _count(store, "scan_run") == 0  # the whole run was rolled back
+
+
+def test_route_is_deleted_with_its_run(tmp_path: Path) -> None:
+    run = _make_run()
+    run.assets[0].route = [Hop(ttl=1, ip="192.168.1.1")]
+    with _store(tmp_path) as store:
+        store.delete_run(store.save_run(run))
+        assert _count(store, "route_hop") == 0

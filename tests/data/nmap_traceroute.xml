@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- `nmap -sV -T4 &#45;&#45;traceroute 10.0.0.0/24`, scanner behind a home router.
+     - 10.0.0.5: hop 2 never answered (absent from the XML, a gap in the TTLs).
+     - 10.0.0.7: shares its first hops with 10.0.0.5, so nmap did not time them
+       again for it (rtt="&#45;&#45;").
+     - 10.0.0.9: up, but nmap printed no <trace> for it. -->
+<nmaprun scanner="nmap" args="nmap -sV -T4 --traceroute -oX - 10.0.0.0/24" start="1700000000" version="7.992" xmloutputversion="1.05">
+  <host starttime="1700000001" endtime="1700000020">
+    <status state="up" reason="echo-reply" reason_ttl="60"/>
+    <address addr="10.0.0.5" addrtype="ipv4"/>
+    <hostnames/>
+    <ports>
+      <port protocol="tcp" portid="22">
+        <state state="open" reason="syn-ack" reason_ttl="60"/>
+        <service name="ssh" product="OpenSSH" version="7.4" extrainfo="protocol 2.0" method="probed" conf="10">
+          <cpe>cpe:/a:openbsd:openssh:7.4</cpe>
+        </service>
+      </port>
+    </ports>
+    <distance value="4"/>
+    <trace port="22" proto="tcp">
+      <hop ttl="1" ipaddr="192.168.1.1" rtt="0.52" host="gateway.lan"/>
+      <hop ttl="3" ipaddr="10.0.0.1" rtt="3.10"/>
+      <hop ttl="4" ipaddr="10.0.0.5" rtt="3.40"/>
+    </trace>
+    <times srtt="3400" rttvar="500" to="100000"/>
+  </host>
+  <host starttime="1700000001" endtime="1700000020">
+    <status state="up" reason="echo-reply" reason_ttl="60"/>
+    <address addr="10.0.0.7" addrtype="ipv4"/>
+    <hostnames/>
+    <ports>
+      <port protocol="tcp" portid="80">
+        <state state="open" reason="syn-ack" reason_ttl="60"/>
+        <service name="http" product="nginx" version="1.18.0" method="probed" conf="10">
+          <cpe>cpe:/a:igor_sysoev:nginx:1.18.0</cpe>
+        </service>
+      </port>
+    </ports>
+    <distance value="4"/>
+    <trace port="80" proto="tcp">
+      <hop ttl="1" ipaddr="192.168.1.1" rtt="--" host="gateway.lan"/>
+      <hop ttl="3" ipaddr="10.0.0.1" rtt="--"/>
+      <hop ttl="4" ipaddr="10.0.0.7" rtt="3.90"/>
+    </trace>
+    <times srtt="3900" rttvar="500" to="100000"/>
+  </host>
+  <host starttime="1700000001" endtime="1700000020">
+    <status state="up" reason="echo-reply" reason_ttl="60"/>
+    <address addr="10.0.0.9" addrtype="ipv4"/>
+    <hostnames/>
+  </host>
+  <runstats>
+    <finished time="1700000030" elapsed="30.00" exit="success"/>
+    <hosts up="3" down="253" total="256"/>
+  </runstats>
+</nmaprun>
