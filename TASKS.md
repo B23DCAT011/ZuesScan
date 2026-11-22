@@ -65,7 +65,9 @@ Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây we
       (G8, G10)
 - [x] `feat/nvd-source` — `reconkit cve sync` tải NVD API 2.0 về cache SQLite (phân trang,
       tôn trọng rate limit, retry, lần sau chỉ tải phần thay đổi), `scan --cve-cache`. (G9)
-- [ ] `feat/cve-priority` — CVSS score/vector, CWE, KEV, EPSS + xếp ưu tiên. (G11)
+- [x] `feat/cve-priority` — CVSS score/vector, CWE, CISA KEV, FIRST EPSS trên mỗi finding (schema
+      DB v8); xếp ưu tiên P1 (đang bị khai thác) → P4; bản đồ chỉ vẽ 5 lỗi gấp nhất mỗi cổng.
+      (G11)
 - [x] `feat/scan-profiles` — profile `quick` / `standard` / `full` / `gentle`, file cấu hình TOML
       (`--config`), cờ ghi đè (`--ports`, `--timing`, `--max-rate`, `--timeout`…), lệnh
       `reconkit profiles`; mỗi run lưu profile + thông số (schema DB v6). (G6, G7)
