@@ -178,7 +178,19 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     fingerprint.
   - Còn lại: nhận diện distro dựa trên chuỗi version / banner (heuristic). Muốn chắc phải quét
     có đăng nhập và đối chiếu số phiên bản gói với security tracker (→ GĐ 2, mục nâng cao).
-- [ ] **G11. Severity là nhãn gõ tay.** Sửa: lưu điểm + vector CVSS; cân nhắc EPSS để ưu tiên.
+- [x] **G11. Severity là nhãn gõ tay.** Sửa: lưu điểm + vector CVSS; cân nhắc EPSS để ưu tiên.
+  - ✅ **Đã sửa (`feat/cve-priority`)**: mỗi finding mang **CVSS** (điểm + vector, ưu tiên điểm
+    của NVD, v3.1 > v3.0 > v4.0 > v2), **CWE**, ngày vào **CISA KEV** (đã bị khai thác ngoài
+    thực tế) và **EPSS** (xác suất bị khai thác trong 30 ngày, FIRST tính lại mỗi ngày) — lưu
+    theo run (schema DB v8): run ghi lại điều nó biết lúc đó. `reconkit cve sync` tải thêm catalog
+    KEV (từ mirror GitHub chính thức của CISA, vì www.cisa.gov chặn client tự động) và file EPSS
+    hằng ngày (~410.000 CVE). **Thứ tự ưu tiên** (theo tinh thần SSVC / "KEV trước, rồi EPSS,
+    rồi CVSS"): P1 có trong KEV; P2 EPSS ≥ 10 % hoặc CVSS ≥ 9; P3 EPSS ≥ 1 % hoặc CVSS ≥ 7;
+    P4 còn lại. CLI và báo cáo sắp theo ưu tiên và nói lý do. Kiểm với dữ liệu thật: MySQL 8.0.37
+    trên máy dev khớp 61 CVE, 2 cái P3 (EPSS ~1 %), còn lại P4.
+  - Còn lại: ngưỡng EPSS / CVSS là lựa chọn của ReconKit, chưa cấu hình được. Chưa tính bối
+    cảnh tài sản (máy public hay nội bộ, quan trọng đến đâu) như SSVC đầy đủ. Cờ "dùng trong
+    ransomware" của KEV mới chỉ hiện ở `cve show`. EPSS / KEV của run cũ không tự cập nhật.
 - [x] **G12. Fingerprint có `title`.** Sửa câu chữ title là lỗi cũ thành "lỗi mới".
   Sửa: định danh theo asset + port + protocol + CVE/rule id (đổi schema fingerprint có version).
   - ✅ **Đã sửa (F8)**: fingerprint = băm của **ở đâu** (địa chỉ IP của máy, chỉ dùng tên khi

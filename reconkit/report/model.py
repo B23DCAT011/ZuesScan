@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from reconkit import __version__
+from reconkit import __version__, priority
 from reconkit.orchestrator import ScanRun, now
 from reconkit.report.graph import build_graph
 from reconkit.schema import Asset, Finding, Hop, Service, Severity
@@ -57,6 +57,11 @@ def report_model(run: ScanRun, run_id: int) -> dict[str, Any]:
             "findings": len(findings),
             "traced_hosts": sum(1 for a in run.assets if a.route),
             "by_severity": by_severity,
+            "by_priority": {
+                str(p): sum(1 for f in findings if priority.priority(f) == p)
+                for p in priority.Priority
+            },
+            "known_exploited": sum(1 for f in findings if f.kev_added),
         },
         "hosts": [_host(a) for a in run.assets],
         "graph": build_graph(run.assets),
@@ -94,6 +99,13 @@ def _finding(f: Finding) -> dict[str, Any]:
         "cve": f.cve,
         "rule_id": f.rule_id,
         "confidence": None if f.confidence is None else str(f.confidence),
+        "priority": str(priority.priority(f)),
+        "priority_reason": priority.reason(f),
+        "cvss_score": f.cvss_score,
+        "cvss_vector": f.cvss_vector,
+        "cwe": list(f.cwe),
+        "kev_added": f.kev_added,
+        "epss": f.epss,
         "port": f.service.port if f.service else None,
         "protocol": f.service.protocol if f.service else None,
         "description": f.description,

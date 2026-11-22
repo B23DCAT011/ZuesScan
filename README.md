@@ -108,7 +108,20 @@ reconkit cve show CVE-2024-6387
 reconkit scan 10.0.0.5 --scope scope.txt --cve-cache reconkit-cve.db
 ```
 
-Các lần `sync` sau chỉ tải những CVE NVD đã sửa từ lần trước. Lúc quét, việc khớp CVE chạy
+Các lần `sync` sau chỉ tải những CVE NVD đã sửa từ lần trước. `sync` cũng tải catalog **CISA
+KEV** (lỗi đang bị khai thác thật) và điểm **EPSS** (xác suất bị khai thác trong 30 ngày).
+
+Mỗi lỗi được xếp **ưu tiên**:
+
+| | Khi nào | Ý nghĩa |
+|---|---|---|
+| P1 | có trong CISA KEV | đang bị khai thác ngoài thực tế: xử lý ngay |
+| P2 | EPSS ≥ 10 % hoặc CVSS ≥ 9.0 | nhiều khả năng bị khai thác / tác động rất nặng |
+| P3 | EPSS ≥ 1 % hoặc CVSS ≥ 7.0 | |
+| P4 | còn lại | |
+
+Lý do: phần lớn CVE "critical" không bao giờ bị khai thác, trong khi vài lỗi "medium" bị khai
+thác hằng ngày; nên xét bằng chứng khai thác trước, mức tác động sau. Lúc quét, việc khớp CVE chạy
 hoàn toàn trên cache: không có thông tin nào về mục tiêu bị gửi ra ngoài.
 
 Output gốc của scanner (XML của nmap) được giữ lại theo từng run làm bằng chứng, kèm mã băm

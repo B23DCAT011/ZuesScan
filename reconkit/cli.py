@@ -18,15 +18,24 @@ import re
 import sys
 from pathlib import Path
 
+from reconkit import priority
 from reconkit.cve import CveDataError, CveSource, LocalCveSource
-from reconkit.cve.cache import CacheError, CveCache, NvdCveSource, sync
+from reconkit.cve.cache import (
+    CacheError,
+    CveCache,
+    NvdCveSource,
+    refresh_epss,
+    refresh_kev,
+    sync,
+)
+from reconkit.cve.feeds import FeedError
 from reconkit.cve.nvd import API_KEY_ENV, NvdClient, NvdError
 from reconkit.orchestrator import NoPluginAvailableError, Orchestrator, ScanRun, now
 from reconkit.plugins.base import ScanError
 from reconkit.plugins.nmap import NmapPlugin
 from reconkit.profiles import DEFAULT_PROFILE, ProfileError, ScanProfile, load_profiles, override
 from reconkit.report import render_html, report_model
-from reconkit.schema import Asset
+from reconkit.schema import Asset, Finding
 from reconkit.scope import ResolutionError, Scope, ScopeError
 from reconkit.storage import SCHEMA_VERSION, Storage, StorageError
 
@@ -60,9 +69,14 @@ def _print_summary(run: ScanRun, run_id: int, db_path: str) -> None:
         for s in asset.services:
             pv = " ".join(p for p in (s.product, s.version) if p) or "-"
             print(f"    {f'{s.port}/{s.protocol}':<11}{(s.name or '-'):<16}{pv}")
-        for f in asset.findings:
+        # Most urgent first: known-exploited, then likely-exploited, then impact.
+        for f in sorted(asset.findings, key=priority.sort_key):
             sure = f", {f.confidence}" if f.confidence else ""
-            print(f"    [{f.severity.upper()}{sure}] {f.title}" + (f" ({f.cve})" if f.cve else ""))
+            print(
+                f"    {priority.priority(f)} [{f.severity.upper()}{sure}] {f.title}"
+                + (f" ({f.cve})" if f.cve else "")
+            )
+            print(f"        priority: {_risk_line(f)}")
             if f.evidence:
                 print(f"        evidence: {f.evidence}")
     for o in run.raw_outputs:
@@ -70,6 +84,18 @@ def _print_summary(run: ScanRun, run_id: int, db_path: str) -> None:
             f"\n  raw output kept: {o.plugin} ({o.format}, {o.size} bytes, "
             f"sha256 {o.sha256[:12]}...)  ->  reconkit raw {run_id} --db {db_path}"
         )
+
+
+def _risk_line(f: Finding) -> str:
+    """Why this priority, plus the facts behind it: CVSS, CWE, KEV, EPSS."""
+    parts = [priority.reason(f)]
+    if f.cvss_score is not None and "CVSS" not in parts[0]:
+        parts.append(f"CVSS {f.cvss_score:.1f}")
+    if f.epss is not None and "EPSS" not in parts[0]:
+        parts.append(f"EPSS {f.epss:.1%}")
+    if f.cwe:
+        parts.append(", ".join(f.cwe))
+    return " | ".join(parts)
 
 
 def _profile_line(run: ScanRun) -> str:
@@ -292,10 +318,17 @@ def _cmd_cve_sync(args: argparse.Namespace) -> int:
                     f"{what}: {result.changed} CVE(s) stored, {result.removed} rejected "
                     f"removed ({since})"
                 )
+            # Exploitation signals, for ranking findings (G11): one file each.
+            if not args.no_kev:
+                version, count = refresh_kev(cache)
+                print(f"CISA KEV catalog {version}: {count} known exploited CVEs")
+            if not args.no_epss:
+                date, count = refresh_epss(cache)
+                print(f"FIRST EPSS scores of {(date or '?')[:10]}: {count} CVEs")
     except CacheError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-    except NvdError as exc:
+    except (NvdError, FeedError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         print("what was downloaded so far is kept; run the same command again", file=sys.stderr)
         return 1
@@ -306,12 +339,15 @@ def _cmd_cve_status(args: argparse.Namespace) -> int:
     try:
         with CveCache(args.cache) as cache:
             status = cache.status()
+            feeds = cache.feeds()
     except CacheError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     print(f"{args.cache}: {status.cves} CVEs, {status.ranges} affected product ranges")
     for scope, synced in status.scopes.items():
         print(f"  {scope}: synced {synced[:19]}")
+    for feed, (fetched, version, rows) in feeds.items():
+        print(f"  {feed}: {rows} entries ({version or '?'}), downloaded {fetched[:19]}")
     return 0
 
 
@@ -539,6 +575,10 @@ def build_parser() -> argparse.ArgumentParser:
         "(repeatable; default: all of NVD, a long first download)",
     )
     cve_sync.add_argument("--full", action="store_true", help="download everything again")
+    cve_sync.add_argument(
+        "--no-kev", action="store_true", help="do not refresh the CISA KEV catalog"
+    )
+    cve_sync.add_argument("--no-epss", action="store_true", help="do not refresh EPSS scores")
     cve_sync.set_defaults(func=_cmd_cve_sync)
     cve_status = cve_sub.add_parser("status", help="what the cache holds and when it was synced")
     cve_status.add_argument("--cache", default=DEFAULT_CVE_CACHE, help="cache file (SQLite)")

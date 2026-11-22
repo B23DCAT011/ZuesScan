@@ -94,6 +94,26 @@ h2 { font-size: 1.15rem; margin: 28px 0 10px; }
 .sev-low { color: var(--sev-low); }
 .sev-info { color: var(--sev-info); }
 
+.prio {
+  display: inline-block;
+  min-width: 2.2em;
+  text-align: center;
+  font-weight: 700;
+  font-size: .78rem;
+  border-radius: 4px;
+  padding: 0 5px;
+  color: var(--panel);
+  background: var(--sev-info);
+}
+.prio-P1 { background: var(--sev-critical); }
+.prio-P2 { background: var(--sev-high); }
+.prio-P3 { background: var(--sev-medium); }
+.prio-P4 { background: var(--sev-low); }
+.n.prio-P1 { color: var(--sev-critical); background: none; }
+.n.prio-P2 { color: var(--sev-high); background: none; }
+.n.prio-P3 { color: var(--sev-medium); background: none; }
+.n.prio-P4 { color: var(--sev-low); background: none; }
+
 .error {
   margin: 12px 0 0;
   padding: 10px 12px;

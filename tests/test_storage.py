@@ -535,3 +535,16 @@ def test_finding_confidence_is_stored(tmp_path: Path) -> None:
     with _store(tmp_path) as store:
         (finding,) = store.findings_for_run(store.save_run(run))
     assert finding.confidence == Confidence.TENTATIVE
+
+
+def test_finding_risk_facts_are_stored(tmp_path: Path) -> None:
+    run = _make_run()
+    f = run.assets[0].findings[0]
+    f.cvss_score, f.cvss_vector = 5.3, "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
+    f.cwe, f.kev_added, f.epss = ("CWE-362", "CWE-200"), "2024-01-01", 0.98675
+    with _store(tmp_path) as store:
+        (back,) = store.findings_for_run(store.save_run(run))
+        (bare,) = store.findings_for_run(store.save_run(_make_run()))
+    assert (back.cvss_score, back.cvss_vector, back.cwe) == (f.cvss_score, f.cvss_vector, f.cwe)
+    assert (back.kev_added, back.epss) == ("2024-01-01", 0.98675)
+    assert (bare.cvss_score, bare.cwe, bare.kev_added, bare.epss) == (None, (), None, None)

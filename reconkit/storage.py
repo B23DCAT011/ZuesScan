@@ -25,7 +25,7 @@ from reconkit.schema import Asset, Confidence, Finding, Hop, RawOutput, Service,
 
 # The schema version this code reads and writes. Bump it together with a new entry
 # in `_MIGRATIONS`; never edit a migration that has already shipped.
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 class StorageError(Exception):
@@ -265,6 +265,16 @@ _V7 = (
     "CHECK (confidence IN ('tentative', 'firm', 'confirmed'))",
 )
 
+# Version 8 (G11): the risk facts of a finding — CVSS, CWE, KEV listing, EPSS — as they
+# were when the run matched it (they change later; the run records what it knew).
+_V8 = (
+    "ALTER TABLE finding ADD COLUMN cvss_score REAL",
+    "ALTER TABLE finding ADD COLUMN cvss_vector TEXT",
+    "ALTER TABLE finding ADD COLUMN cwe TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE finding ADD COLUMN kev_added TEXT",
+    "ALTER TABLE finding ADD COLUMN epss REAL",
+)
+
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: _V1,
     2: _V2,
@@ -273,6 +283,7 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
     5: _V5,
     6: _V6,
     7: _V7,
+    8: _V8,
 }
 
 
@@ -487,12 +498,18 @@ class Storage:
                     f.evidence,
                     fp,
                     None if f.confidence is None else str(f.confidence),
+                    f.cvss_score,
+                    f.cvss_vector,
+                    ",".join(f.cwe),
+                    f.kev_added,
+                    f.epss,
                 )
             )
         self._conn.executemany(
             "INSERT INTO finding "
             "(asset_id, service_id, title, severity, cve, rule_id, description, evidence, "
-            "fingerprint, confidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "fingerprint, confidence, cvss_score, cvss_vector, cwe, kev_added, epss) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
 
@@ -583,7 +600,8 @@ class Storage:
                 asset.services.append(service)
             for f in self._conn.execute(
                 "SELECT service_id, title, severity, cve, rule_id, description, evidence, "
-                "fingerprint, confidence FROM finding WHERE asset_id = ? ORDER BY id",
+                "fingerprint, confidence, cvss_score, cvss_vector, cwe, kev_added, epss "
+                "FROM finding WHERE asset_id = ? ORDER BY id",
                 (a["id"],),
             ):
                 asset.findings.append(_finding(f, asset, services_by_id.get(f["service_id"])))
@@ -700,4 +718,9 @@ def _finding(row: sqlite3.Row, asset: Asset, service: Service | None) -> Finding
         evidence=row["evidence"] or "",
         fingerprint=row["fingerprint"],
         confidence=None if row["confidence"] is None else Confidence(row["confidence"]),
+        cvss_score=row["cvss_score"],
+        cvss_vector=row["cvss_vector"],
+        cwe=tuple(c for c in (row["cwe"] or "").split(",") if c),
+        kev_added=row["kev_added"],
+        epss=row["epss"],
     )

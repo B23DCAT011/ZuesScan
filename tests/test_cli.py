@@ -587,6 +587,22 @@ def _fake_nvd(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         "NvdClient",
         lambda api_key=None: NvdClient(api_key=api_key, fetch=fetch, sleep=lambda _s: None),
     )
+    # KEV and EPSS: canned files instead of downloads.
+    import gzip
+
+    from reconkit.cve import cache as cache_module
+    from reconkit.cve.feeds import EPSS_URL, KEV_URL
+
+    feeds = {
+        KEV_URL: (Path(__file__).parent / "data" / "kev_sample.json").read_bytes(),
+        EPSS_URL: gzip.compress(b"cve,epss,percentile\nCVE-2021-23017,0.2,0.9\n"),
+    }
+    monkeypatch.setattr(
+        cli, "refresh_kev", lambda c: cache_module.refresh_kev(c, feeds.__getitem__)
+    )
+    monkeypatch.setattr(
+        cli, "refresh_epss", lambda c: cache_module.refresh_epss(c, feeds.__getitem__)
+    )
     return urls
 
 
@@ -602,6 +618,8 @@ def test_cve_sync_status_show(
     assert "cpe:2.3:a:f5:nginx: 2 CVE(s) stored, 1 rejected removed (full download)" in captured.out
     assert "no NVD API key" in captured.err
     assert "virtualMatchString=cpe%3A2.3%3Aa%3Af5%3Anginx" in urls[0]
+    assert "CISA KEV catalog 2026.11.20: 2 known exploited CVEs" in captured.out
+    assert "FIRST EPSS scores of ?: 1 CVEs" in captured.out
 
     assert cli.main(["cve", "status", "--cache", cache]) == 0
     out = capsys.readouterr().out
@@ -610,6 +628,8 @@ def test_cve_sync_status_show(
     assert cli.main(["cve", "show", "cve-2021-23017", "--cache", cache]) == 0
     out = capsys.readouterr().out
     assert "cvss_score: 7.7" in out
+    assert "kev: exploited in the wild: in CISA KEV since 2026-01-15" in out
+    assert "epss: 20.00% (percentile 90.0%)" in out
     assert "affects: f5:nginx >= 0.6.18, < 1.20.1" in out
     assert cli.main(["cve", "show", "CVE-1999-0001", "--cache", cache]) == 1
 
@@ -641,8 +661,37 @@ def test_scan_matches_against_the_nvd_cache(
     argv = ["scan", "scanme.lab", "--scope", _scope_file(tmp_path), "--db", str(tmp_path / "d")]
     assert cli.main([*argv, "--cve-cache", cache]) == 0
     out = capsys.readouterr().out
-    assert "(CVE-2021-23017)" in out
+    assert "P1 [HIGH, firm] " in out and "(CVE-2021-23017)" in out
+    assert "priority: known exploited (CISA KEV since 2026-01-15) | CVSS 7.7 | EPSS 20.0%" in out
     assert "Affected per NVD cache" in out
 
     assert cli.main([*argv, "--cve-cache", str(tmp_path / "nope.db")]) == 2
     assert "reconkit cve sync" in capsys.readouterr().err
+
+
+def test_cve_sync_can_skip_the_feeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _fake_nvd(monkeypatch)
+    cache = str(tmp_path / "cve.db")
+    assert cli.main(["cve", "sync", "--cache", cache, "--no-kev", "--no-epss"]) == 0
+    out = capsys.readouterr().out
+    assert "KEV" not in out and "EPSS" not in out
+
+
+def test_feed_failure_keeps_what_was_downloaded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from reconkit.cve.feeds import FeedError
+
+    _fake_nvd(monkeypatch)
+
+    def broken(cache: object) -> object:
+        raise FeedError("cannot download https://example/kev.json: timed out")
+
+    monkeypatch.setattr(cli, "refresh_kev", broken)
+    cache = str(tmp_path / "cve.db")
+    assert cli.main(["cve", "sync", "--cache", cache]) == 1
+    assert "run the same command again" in capsys.readouterr().err
+    assert cli.main(["cve", "status", "--cache", cache]) == 0
+    assert "2 CVEs" in capsys.readouterr().out

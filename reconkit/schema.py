@@ -133,6 +133,13 @@ class Finding:
     # How sure the finding is; None when the producer did not say. NOT part of the
     # fingerprint: becoming surer of an issue does not make it another issue.
     confidence: Confidence | None = None
+    # Risk facts about the issue itself (G11), for ranking what to fix first; none of
+    # them is part of the fingerprint (scores are revised, catalogs grow).
+    cvss_score: float | None = None  # CVSS base score, 0-10
+    cvss_vector: str | None = None  # e.g. "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    cwe: tuple[str, ...] = ()  # weakness types, e.g. ("CWE-22",)
+    kev_added: str | None = None  # date CISA listed it as exploited in the wild (KEV)
+    epss: float | None = None  # FIRST EPSS: probability of exploitation within 30 days
 
     def identity(self) -> dict[str, str | int | None]:
         """What makes this finding *this* finding, from one scan to the next.
@@ -144,9 +151,10 @@ class Finding:
           neither — its title.
 
         Deliberately left out: the title and description (rewording an entry must not
-        turn an old issue into a new one), severity (scores get revised), evidence,
-        confidence, and the product version — a server upgraded from one vulnerable version to
-        another still has the same open issue, not a new one.
+        turn an old issue into a new one), severity and the risk facts (scores get
+        revised), evidence, confidence, and the product version — a server upgraded
+        from one vulnerable version to another still has the same open issue, not a
+        new one.
         """
         svc = self.service
         return {
