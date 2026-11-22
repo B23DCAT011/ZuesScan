@@ -185,6 +185,8 @@ def test_model_summarises_the_run() -> None:
         "findings": 3,
         "traced_hosts": 1,
         "by_severity": {"critical": 0, "high": 1, "medium": 1, "low": 1, "info": 0},
+        "by_priority": {"P1": 0, "P2": 0, "P3": 1, "P4": 2},
+        "known_exploited": 0,
     }
     web = model["hosts"][0]
     assert web["findings"][1]["port"] == 80
@@ -300,3 +302,18 @@ def test_page_script_never_writes_markup() -> None:
     code = re.sub(r"/\*.*?\*/", "", script, flags=re.S)  # the header comment names them
     for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval("):
         assert sink not in code
+
+
+def test_many_findings_on_one_port_are_summed_up_on_the_map() -> None:
+    findings = [
+        _finding(HTTP, f"CVE-2024-{i:04d}", Severity.MEDIUM, "10.0.0.5") for i in range(1, 9)
+    ]
+    findings[6].kev_added = "2025-01-01"  # the most urgent must be drawn, wherever it is
+    asset = Asset(host="10.0.0.5", ip="10.0.0.5", services=[HTTP], findings=findings)
+    nodes = _nodes(build_graph([asset]))
+    drawn = [n["label"] for n in nodes.values() if n["kind"] == "finding"]
+    assert len(drawn) == 5 and drawn[0] == "CVE-2024-0007"
+    more = nodes["more:svc:10.0.0.5:80/tcp"]
+    assert more["label"] == "+3 more"
+    assert len(more["ref"]["findings"]) == 3
+    assert report_model(_run([asset]), 1)["summary"]["findings"] == 8  # the table has all

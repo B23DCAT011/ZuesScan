@@ -101,15 +101,27 @@ class CveRecord:
     affects: tuple[AffectedRange, ...]
     title: str = ""
     description: str = ""
+    cvss_score: float | None = None
+    cvss_vector: str | None = None
+    cwe: tuple[str, ...] = ()
+    kev_added: str | None = None  # date it entered CISA's KEV catalog
+    epss: float | None = None  # FIRST EPSS score; changes daily, so never in a data file
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "cve": self.id,
             "title": self.title,
             "severity": str(self.severity),
             "description": self.description,
-            "affects": [a.to_json() for a in self.affects],
         }
+        if self.cvss_score is not None:
+            data["cvss"] = {"score": self.cvss_score, "vector": self.cvss_vector}
+        if self.cwe:
+            data["cwe"] = list(self.cwe)
+        if self.kev_added:
+            data["kev"] = {"added": self.kev_added}
+        data["affects"] = [a.to_json() for a in self.affects]
+        return data
 
 
 def range_from_json(data: dict[str, Any]) -> AffectedRange:
@@ -143,9 +155,16 @@ def record_from_json(data: dict[str, Any]) -> CveRecord:
         cve = str(data["cve"])
         severity = Severity(data.get("severity", "info"))
         affects = tuple(range_from_json(a) for a in data["affects"])
+        cvss = data.get("cvss") or {}
+        score = cvss.get("score")
+        if score is not None and not (
+            isinstance(score, int | float) and not isinstance(score, bool) and 0 <= score <= 10
+        ):
+            raise ValueError(f"CVSS score must be 0-10, not {score!r}")
+        kev = data.get("kev") or {}
     except KeyError as exc:
         raise CveDataError(f"entry {data.get('cve', '?')}: missing {exc}") from None
-    except ValueError as exc:
+    except (ValueError, AttributeError) as exc:
         raise CveDataError(f"entry {data.get('cve', '?')}: {exc}") from None
     return CveRecord(
         id=cve,
@@ -153,6 +172,10 @@ def record_from_json(data: dict[str, Any]) -> CveRecord:
         affects=affects,
         title=str(data.get("title", "")),
         description=str(data.get("description", "")),
+        cvss_score=None if score is None else float(score),
+        cvss_vector=cvss.get("vector"),
+        cwe=tuple(str(c) for c in data.get("cwe", [])),
+        kev_added=kev.get("added"),
     )
 
 

@@ -11,6 +11,7 @@
   var data = JSON.parse(document.getElementById("reconkit-data").textContent);
   var run = data.run;
   var SEVERITIES = ["critical", "high", "medium", "low", "info"];
+  var PRIORITY_LABEL = { P1: "P1 act now", P2: "P2 high", P3: "P3 medium", P4: "P4 low" };
 
   /* --- helpers ------------------------------------------------------------------ */
 
@@ -41,6 +42,18 @@
 
   function sevBadge(sev) {
     return el("span", { class: "sev sev-" + sev }, sev);
+  }
+
+  function prioBadge(p) {
+    return el("span", { class: "prio prio-" + p }, p || "-");
+  }
+
+  function riskFacts(f) {
+    var facts = [];
+    if (f.cvss_score !== null && f.cvss_score !== undefined) facts.push("CVSS " + f.cvss_score.toFixed(1));
+    if (f.kev_added) facts.push("KEV since " + f.kev_added);
+    if (f.epss !== null && f.epss !== undefined) facts.push("EPSS " + (f.epss * 100).toFixed(1) + "%");
+    return facts.join(" · ");
   }
 
   function cssVar(name) {
@@ -97,8 +110,9 @@
     tile(s.hosts, s.hosts === 1 ? "host" : "hosts");
     tile(s.services, "open services");
     tile(s.findings, s.findings === 1 ? "finding" : "findings");
-    SEVERITIES.forEach(function (sev) {
-      if (s.by_severity[sev]) tile(s.by_severity[sev], sev, "sev-" + sev);
+    if (s.known_exploited) tile(s.known_exploited, "known exploited (KEV)", "sev-critical");
+    ["P1", "P2", "P3", "P4"].forEach(function (p) {
+      if (s.by_priority && s.by_priority[p]) tile(s.by_priority[p], PRIORITY_LABEL[p], "prio-" + p);
     });
     tile(s.traced_hosts + "/" + s.hosts, "hosts traced");
   }
@@ -159,6 +173,10 @@
           "text-valign": "center", "text-halign": "right", "text-margin-x": 6,
           "text-margin-y": 0,
           "background-color": function (n) { return sevColor(n.data("severity")); } } },
+        { selector: 'node[kind = "more"]', style: {
+          "shape": "round-rectangle", "width": 16, "height": 12, "font-size": 9,
+          "text-valign": "center", "text-halign": "right", "text-margin-x": 6,
+          "text-margin-y": 0, "background-color": muted, "font-style": "italic" } },
         { selector: "edge", style: {
           "width": 1.5, "line-color": line, "curve-style": "bezier",
           "target-arrow-shape": "triangle", "target-arrow-color": line, "arrow-scale": 0.8 } },
@@ -226,7 +244,7 @@
           return n.kind === "service" && n.parent === host.id;
         });
         var findings = nodes.filter(function (n) {
-          return n.kind === "finding" && n.parent === host.id;
+          return (n.kind === "finding" || n.kind === "more") && n.parent === host.id;
         });
         if (!services.length && !findings.length) {
           pos[host.id] = { x: netX, y: y };
@@ -281,7 +299,7 @@
       common.nestingFactor = 1.2;
       common.numIter = 2500;
     } else if (name === "concentric") {
-      var depth = { scanner: 5, router: 4, network: 3, host: 2, service: 1, finding: 0 };
+      var depth = { scanner: 5, router: 4, network: 3, host: 2, service: 1, finding: 0, more: 0 };
       common.concentric = function (n) { return depth[n.data("kind")] || 0; };
       common.levelWidth = function () { return 1; };
     }
@@ -295,7 +313,10 @@
 
   function toggle(kind, show) {
     if (!cy) return;
-    cy.nodes('[kind = "' + kind + '"]').style("display", show ? "element" : "none");
+    var kinds = kind === "finding" ? ["finding", "more"] : [kind];
+    kinds.forEach(function (k) {
+      cy.nodes('[kind = "' + k + '"]').style("display", show ? "element" : "none");
+    });
   }
 
   function renderLegend() {
@@ -345,7 +366,13 @@
       var f = host.findings[ref.finding];
       details.appendChild(el("h3", null, f.title));
       details.appendChild(kv([
+        ["priority", f.priority ? el("span", null, prioBadge(f.priority), " " + f.priority_reason) : null],
         ["severity", sevBadge(f.severity)], ["confidence", f.confidence], ["CVE", f.cve],
+        ["CVSS", f.cvss_score !== null && f.cvss_score !== undefined
+          ? f.cvss_score.toFixed(1) + (f.cvss_vector ? "  " + f.cvss_vector : "") : null, "mono"],
+        ["KEV", f.kev_added ? "known exploited since " + f.kev_added : null],
+        ["EPSS", f.epss !== null && f.epss !== undefined ? (f.epss * 100).toFixed(2) + "% in 30 days" : null],
+        ["CWE", (f.cwe || []).join(", ")],
         ["rule", f.rule_id],
         ["host", host.host + (host.ip && host.ip !== host.host ? " (" + host.ip + ")" : "")],
         ["port", f.port !== null ? f.port + "/" + f.protocol : null],
@@ -356,6 +383,17 @@
         details.appendChild(el("div", { class: "kind" }, "evidence"));
         details.appendChild(el("pre", null, f.evidence));
       }
+    } else if (d.kind === "more" && host) {
+      var hidden = (ref.findings || []).map(function (i) { return host.findings[i]; });
+      details.appendChild(el("h3", null, hidden.length + " more findings"));
+      details.appendChild(el("p", { class: "muted" },
+        "Less urgent than the ones drawn on the map; all are in the Findings table."));
+      var list = el("ul");
+      hidden.forEach(function (x) {
+        list.appendChild(el("li", null, prioBadge(x.priority), " " + (x.cve || x.rule_id || x.title) +
+          " — " + x.severity));
+      });
+      details.appendChild(list);
     } else if (d.kind === "service" && host) {
       var svc = host.services[ref.service];
       details.appendChild(el("h3", null, service(svc) + " " + (svc.name || "")));
@@ -415,28 +453,47 @@
 
   function renderFindings() {
     var table = document.getElementById("findings");
-    table.appendChild(el("thead", null, el("tr", null, el("th", null, "Severity"),
-      el("th", null, "Host"), el("th", null, "Port"), el("th", null, "Issue"),
-      el("th", null, "Evidence"))));
+    table.appendChild(el("thead", null, el("tr", null, el("th", null, "Priority"),
+      el("th", null, "Severity"), el("th", null, "Host"), el("th", null, "Port"),
+      el("th", null, "Issue"), el("th", null, "Evidence"))));
     var rows = [];
     data.hosts.forEach(function (host, h) {
       host.findings.forEach(function (f) { rows.push({ host: host, f: f, h: h }); });
     });
-    rows.sort(function (a, b) { return sevRank(a.f.severity) - sevRank(b.f.severity); });
+    // Most urgent first: priority, then likelihood of exploitation, then severity.
+    rows.sort(function (a, b) {
+      return (a.f.priority || "P9").localeCompare(b.f.priority || "P9") ||
+        ((b.f.epss || 0) - (a.f.epss || 0)) ||
+        (sevRank(a.f.severity) - sevRank(b.f.severity));
+    });
     var body = el("tbody");
     if (!rows.length) {
-      body.appendChild(el("tr", null, el("td", { colspan: "5", class: "empty" },
+      body.appendChild(el("tr", null, el("td", { colspan: "6", class: "empty" },
         run.status === "failed" ? "No results: the scan failed." : "No finding.")));
     }
     rows.forEach(function (r) {
       var tr = el("tr", null,
+        el("td", { title: r.f.priority_reason || "" }, prioBadge(r.f.priority)),
         el("td", null, sevBadge(r.f.severity),
           r.f.confidence ? el("div", { class: "muted" }, r.f.confidence) : null),
         el("td", null, r.host.host),
         el("td", { class: "mono" }, r.f.port !== null ? r.f.port + "/" + r.f.protocol : "-"),
-        el("td", { class: "wrap" }, r.f.title, r.f.cve ? el("div", { class: "mono muted" }, r.f.cve) : null),
+        el("td", { class: "wrap" }, r.f.title,
+          r.f.cve ? el("div", { class: "mono muted" }, r.f.cve) : null,
+          riskFacts(r.f) ? el("div", { class: "muted" }, riskFacts(r.f)) : null),
         el("td", { class: "wrap muted" }, r.f.evidence || "-"));
-      tr.addEventListener("click", function () { focus("finding:" + r.f.fingerprint); });
+      tr.addEventListener("click", function () {
+        var id = "finding:" + r.f.fingerprint;
+        if (cy && cy.getElementById(id).empty()) {
+          // Not drawn on its own: show the "+N more" node it is counted in.
+          var holder = cy.nodes('[kind = "more"]').filter(function (n) {
+            var ref = n.data("ref");
+            return ref.host === r.h && ref.findings.indexOf(r.host.findings.indexOf(r.f)) >= 0;
+          });
+          if (holder.nonempty()) id = holder[0].id();
+        }
+        focus(id);
+      });
       body.appendChild(tr);
     });
     table.appendChild(body);

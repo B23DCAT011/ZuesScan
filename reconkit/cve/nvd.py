@@ -187,6 +187,7 @@ def parse_cve(cve: dict[str, Any]) -> NvdEntry | None:
         (d.get("value", "") for d in cve.get("descriptions", []) if d.get("lang") == "en"), ""
     )
     version, score, vector, severity = _cvss(cve.get("metrics", {}))
+    cwes = _cwe(cve.get("weaknesses", []))
     return NvdEntry(
         record=CveRecord(
             id=str(cve_id),
@@ -194,6 +195,11 @@ def parse_cve(cve: dict[str, Any]) -> NvdEntry | None:
             affects=tuple(_ranges(cve.get("configurations", []))),
             title=title_from(description),
             description=description,
+            cvss_score=score,
+            cvss_vector=vector,
+            cwe=cwes,
+            # NVD copies CISA's KEV listing into the record.
+            kev_added=cve.get("cisaExploitAdd") or None,
         ),
         published=cve.get("published"),
         last_modified=cve.get("lastModified"),
@@ -201,7 +207,7 @@ def parse_cve(cve: dict[str, Any]) -> NvdEntry | None:
         cvss_version=version,
         cvss_score=score,
         cvss_vector=vector,
-        cwe=_cwe(cve.get("weaknesses", [])),
+        cwe=cwes,
     )
 
 

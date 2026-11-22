@@ -107,6 +107,11 @@ def to_finding(
         description=record.description,
         evidence=evidence(service, software, matched, source),
         confidence=confidence(software),
+        cvss_score=record.cvss_score,
+        cvss_vector=record.cvss_vector,
+        cwe=record.cwe,
+        kev_added=record.kev_added,
+        epss=record.epss,
     )
 
 

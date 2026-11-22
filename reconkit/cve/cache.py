@@ -7,6 +7,9 @@ machines, and is rebuilt at will.
 
     cve        one row per CVE: description, severity, CVSS, CWE, dates
     cve_range  the products / versions it affects (NVD cpeMatch), indexed by product
+    kev        CISA's Known Exploited Vulnerabilities (catalog, plus NVD's own copy)
+    epss       FIRST EPSS scores, all CVEs, replaced daily
+    feed_state when the KEV catalog / EPSS scores were last downloaded
     sync_state when each download scope ("all", or one product) was last brought up
                to date, so the next sync asks NVD only for what changed since
 """
@@ -21,12 +24,13 @@ from pathlib import Path
 from typing import Any
 
 from reconkit.cve.cpe import Cpe
+from reconkit.cve.feeds import EpssScore, FetchBytes, KevEntry, http_get, parse_epss, parse_kev
 from reconkit.cve.match import affected_range, identify, to_finding
 from reconkit.cve.nvd import NvdClient, NvdEntry, parse_cve
 from reconkit.cve.records import AffectedRange, CveRecord
 from reconkit.schema import Finding, Service, Severity
 
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 SCOPE_ALL = "all"
 
 _SCHEMA = (
@@ -61,6 +65,31 @@ _SCHEMA = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_range_product ON cve_range(product)",
     "CREATE INDEX IF NOT EXISTS idx_range_cve ON cve_range(cve_id)",
+    """
+    CREATE TABLE IF NOT EXISTS kev (
+        cve_id      TEXT PRIMARY KEY,
+        date_added  TEXT NOT NULL,
+        due_date    TEXT,
+        ransomware  INTEGER NOT NULL DEFAULT 0,
+        name        TEXT NOT NULL DEFAULT '',
+        source      TEXT NOT NULL CHECK (source IN ('cisa', 'nvd'))
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS epss (
+        cve_id      TEXT PRIMARY KEY,
+        score       REAL NOT NULL,
+        percentile  REAL NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS feed_state (
+        feed        TEXT PRIMARY KEY,
+        fetched_at  TEXT NOT NULL,
+        version     TEXT,
+        rows        INTEGER NOT NULL
+    )
+    """,
     """
     CREATE TABLE IF NOT EXISTS sync_state (
         scope      TEXT PRIMARY KEY,
@@ -171,6 +200,48 @@ class CveCache:
                         for a in r.affects
                     ],
                 )
+                if r.kev_added:
+                    # NVD's copy of the KEV listing; the catalog itself takes precedence.
+                    self._conn.execute(
+                        "INSERT OR IGNORE INTO kev (cve_id, date_added, source) "
+                        "VALUES (?, ?, 'nvd')",
+                        (r.id, r.kev_added),
+                    )
+
+    def replace_kev(self, version: str, entries: list[KevEntry], at: datetime) -> None:
+        """Replace the KEV catalog (NVD's copies of it are kept for CVEs it lacks)."""
+        with self._conn:
+            self._conn.execute("DELETE FROM kev WHERE source = 'cisa'")
+            self._conn.executemany(
+                "INSERT OR REPLACE INTO kev (cve_id, date_added, due_date, ransomware, name, "
+                "source) VALUES (?, ?, ?, ?, ?, 'cisa')",
+                [(e.cve, e.added, e.due, int(e.ransomware), e.name) for e in entries],
+            )
+            self._mark_feed("kev", at, version, len(entries))
+
+    def replace_epss(self, date: str | None, scores: list[EpssScore], at: datetime) -> None:
+        """Replace every EPSS score with a new day's scores."""
+        with self._conn:
+            self._conn.execute("DELETE FROM epss")
+            self._conn.executemany(
+                "INSERT OR REPLACE INTO epss (cve_id, score, percentile) VALUES (?, ?, ?)",
+                [(s.cve, s.score, s.percentile) for s in scores],
+            )
+            self._mark_feed("epss", at, date, len(scores))
+
+    def _mark_feed(self, feed: str, at: datetime, version: str | None, rows: int) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO feed_state (feed, fetched_at, version, rows) "
+            "VALUES (?, ?, ?, ?)",
+            (feed, at.isoformat(), version, rows),
+        )
+
+    def feeds(self) -> dict[str, tuple[str, str | None, int]]:
+        """feed -> (fetched at, version or score date, rows)."""
+        return {
+            r["feed"]: (r["fetched_at"], r["version"], r["rows"])
+            for r in self._conn.execute("SELECT * FROM feed_state ORDER BY feed")
+        }
 
     def mark_synced(self, scope: str, at: datetime, changed: int) -> None:
         with self._conn:
@@ -201,9 +272,12 @@ class CveCache:
     def records_for_product(self, product: str) -> list[CveRecord]:
         """Every CVE with a range for `product`, carrying only those ranges."""
         rows = self._conn.execute(
-            "SELECT c.id, c.title, c.description, c.severity, r.part, r.vendor, r.product,"
-            ' r.version, r."update", r.start_incl, r.start_excl, r.end_incl, r.end_excl'
+            "SELECT c.id, c.title, c.description, c.severity, c.cvss_score, c.cvss_vector,"
+            " c.cwe, k.date_added AS kev_added, e.score AS epss,"
+            ' r.part, r.vendor, r.product, r.version, r."update",'
+            " r.start_incl, r.start_excl, r.end_incl, r.end_excl"
             " FROM cve_range r JOIN cve c ON c.id = r.cve_id"
+            " LEFT JOIN kev k ON k.cve_id = c.id LEFT JOIN epss e ON e.cve_id = c.id"
             " WHERE r.product = ? ORDER BY c.id",
             (product,),
         ).fetchall()
@@ -232,6 +306,11 @@ class CveCache:
                 affects=tuple(ranges),
                 title=row["title"],
                 description=row["description"],
+                cvss_score=row["cvss_score"],
+                cvss_vector=row["cvss_vector"],
+                cwe=tuple(c for c in row["cwe"].split(",") if c),
+                kev_added=row["kev_added"],
+                epss=row["epss"],
             )
             for row, ranges in records.values()
         ]
@@ -242,6 +321,21 @@ class CveCache:
         if row is None:
             return None
         data = dict(row)
+        kev = self._conn.execute(
+            "SELECT date_added, due_date, ransomware, source FROM kev WHERE cve_id = ?",
+            (cve_id,),
+        ).fetchone()
+        if kev is not None:
+            data["kev"] = (
+                f"exploited in the wild: in CISA KEV since {kev['date_added']}"
+                + (f", fix due {kev['due_date']}" if kev["due_date"] else "")
+                + (", used in ransomware campaigns" if kev["ransomware"] else "")
+            )
+        epss = self._conn.execute(
+            "SELECT score, percentile FROM epss WHERE cve_id = ?", (cve_id,)
+        ).fetchone()
+        if epss is not None:
+            data["epss"] = f"{epss['score']:.2%} (percentile {epss['percentile']:.1%})"
         data["affects"] = [
             dict(r)
             for r in self._conn.execute(
@@ -318,3 +412,29 @@ class NvdCveSource:
                     to_finding(service, asset_host, software, record, matched, self.name)
                 )
         return findings
+
+
+def refresh_kev(
+    cache: CveCache,
+    fetch: FetchBytes = http_get,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> tuple[str, int]:
+    """Download the KEV catalog into the cache; return (catalog version, entries)."""
+    from reconkit.cve.feeds import KEV_URL
+
+    version, entries = parse_kev(fetch(KEV_URL))
+    cache.replace_kev(version, entries, now())
+    return version, len(entries)
+
+
+def refresh_epss(
+    cache: CveCache,
+    fetch: FetchBytes = http_get,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> tuple[str | None, int]:
+    """Download today's EPSS scores into the cache; return (score date, scores)."""
+    from reconkit.cve.feeds import EPSS_URL
+
+    date, scores = parse_epss(fetch(EPSS_URL))
+    cache.replace_epss(date, scores, now())
+    return date, len(scores)

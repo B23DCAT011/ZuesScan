@@ -16,11 +16,15 @@ from __future__ import annotations
 import ipaddress
 from typing import Any
 
+from reconkit import priority
 from reconkit.schema import Asset, Finding, Service, Severity
 
 Element = dict[str, Any]
 
 SCANNER = "scanner"
+
+# Findings drawn per service; the others are summed up in one "+N more" node.
+MAX_FINDINGS_PER_SERVICE = 5
 
 # Hosts are grouped by the network they are in, as far as an address can tell: an
 # IPv4 /24 or an IPv6 /64. The real subnet mask is not visible from outside.
@@ -131,7 +135,27 @@ def build_graph(assets: list[Asset]) -> dict[str, list[Element]]:
                 severity=worst(on_it),
                 ref={"host": index, "service": s_index},
             )
-        for f_index, finding in enumerate(asset.findings):
+        _findings(graph, asset, index, hid)
+    return graph.elements()
+
+
+def _findings(graph: _Graph, asset: Asset, index: int, hid: str) -> None:
+    """Each finding hangs off its service (or its host); the most urgent ones only.
+
+    A service with dozens of CVEs (an old database server easily has 60) would turn
+    the map into a list: beyond `MAX_FINDINGS_PER_SERVICE`, the rest are drawn as one
+    "+N more" node. The report's table still lists every finding.
+    """
+    by_source: dict[str, list[tuple[int, Finding]]] = {}
+    for f_index, finding in enumerate(asset.findings):
+        svc = finding.service
+        source = service_id(asset, svc.port, svc.protocol) if svc else hid
+        if source not in graph.nodes:
+            source = hid  # a finding on a port the scan did not list as open
+        by_source.setdefault(source, []).append((f_index, finding))
+    for source, items in by_source.items():
+        items.sort(key=lambda item: priority.sort_key(item[1]))
+        for f_index, finding in items[:MAX_FINDINGS_PER_SERVICE]:
             fid = finding_id(finding)
             graph.node(
                 fid,
@@ -139,14 +163,22 @@ def build_graph(assets: list[Asset]) -> dict[str, list[Element]]:
                 finding.cve or finding.rule_id or finding.title,
                 parent=hid,
                 severity=str(finding.severity),
+                priority=str(priority.priority(finding)),
                 ref={"host": index, "finding": f_index},
             )
-            svc = finding.service
-            source = service_id(asset, svc.port, svc.protocol) if svc else hid
-            if source not in graph.nodes:
-                source = hid  # a finding on a port the scan did not list as open
             graph.edge(source, fid, "finding")
-    return graph.elements()
+        rest = items[MAX_FINDINGS_PER_SERVICE:]
+        if rest:
+            more = f"more:{source}"
+            graph.node(
+                more,
+                "more",
+                f"+{len(rest)} more",
+                parent=hid,
+                severity=worst([f for _, f in rest]),
+                ref={"host": index, "findings": [i for i, _ in rest]},
+            )
+            graph.edge(source, more, "finding")
 
 
 def _path(graph: _Graph, asset: Asset, end: str) -> None:
