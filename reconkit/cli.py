@@ -18,13 +18,15 @@ import argparse
 import contextlib
 import ipaddress
 import json
+import logging
 import os
 import re
 import sys
 from collections import Counter
 from pathlib import Path
+from typing import Any
 
-from reconkit import priority
+from reconkit import __version__, logs, priority
 from reconkit.audit import default_operator
 from reconkit.cve import CveDataError, CveSource, LocalCveSource
 from reconkit.cve.cache import (
@@ -49,6 +51,8 @@ from reconkit.report.sarif import to_sarif
 from reconkit.schema import Asset, Finding, Severity
 from reconkit.scope import ResolutionError, Scope, ScopeError
 from reconkit.storage import SCHEMA_VERSION, Storage, StorageError
+
+log = logging.getLogger(__name__)
 
 # Findings printed per host after a scan, most urgent first; the rest are counted.
 MAX_FINDINGS_SHOWN = 10
@@ -864,11 +868,31 @@ def _cmd_raw(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    # Logging options work before or after the subcommand: `reconkit -v scan ...` and
+    # `reconkit scan ... -v`. SUPPRESS keeps a subcommand from resetting them.
+    logging_options = argparse.ArgumentParser(add_help=False)
+    logging_options.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=argparse.SUPPRESS,
+        help="log what happens: -v progress, -vv details (stderr)",
+    )
+    logging_options.add_argument(
+        "--log-file", default=argparse.SUPPRESS, help="also write a full (debug) log to this file"
+    )
+    logging_options.add_argument(
+        "--log-format",
+        choices=["text", "json"],
+        default=argparse.SUPPRESS,
+        help="json: one object per line, for a log collector",
+    )
     parser = argparse.ArgumentParser(
         prog="reconkit",
         description="Recon orchestrator & vulnerability management (academic project).",
+        parents=[logging_options],
     )
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = _Subparsers(parser.add_subparsers(dest="command", required=True), logging_options)
 
     scan = sub.add_parser("scan", help="scan a single target in scope")
     scan.add_argument("target", help="domain, IP, or CIDR to scan")
@@ -924,7 +948,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan.set_defaults(func=_cmd_scan)
 
     cve = sub.add_parser("cve", help="keep a local copy of NVD to match CVEs against")
-    cve_sub = cve.add_subparsers(dest="cve_command", required=True)
+    cve_sub = _Subparsers(cve.add_subparsers(dest="cve_command", required=True), logging_options)
     cve_sync = cve_sub.add_parser(
         "sync",
         help="download CVEs from the NVD API into the cache (only changes after the first time)",
@@ -1040,9 +1064,33 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+class _Subparsers:
+    """`add_subparsers()` result that gives every subcommand the logging options."""
+
+    def __init__(self, actions: Any, common: argparse.ArgumentParser) -> None:
+        self._actions = actions
+        self._common = common
+
+    def add_parser(self, name: str, **kwargs: Any) -> argparse.ArgumentParser:
+        parser: argparse.ArgumentParser = self._actions.add_parser(
+            name, parents=[self._common], **kwargs
+        )
+        return parser
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    try:
+        logs.setup(
+            getattr(args, "verbose", 0),
+            getattr(args, "log_file", None),
+            getattr(args, "log_format", "text"),
+        )
+    except OSError as exc:
+        print(f"error: cannot open the log file: {exc}", file=sys.stderr)
+        return 2
+    log.debug("reconkit %s: %s", __version__, " ".join(argv if argv is not None else sys.argv[1:]))
     func = args.func  # set by the chosen subcommand
     return int(func(args))
 

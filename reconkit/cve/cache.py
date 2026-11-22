@@ -16,6 +16,7 @@ machines, and is rebuilt at will.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -29,6 +30,8 @@ from reconkit.cve.match import affected_range, identify, to_finding
 from reconkit.cve.nvd import NvdClient, NvdEntry, parse_cve
 from reconkit.cve.records import AffectedRange, CveRecord
 from reconkit.schema import Finding, Service, Severity
+
+log = logging.getLogger(__name__)
 
 CACHE_VERSION = 2
 SCOPE_ALL = "all"
@@ -383,6 +386,13 @@ def sync(
         changed += len(entries)
         removed += len(rejected)
     cache.mark_synced(scope, started, changed)
+    log.info(
+        "NVD sync of %s: %d stored, %d rejected removed",
+        scope,
+        changed,
+        removed,
+        extra={"event": "nvd.synced"},
+    )
     return SyncResult(
         scope=scope,
         changed=changed,

@@ -19,6 +19,7 @@ import csv
 import gzip
 import io
 import json
+import logging
 import re
 import urllib.error
 import urllib.request
@@ -26,6 +27,8 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 from reconkit import __version__
+
+log = logging.getLogger(__name__)
 
 KEV_URL = (
     "https://raw.githubusercontent.com/cisagov/kev-data/main/known_exploited_vulnerabilities.json"
@@ -51,6 +54,7 @@ def http_get(url: str, timeout: float = 120) -> bytes:
         raise FeedError(f"cannot download {url}: {exc}") from exc
     if len(data) > MAX_FEED_BYTES:
         raise FeedError(f"{url} is larger than {MAX_FEED_BYTES} bytes; refusing it")
+    log.info("downloaded %s (%d bytes)", url, len(data), extra={"event": "feed.download"})
     return data
 
 

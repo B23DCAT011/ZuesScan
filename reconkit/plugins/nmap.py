@@ -23,15 +23,19 @@ Npcap on Windows); without them, or for a local target, nmap reports no route.
 from __future__ import annotations
 
 import ipaddress
+import logging
 import re
 import shutil
 import subprocess
+import time
 from dataclasses import replace
 from xml.etree import ElementTree as ET
 
 from reconkit.plugins.base import ScanError, ScanResult
 from reconkit.profiles import BUILTIN, DEFAULT_PROFILE, ScanProfile
 from reconkit.schema import Asset, Hop, RawOutput, ScanTarget, Service
+
+log = logging.getLogger(__name__)
 
 
 class NmapPlugin:
@@ -119,6 +123,7 @@ class NmapPlugin:
             if quiet.output is not None:
                 merged.raw.append(quiet.output)  # the proof that nothing answered
             merged.notes.append(f"{quiet} (the other address family answered)")
+            log.warning("%s", quiet, extra={"event": "nmap.family_silent"})
         return merged
 
     def _scan(self, target: ScanTarget) -> ScanResult:
@@ -127,6 +132,8 @@ class NmapPlugin:
         if len(target.addresses) and _version(target.addresses[0]) == 6:
             asked += " over IPv6"
         command = self._command(target)
+        log.debug("running %s", " ".join(command), extra={"event": "nmap.run"})
+        started = time.monotonic()
         try:
             proc = subprocess.run(
                 command,
@@ -160,7 +167,15 @@ class NmapPlugin:
             # The binary vanished or is not executable between the check and the call.
             raise ScanError(f"could not start nmap: {exc}", plugin=self.name) from exc
 
+        log.debug(
+            "nmap finished in %.1f s, %d bytes of XML",
+            time.monotonic() - started,
+            len(proc.stdout),
+            extra={"event": "nmap.done"},
+        )
         stderr = proc.stderr.strip() or None
+        if stderr:
+            log.info("nmap said: %s", stderr.replace("\n", " | "), extra={"event": "nmap.stderr"})
         # From here on nmap has said something: whatever we conclude from it, right
         # or wrong, the output itself is kept.
         raw = self._raw(command, proc.stdout, proc.stderr)
