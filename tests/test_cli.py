@@ -1,5 +1,6 @@
 """End-to-end CLI tests using a fake plugin and fake DNS injected via monkeypatch."""
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -737,3 +738,23 @@ def test_raw_picks_one_of_several_outputs_by_index(
     assert cli.main(["raw", "1", "--db", str(db), "--index", "2"]) == 0
     assert capfdbinary.readouterr().out == b"v6 output\n"
     assert cli.main(["raw", "1", "--db", str(db), "--index", "3"]) == 1
+
+
+def test_scan_summary_shows_the_most_urgent_findings_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from reconkit.schema import Finding
+
+    asset = lab_asset(Service(port=80, name="http"))
+    asset.findings = [
+        Finding(
+            asset="scanme.lab", title=f"issue {i}", rule_id=f"rule-{i}", service=asset.services[0]
+        )
+        for i in range(13)
+    ]
+    asset.findings[12].kev_added = "2025-01-01"  # the one to fix first
+    _scan_once(tmp_path, monkeypatch, FakePlugin([asset]))
+    out = capsys.readouterr().out
+    assert len(re.findall(r"^    P[1-4] ", out, re.M)) == 10
+    assert "P1 [INFO] issue 12" in out
+    assert "... and 3 less urgent finding(s)" in out

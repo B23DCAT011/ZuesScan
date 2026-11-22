@@ -31,6 +31,7 @@ class AuditKind:
     SCAN = "scan"  # a run was saved (completed, partial or failed)
     REFUSED = "refused"  # the scope guard refused the request: nothing was probed
     DELETED = "deleted"  # a stored run was deleted
+    FINDING = "finding"  # a person changed a finding's status (claimed fixed, accepted, ...)
 
 
 @dataclass(frozen=True, slots=True)

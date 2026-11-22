@@ -8,6 +8,8 @@ build orchestrator with the nmap plugin -> run -> persist to SQLite -> print a s
 `reconkit cve sync|status|show` keeps a local copy of NVD to match CVEs against.
 `reconkit audit` shows (and `--verify` checks) the audit trail; `reconkit delete`
 removes a run, on the record.
+`reconkit inventory`, `findings`, `finding` show the state across runs (D1) and record
+decisions (fix claimed, risk accepted); `reconkit diff` compares two runs.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ import ipaddress
 import os
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 from reconkit import priority
@@ -33,14 +36,20 @@ from reconkit.cve.cache import (
 )
 from reconkit.cve.feeds import FeedError
 from reconkit.cve.nvd import API_KEY_ENV, NvdClient, NvdError
-from reconkit.orchestrator import NoPluginAvailableError, Orchestrator, ScanRun, now
+from reconkit.diff import diff_runs
+from reconkit.inventory import ACTIVE, Status
+from reconkit.inventory_store import FindingEvent, FindingRow, InventoryError
+from reconkit.orchestrator import NoPluginAvailableError, Orchestrator, RunStatus, ScanRun, now
 from reconkit.plugins.base import ScanError
 from reconkit.plugins.nmap import NmapPlugin
 from reconkit.profiles import DEFAULT_PROFILE, ProfileError, ScanProfile, load_profiles, override
 from reconkit.report import render_html, report_model
-from reconkit.schema import Asset, Finding
+from reconkit.schema import Asset, Finding, Severity
 from reconkit.scope import ResolutionError, Scope, ScopeError
 from reconkit.storage import SCHEMA_VERSION, Storage, StorageError
+
+# Findings printed per host after a scan, most urgent first; the rest are counted.
+MAX_FINDINGS_SHOWN = 10
 
 
 def _print_summary(run: ScanRun, run_id: int, db_path: str) -> None:
@@ -79,7 +88,8 @@ def _print_summary(run: ScanRun, run_id: int, db_path: str) -> None:
             pv = " ".join(p for p in (s.product, s.version) if p) or "-"
             print(f"    {f'{s.port}/{s.protocol}':<11}{(s.name or '-'):<16}{pv}")
         # Most urgent first: known-exploited, then likely-exploited, then impact.
-        for f in sorted(asset.findings, key=priority.sort_key):
+        ranked = sorted(asset.findings, key=priority.sort_key)
+        for f in ranked[:MAX_FINDINGS_SHOWN]:
             sure = f", {f.confidence}" if f.confidence else ""
             print(
                 f"    {priority.priority(f)} [{f.severity.upper()}{sure}] {f.title}"
@@ -88,6 +98,11 @@ def _print_summary(run: ScanRun, run_id: int, db_path: str) -> None:
             print(f"        priority: {_risk_line(f)}")
             if f.evidence:
                 print(f"        evidence: {f.evidence}")
+        if len(ranked) > MAX_FINDINGS_SHOWN:
+            print(
+                f"    ... and {len(ranked) - MAX_FINDINGS_SHOWN} less urgent finding(s): "
+                f"reconkit findings --db {db_path}, or the HTML report"
+            )
     several = len(run.raw_outputs) > 1
     for i, o in enumerate(run.raw_outputs, start=1):
         pick = f" --index {i}" if several else ""
@@ -280,6 +295,7 @@ def _scan(args: argparse.Namespace, orch: Orchestrator, store: Storage) -> int:
 
     run_id = store.save_run(run)
     _print_summary(run, run_id, args.db)
+    _print_changes(store.changes_in_run(run_id))
     return 0
 
 
@@ -490,6 +506,218 @@ def _cmd_delete(args: argparse.Namespace) -> int:
     return 0
 
 
+_CHANGE_LABEL = {
+    "fake_fix": "FAKE FIX: claimed fixed, still there",
+    "reappeared": "reappeared",
+    "new": "new",
+    "verified_fixed": "verified fixed",
+    "gone": "gone without a fix claim (fixed? or changed?)",
+    "acceptance_expired": "risk acceptance expired",
+    "seen_again": "still open",
+}
+
+
+def _print_changes(changes: list[FindingEvent]) -> None:
+    """What this run changed in the inventory, most alarming first."""
+    if not changes:
+        return
+    counts = Counter(e.event for e in changes)
+    summary = ", ".join(f"{counts[k]} {_CHANGE_LABEL[k]}" for k in _CHANGE_LABEL if counts[k])
+    print(f"\n  inventory: {summary}")
+    for e in changes:
+        if e.event in ("fake_fix", "reappeared", "verified_fixed", "acceptance_expired"):
+            alert = "ALERT " if e.event in ("fake_fix", "reappeared") else ""
+            label = _CHANGE_LABEL[e.event]
+            print(f"    {alert}{label}: finding #{e.finding_id} {e.title} on {e.host}")
+
+
+def _row_finding(row: FindingRow) -> Finding:
+    """An inventoried finding as a Finding, to rank it like any other."""
+    return Finding(
+        asset=row.host,
+        title=row.title,
+        severity=Severity(row.severity),
+        cve=row.cve,
+        cvss_score=row.cvss_score,
+        kev_added=row.kev_added,
+        epss=row.epss,
+    )
+
+
+def _cmd_inventory(args: argparse.Namespace) -> int:
+    """Every host and service seen across runs, or rebuild the inventory."""
+    if not _db_exists(args.db):
+        return 2
+    try:
+        with Storage(args.db) as store:
+            if args.rebuild:
+                count = store.rebuild_inventory()
+                print(f"inventory rebuilt from {count} run(s)")
+                return 0
+            hosts = store.inventory_hosts()
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if not hosts:
+        print("the inventory is empty: no scan has been saved yet")
+    for h in hosts:
+        label = h["host"] if h["ip"] in (None, h["host"]) else f"{h['host']} ({h['ip']})"
+        state = "up" if h["state"] == "up" else f"NOT RESPONDING since {h['state_since'][:10]}"
+        print(f"{label}  [{state}]  first seen {h['first_seen'][:10]}, last {h['last_seen'][:10]}")
+        for s in h["services"]:
+            what = " ".join(p for p in (s["product"], s["version"]) if p) or "-"
+            closed = "" if s["state"] == "open" else "  (closed)"
+            print(
+                f"    {s['port']}/{s['protocol']:<4} {s['name'] or '?':<14} {what}{closed}"
+                f"  since {s['first_seen'][:10]}"
+            )
+    return 0
+
+
+def _cmd_findings(args: argparse.Namespace) -> int:
+    """Findings across runs, by status; the active ones by default."""
+    if not _db_exists(args.db):
+        return 2
+    statuses = None if args.all else set(args.status or [str(s) for s in ACTIVE])
+    try:
+        with Storage(args.db) as store:
+            rows = store.inventory_findings(statuses)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if not rows:
+        print("no finding with that status")
+        return 0
+    rows.sort(key=lambda r: priority.sort_key(_row_finding(r)))
+    print(f"{'ID':>4}  {'STATUS':<11} {'PRIO':<4} {'SEVERITY':<8}  {'HOST':<22} {'PORT':<9} ISSUE")
+    for r in rows:
+        port = f"{r.port}/{r.protocol}" if r.port else "-"
+        issue = f"{r.cve} {r.title}" if r.cve else r.title
+        print(
+            f"{r.id:>4}  {r.status:<11} {priority.priority(_row_finding(r)):<4} "
+            f"{r.severity:<8}  {(r.ip or r.host):<22} {port:<9} {issue}"
+        )
+    return 0
+
+
+def _cmd_finding(args: argparse.Namespace) -> int:
+    """One finding's state and history, or a decision about it."""
+    if not _db_exists(args.db):
+        return 2
+    action = (
+        "claim_fixed"
+        if args.claim_fixed
+        else "accept"
+        if args.accept
+        else "reopen"
+        if args.reopen
+        else None
+    )
+    try:
+        with Storage(args.db) as store:
+            if action is not None:
+                new = store.decide_finding(
+                    args.finding_id,
+                    action,
+                    actor=args.operator or default_operator(),
+                    note=args.reason,
+                    until=args.until,
+                )
+                print(f"finding #{args.finding_id} is now {new} (recorded in the audit trail)")
+                if new == Status.FIX_CLAIMED:
+                    print("the next scan that looks at it will verify the fix (or flag a fake fix)")
+                return 0
+            row = store.inventory_finding(args.finding_id)
+            history = store.finding_history(args.finding_id)
+    except InventoryError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if row is None:
+        print(f"error: no finding #{args.finding_id} in the inventory", file=sys.stderr)
+        return 1
+    print(f"#{row.id} {row.cve or row.rule_id or ''} {row.title}")
+    print(f"  host: {row.host}" + (f" ({row.ip})" if row.ip and row.ip != row.host else ""))
+    if row.port:
+        print(f"  port: {row.port}/{row.protocol}")
+    print(f"  status: {row.status} since {row.status_since[:19]}")
+    if row.accepted_until:
+        print(f"  accepted until: {row.accepted_until}")
+    print(
+        f"  priority: {priority.priority(_row_finding(row))} ({priority.reason(_row_finding(row))})"
+    )
+    print(f"  seen: first {row.first_seen[:19]}, last {row.last_seen[:19]}")
+    print(f"  fingerprint: {row.fingerprint}")
+    print("  history:")
+    for e in history:
+        who = f" by {e.actor}" if e.actor else f" (run #{e.run_id})" if e.run_id else ""
+        note = f": {e.note}" if e.note else ""
+        print(f"    {e.at[:19]}  {e.old_status or '-'} -> {e.new_status}  [{e.event}]{who}{note}")
+    return 0
+
+
+def _cmd_diff(args: argparse.Namespace) -> int:
+    """What changed between two runs (default: the latest run and the one before it)."""
+    if not _db_exists(args.db):
+        return 2
+    try:
+        with Storage(args.db) as store:
+            if args.before is None or args.after is None:
+                pair = _latest_pair(store, args.before)
+                if pair is None:
+                    print("error: need two runs of the same target to compare", file=sys.stderr)
+                    return 2
+                before_id, after_id = pair
+            else:
+                before_id, after_id = args.before, args.after
+            before, after = store.load_run(before_id), store.load_run(after_id)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if before is None or after is None:
+        missing = before_id if before is None else after_id
+        print(f"error: no run #{missing} in {args.db}", file=sys.stderr)
+        return 2
+    result = diff_runs(before, after)
+    print(
+        f"run #{before_id} ({before.started_at[:16]}) -> run #{after_id} ({after.started_at[:16]})"
+    )
+    for caveat in result.caveats:
+        print(f"  caution: {caveat}")
+    if result.empty:
+        print("  no change")
+        return 0
+    for host in result.hosts_added:
+        print(f"  + host {host}")
+    for host in result.hosts_removed:
+        print(f"  - host {host} (did not answer, or no longer exists)")
+    for host, s in result.services_added:
+        print(
+            f"  + {host} {s.port}/{s.protocol} {s.name or '?'} {s.product or ''} {s.version or ''}"
+        )
+    for host, s in result.services_removed:
+        print(f"  - {host} {s.port}/{s.protocol} {s.name or '?'}")
+    for c in result.services_changed:
+        print(f"  ~ {c.host} {c.port}/{c.protocol}: {c.before} -> {c.after}")
+    for host, f in result.findings_added:
+        print(f"  + finding on {host}: {f.cve or ''} {f.title}")
+    for host, f in result.findings_removed:
+        print(f"  - finding on {host}: {f.cve or ''} {f.title}")
+    return 0
+
+
+def _latest_pair(store: Storage, after: int | None) -> tuple[int, int] | None:
+    """The newest run (or `after`) and the run of the same target just before it."""
+    runs = [r for r in store.list_runs() if r.status != RunStatus.FAILED]
+    newest = next((r for r in runs if after is None or r.id == after), None)
+    if newest is None:
+        return None
+    earlier = next((r for r in runs if r.target == newest.target and r.id < newest.id), None)
+    return None if earlier is None else (earlier.id, newest.id)
+
+
 def _db_exists(path: str) -> bool:
     """Reading commands never create a database: say so if there is none."""
     if Path(path).is_file():
@@ -535,6 +763,18 @@ def _cmd_report(args: argparse.Namespace) -> int:
                 print(f"error: no run stored in {args.db}", file=sys.stderr)
                 return 2
             run = store.load_run(run_id)
+            statuses = store.finding_statuses()
+            changes = [
+                {
+                    "finding_id": e.finding_id,
+                    "event": e.event,
+                    "from": e.old_status,
+                    "to": e.new_status,
+                    "title": e.title,
+                    "host": e.host,
+                }
+                for e in store.changes_in_run(run_id)
+            ]
     except StorageError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -542,7 +782,7 @@ def _cmd_report(args: argparse.Namespace) -> int:
         print(f"error: no run #{run_id} in {args.db}", file=sys.stderr)
         return 2
 
-    page = render_html(report_model(run, run_id))
+    page = render_html(report_model(run, run_id, statuses=statuses, changes=changes))
     try:
         Path(args.html).write_text(page, encoding="utf-8", newline="\n")
     except OSError as exc:
@@ -726,6 +966,50 @@ def build_parser() -> argparse.ArgumentParser:
     delete.add_argument("--yes", action="store_true", help="confirm: the run cannot be restored")
     delete.add_argument("--operator", help="who deletes it (default: user@host)")
     delete.set_defaults(func=_cmd_delete)
+
+    inventory = sub.add_parser("inventory", help="every host and port seen, across runs")
+    inventory.add_argument("--db", default="reconkit.db", help="SQLite database path")
+    inventory.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="rebuild it from the stored runs (decisions on findings are not replayed)",
+    )
+    inventory.set_defaults(func=_cmd_inventory)
+
+    findings = sub.add_parser("findings", help="findings across runs, by lifecycle status")
+    findings.add_argument("--db", default="reconkit.db", help="SQLite database path")
+    findings.add_argument(
+        "--status",
+        action="append",
+        choices=[str(s) for s in Status],
+        help="only this status (repeatable; default: the ones still open)",
+    )
+    findings.add_argument("--all", action="store_true", help="every status")
+    findings.set_defaults(func=_cmd_findings)
+
+    finding = sub.add_parser("finding", help="one finding's history, or a decision about it")
+    finding.add_argument("finding_id", type=int, help="the ID shown by `reconkit findings`")
+    finding.add_argument("--db", default="reconkit.db", help="SQLite database path")
+    decision = finding.add_mutually_exclusive_group()
+    decision.add_argument(
+        "--claim-fixed", action="store_true", help="say it is fixed: the next scan verifies it"
+    )
+    decision.add_argument(
+        "--accept", action="store_true", help="accept the risk (needs --reason and --until)"
+    )
+    decision.add_argument("--reopen", action="store_true", help="open it again")
+    finding.add_argument("--reason", help="why (required to accept a risk)")
+    finding.add_argument("--until", help="review date of an accepted risk, YYYY-MM-DD")
+    finding.add_argument("--operator", help="who decides (default: user@host)")
+    finding.set_defaults(func=_cmd_finding)
+
+    diff = sub.add_parser("diff", help="what changed between two runs")
+    diff.add_argument("before", type=int, nargs="?", help="earlier run (default: see below)")
+    diff.add_argument(
+        "after", type=int, nargs="?", help="later run (default: the latest run and its predecessor)"
+    )
+    diff.add_argument("--db", default="reconkit.db", help="SQLite database path")
+    diff.set_defaults(func=_cmd_diff)
 
     runs = sub.add_parser("runs", help="list the stored runs, newest first")
     runs.add_argument("--db", default="reconkit.db", help="SQLite database path")

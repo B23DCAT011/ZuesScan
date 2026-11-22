@@ -367,6 +367,7 @@
       details.appendChild(el("h3", null, f.title));
       details.appendChild(kv([
         ["priority", f.priority ? el("span", null, prioBadge(f.priority), " " + f.priority_reason) : null],
+        ["status", f.status ? f.status.replace("_", " ") : null],
         ["severity", sevBadge(f.severity)], ["confidence", f.confidence], ["CVE", f.cve],
         ["CVSS", f.cvss_score !== null && f.cvss_score !== undefined
           ? f.cvss_score.toFixed(1) + (f.cvss_vector ? "  " + f.cvss_vector : "") : null, "mono"],
@@ -475,6 +476,8 @@
       var tr = el("tr", null,
         el("td", { title: r.f.priority_reason || "" }, prioBadge(r.f.priority)),
         el("td", null, sevBadge(r.f.severity),
+          r.f.status && r.f.status !== "new" && r.f.status !== "open"
+            ? el("div", { class: "status status-" + r.f.status }, r.f.status.replace("_", " ")) : null,
           r.f.confidence ? el("div", { class: "muted" }, r.f.confidence) : null),
         el("td", null, r.host.host),
         el("td", { class: "mono" }, r.f.port !== null ? r.f.port + "/" + r.f.protocol : "-"),
@@ -497,6 +500,32 @@
       body.appendChild(tr);
     });
     table.appendChild(body);
+  }
+
+  var CHANGE_LABEL = {
+    fake_fix: "FAKE FIX — claimed fixed, still there",
+    reappeared: "reappeared",
+    "new": "new",
+    verified_fixed: "verified fixed",
+    gone: "gone without a fix claim (fixed? or changed?)",
+    acceptance_expired: "risk acceptance expired",
+    seen_again: "still open"
+  };
+
+  function renderChanges() {
+    var changes = data.changes || [];
+    if (!changes.length) return;
+    document.getElementById("changes-section").hidden = false;
+    var list = document.getElementById("changes");
+    var order = ["fake_fix", "reappeared", "verified_fixed", "gone", "acceptance_expired", "new", "seen_again"];
+    changes.slice().sort(function (a, b) {
+      return order.indexOf(a.event) - order.indexOf(b.event);
+    }).forEach(function (c) {
+      var alert = c.event === "fake_fix" || c.event === "reappeared";
+      list.appendChild(el("li", { class: alert ? "alert" : null },
+        el("strong", null, CHANGE_LABEL[c.event] || c.event), ": #" + c.finding_id + " " +
+        c.title + " on " + c.host));
+    });
   }
 
   function renderHosts() {
@@ -560,6 +589,7 @@
   /* --- wire up ------------------------------------------------------------------ */
 
   renderHeader();
+  renderChanges();
   renderFindings();
   renderHosts();
   renderRun();

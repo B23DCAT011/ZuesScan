@@ -19,8 +19,19 @@ from reconkit.schema import Asset, Finding, Hop, Service, Severity
 MODEL_VERSION = 1
 
 
-def report_model(run: ScanRun, run_id: int) -> dict[str, Any]:
-    """Build the report model of `run` (stored as run `run_id`)."""
+def report_model(
+    run: ScanRun,
+    run_id: int,
+    *,
+    statuses: dict[str, str] | None = None,
+    changes: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build the report model of `run` (stored as run `run_id`).
+
+    `statuses` (fingerprint -> lifecycle status) and `changes` (what this run changed
+    in the inventory) come from the database; without them the report shows the run
+    on its own.
+    """
     findings = [f for a in run.assets for f in a.findings]
     by_severity = {str(s): 0 for s in reversed(Severity)}
     for f in findings:
@@ -75,18 +86,21 @@ def report_model(run: ScanRun, run_id: int) -> dict[str, Any]:
             },
             "known_exploited": sum(1 for f in findings if f.kev_added),
         },
-        "hosts": [_host(a) for a in run.assets],
+        "hosts": [_host(a, statuses or {}) for a in run.assets],
+        "changes": list(changes or []),
         "graph": build_graph(run.assets),
     }
 
 
-def _host(asset: Asset) -> dict[str, Any]:
+def _host(asset: Asset, statuses: dict[str, str]) -> dict[str, Any]:
     # Same order as the run: the graph refers to services and findings by position.
     return {
         "host": asset.host,
         "ip": asset.ip,
         "services": [_service(s) for s in asset.services],
-        "findings": [_finding(f) for f in asset.findings],
+        "findings": [
+            {**_finding(f), "status": statuses.get(f.fingerprint)} for f in asset.findings
+        ],
         "route": [_hop(h) for h in asset.route],
     }
 
