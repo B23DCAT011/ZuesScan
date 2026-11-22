@@ -21,6 +21,7 @@ so tests run against canned pages without any network.
 from __future__ import annotations
 
 import json
+import logging
 import time
 import urllib.error
 import urllib.parse
@@ -35,6 +36,8 @@ from reconkit.cve.cpe import CpeError, parse_cpe
 from reconkit.cve.records import AffectedRange, CveRecord
 from reconkit.cve.version import Version
 from reconkit.schema import Severity
+
+log = logging.getLogger(__name__)
 
 API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 PAGE_SIZE = 2000
@@ -92,14 +95,18 @@ class NvdClient:
         return headers
 
     def _get(self, params: dict[str, str]) -> dict[str, Any]:
-        url = f"{API_URL}?{urllib.parse.urlencode(params)}"
+        url = f"{API_URL}?{urllib.parse.urlencode(params)}"  # the API key is a header, not here
         for attempt in range(self.retries + 1):
+            log.debug("GET %s", url, extra={"event": "nvd.request"})
             try:
                 data = self.fetch(url, self._headers())
-            except _Retryable:
+            except _Retryable as exc:
                 if attempt == self.retries:
+                    log.error("NVD: giving up after %d attempts: %s", attempt + 1, exc)
                     raise
-                self.sleep(min(self.delay * 2 ** (attempt + 1), 120))  # back off
+                wait = min(self.delay * 2 ** (attempt + 1), 120)
+                log.warning("NVD: %s; retrying in %.0f s", exc, wait, extra={"event": "nvd.retry"})
+                self.sleep(wait)  # back off
                 continue
             if not isinstance(data, dict) or "vulnerabilities" not in data:
                 raise NvdError(f"unexpected answer from NVD for {url}")

@@ -14,6 +14,8 @@ is still worth remembering, as a run whose status is `failed` (see `failed_run`)
 
 from __future__ import annotations
 
+import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -26,6 +28,8 @@ from reconkit.plugins.base import ScanError, ScannerPlugin
 from reconkit.profiles import ScanProfile
 from reconkit.schema import Asset, Finding, RawOutput, ScanTarget
 from reconkit.scope import Resolver, Scope
+
+log = logging.getLogger(__name__)
 
 
 class NoPluginAvailableError(Exception):
@@ -127,6 +131,13 @@ class Orchestrator:
         #    the exact addresses to scan (names are resolved here, once).
         self.scope.check_time(self.clock())  # expired, or outside the agreed hours?
         plan = self.scope.plan(target, self.resolver, ipv4_only=self.ipv4_only)
+        log.info(
+            "scan of %s authorised: addresses %s, excluded %s",
+            target,
+            ",".join(plan.addresses),
+            ",".join(plan.exclude) or "none",
+            extra={"event": "scan.planned", "target": target},
+        )
 
         # 2. Fail loudly if nothing can scan: saving an empty run would look "clean".
         runnable, skipped = self._split_plugins()
@@ -145,7 +156,16 @@ class Orchestrator:
         if self.ipv4_only and plan.hostname:
             notes.append("IPv4 only: the name's IPv6 (AAAA) addresses were not looked up")
         for plugin in runnable:
+            clock = time.monotonic()
+            log.info("%s: scanning %s", plugin.name, target, extra={"event": "plugin.start"})
             result = plugin.scan(plan)
+            log.info(
+                "%s: %d host(s) in %.1f s",
+                plugin.name,
+                len(result.assets),
+                time.monotonic() - clock,
+                extra={"event": "plugin.done", "plugin": plugin.name},
+            )
             notes.extend(f"{plugin.name}: {note}" for note in result.notes)
             # Kept whole, including what it says about hosts dropped just below:
             # it is the record of what the tool really did.
@@ -154,6 +174,12 @@ class Orchestrator:
                 # Defence in depth: never trust a tool to stay inside its target.
                 # A host it reports outside the scope is dropped, and reported.
                 if not self.scope.is_allowed(found.ip or found.host):
+                    log.warning(
+                        "%s reported %s, outside the scope: dropped",
+                        plugin.name,
+                        found.ip or found.host,
+                        extra={"event": "scope.dropped"},
+                    )
                     out_of_scope.append(found.ip or found.host)
                     continue
                 known = next((a for a in assets if _same_host(a, found)), None)
@@ -167,6 +193,12 @@ class Orchestrator:
             for asset in assets:
                 for service in asset.services:
                     asset.findings.extend(self.cve_source.find(service, asset.host))
+            log.info(
+                "CVE stage (%s): %d finding(s)",
+                self.cve_source.name,
+                sum(len(a.findings) for a in assets),
+                extra={"event": "cve.done"},
+            )
 
         # 5. Identify every finding the same way, whichever plugin or stage produced
         #    it: tie it to the merged asset, then fingerprint it. Done here, once,

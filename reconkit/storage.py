@@ -14,6 +14,7 @@ so there is one way to build the schema and every migration is exercised by ever
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import zlib
 from dataclasses import dataclass
@@ -36,6 +37,8 @@ from reconkit.schema import (
     Service,
     Severity,
 )
+
+log = logging.getLogger(__name__)
 
 # The schema version this code reads and writes. Bump it together with a new entry
 # in `_MIGRATIONS`; never edit a migration that has already shipped.
@@ -509,6 +512,14 @@ class Storage:
             return
         if current > 0:
             self._backup(current)
+            log.info(
+                "upgrading %s from schema v%d to v%d (copy kept at %s)",
+                self.path,
+                current,
+                SCHEMA_VERSION,
+                self.backup_path,
+                extra={"event": "db.migrate"},
+            )
 
         conn = self._conn
         # Rebuilding a table drops it for a moment; with foreign keys enforced, that
@@ -607,6 +618,14 @@ class Storage:
                 self._insert_route(asset_id, asset.route)
             # The inventory moves with the run, in the same transaction (D1).
             inventory_store.apply_run(self._conn, run_id, run)
+            log.info(
+                "run #%d saved: %s, %d host(s), %d finding(s)",
+                run_id,
+                run.status,
+                len(run.assets),
+                sum(len(a.findings) for a in run.assets),
+                extra={"event": "run.saved", "run_id": run_id},
+            )
             detail: dict[str, Any] = {
                 "run_id": run_id,
                 "status": str(run.status),
