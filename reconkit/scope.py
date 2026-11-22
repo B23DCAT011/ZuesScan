@@ -13,6 +13,10 @@ The allowlist is loaded from a plain-text file, one entry per line:
     203.0.113.10
     !10.0.0.1          # deny takes precedence (leading '!')
 
+`*.example.com` authorises every name *under* example.com (not example.com itself):
+it is what lets discovered subdomains (subfinder) be scanned — each one still only if
+every address it resolves to is in the allowlist. `!*.dev.example.com` denies a subtree.
+
 `#` starts a comment anywhere on a line. Any entry that is not a valid IP, CIDR or
 hostname is an error (with its line number) — never silently reinterpreted.
 
@@ -95,7 +99,7 @@ _LABEL = re.compile(r"[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?")
 
 
 def _is_hostname(entry: str) -> bool:
-    """True if `entry` is a syntactically valid hostname (wildcards not supported).
+    """True if `entry` is a syntactically valid hostname (no wildcard).
 
     An all-numeric last label is rejected: no real TLD is numeric, so "10.0.0.300"
     is a mistyped IP, not a hostname.
@@ -155,6 +159,9 @@ class Scope:
     allow_nets: list[Network] = field(default_factory=list)
     deny_hosts: set[str] = field(default_factory=set)
     deny_nets: list[Network] = field(default_factory=list)
+    # `*.example.com` entries, stored as "example.com".
+    allow_wildcards: set[str] = field(default_factory=set)
+    deny_wildcards: set[str] = field(default_factory=set)
     # The terms of the authorisation (`@` directives).
     engagement: str | None = None
     expires: datetime | None = None  # first moment it no longer holds
@@ -185,6 +192,8 @@ class Scope:
         net = _parse_net(entry)
         if net is not None:
             (self.deny_nets if deny else self.allow_nets).append(net)
+        elif entry.startswith("*.") and _is_hostname(entry[2:]) and "." in entry[2:]:
+            (self.deny_wildcards if deny else self.allow_wildcards).add(entry[2:].lower())
         elif _is_hostname(entry):
             (self.deny_hosts if deny else self.allow_hosts).add(entry.lower())
         else:
@@ -295,9 +304,59 @@ class Scope:
             exclude=tuple(_net_str(d) for d in exclude),
         )
 
+    def name_allowed(self, name: str) -> bool:
+        """Is the *name* authorised (exact entry or wildcard), and not denied?"""
+        name = name.strip().lower().rstrip(".")
+
+        def under(suffixes: set[str]) -> bool:
+            return any(name.endswith("." + s) for s in suffixes)
+
+        if name in self.deny_hosts or under(self.deny_wildcards):
+            return False
+        return name in self.allow_hosts or under(self.allow_wildcards)
+
+    def allows_discovery(self, domain: str) -> bool:
+        """May names under `domain` be looked for? Only with a wildcard covering them."""
+        domain = domain.strip().lower().rstrip(".")
+        return any(domain == w or domain.endswith("." + w) for w in self.allow_wildcards)
+
+    def plan_discovered(
+        self,
+        domain: str,
+        names: list[str],
+        resolver: Resolver | None = None,
+        *,
+        ipv4_only: bool = False,
+    ) -> tuple[ScanTarget, list[tuple[str, str]]]:
+        """Plan a scan of `domain` and the names found under it.
+
+        Each name is planned like any requested name (resolved once, every address in
+        the allowlist); names that fail are returned with the reason and not scanned.
+        Raises :class:`ScopeError` if none of them may be scanned.
+        """
+        if resolver is None:
+            resolver = resolve_ipv4 if ipv4_only else resolve_addresses
+        candidates = list(dict.fromkeys([domain.lower(), *(n.lower() for n in names)]))
+        pairs: list[tuple[str, str]] = []
+        skipped: list[tuple[str, str]] = []
+        for name in candidates:
+            try:
+                planned = self._plan_hostname(name, resolver)
+            except (ScopeError, ResolutionError) as exc:
+                skipped.append((name, str(exc)))
+                continue
+            pairs += [(name, address) for address in planned.addresses]
+        if not pairs:
+            raise ScopeError(
+                f"none of the {len(candidates)} name(s) found for {domain!r} may be scanned"
+            )
+        addresses = tuple(dict.fromkeys(ip for _, ip in pairs))
+        plan = ScanTarget(requested=domain, addresses=addresses, names=tuple(pairs))
+        return plan, skipped
+
     def _plan_hostname(self, target: str, resolver: Resolver) -> ScanTarget:
         name = target.lower()
-        if name in self.deny_hosts or name not in self.allow_hosts:
+        if not self.name_allowed(name):
             raise ScopeError(_outside(target))
         addresses = tuple(dict.fromkeys(resolver(name)))  # de-duplicated, order kept
         if not addresses:
@@ -329,10 +388,7 @@ class Scope:
             if any(_overlaps(net, d) for d in self.deny_nets):
                 return False
             return any(_contained(net, a) for a in self.allow_nets)
-        # Hostname target.
-        if target in self.deny_hosts:
-            return False
-        return target in self.allow_hosts
+        return self.name_allowed(target)
 
 
 def _offset(text: str | None) -> timedelta:

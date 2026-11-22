@@ -45,6 +45,7 @@ from reconkit.inventory_store import FindingEvent, FindingRow, InventoryError
 from reconkit.orchestrator import NoPluginAvailableError, Orchestrator, RunStatus, ScanRun, now
 from reconkit.plugins.base import ScanError
 from reconkit.plugins.nmap import NmapPlugin
+from reconkit.plugins.subfinder import SubfinderPlugin
 from reconkit.profiles import DEFAULT_PROFILE, ProfileError, ScanProfile, load_profiles, override
 from reconkit.report import render_html, report_model
 from reconkit.report.sarif import to_sarif
@@ -83,6 +84,8 @@ def _print_summary(run: ScanRun, run_id: int, db_path: str) -> None:
     for asset in run.assets:
         label = asset.host if asset.ip in (None, asset.host) else f"{asset.host} ({asset.ip})"
         print(f"\n  {label}")
+        if len(asset.names) > 1:
+            print(f"    names: {', '.join(asset.names)}")
         if asset.route:
             print(f"    route: {_route_line(asset)}")
         if not asset.services:
@@ -227,6 +230,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             ipv4_only=args.ipv4_only,
             operator=args.operator or default_operator(),
             engagement=args.engagement,
+            discovery=[SubfinderPlugin()] if args.discover else None,
         )
         return _open_db_and_scan(args, orch)
 
@@ -934,6 +938,12 @@ def build_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=None,
         help="record the network path to each host (for the map; slower)",
+    )
+    tuning.add_argument(
+        "--discover",
+        action="store_true",
+        help="first find the names under the target domain (subfinder; needs *.domain "
+        "in the scope), then scan those in scope",
     )
     tuning.add_argument(
         "--ipv4-only",

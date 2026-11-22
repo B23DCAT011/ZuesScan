@@ -24,10 +24,10 @@ from typing import Any
 
 from reconkit import __version__
 from reconkit.cve import CveSource
-from reconkit.plugins.base import ScanError, ScannerPlugin
+from reconkit.plugins.base import DiscoveryPlugin, ScanError, ScannerPlugin
 from reconkit.profiles import ScanProfile
 from reconkit.schema import Asset, Finding, RawOutput, ScanTarget
-from reconkit.scope import Resolver, Scope
+from reconkit.scope import Resolver, Scope, ScopeError
 
 log = logging.getLogger(__name__)
 
@@ -112,6 +112,7 @@ class Orchestrator:
         operator: str | None = None,
         engagement: str | None = None,
         clock: Callable[[], datetime] | None = None,
+        discovery: list[DiscoveryPlugin] | None = None,
     ) -> None:
         self.plugins = plugins
         self.scope = scope
@@ -125,12 +126,21 @@ class Orchestrator:
         # The engagement given for this run, else the one the scope file states.
         self.engagement = engagement or scope.engagement
         self.clock = clock or (lambda: datetime.now(UTC))
+        # Name-finding plugins (subfinder): when set, a domain target is first expanded
+        # into the names found under it, each checked against the scope.
+        self.discovery = discovery or []
 
     def run(self, target: str) -> ScanRun:
         # 1. Safety gate: refuse anything outside the authorised scope, and pin down
         #    the exact addresses to scan (names are resolved here, once).
         self.scope.check_time(self.clock())  # expired, or outside the agreed hours?
-        plan = self.scope.plan(target, self.resolver, ipv4_only=self.ipv4_only)
+        notes: list[str] = []
+        raw_outputs: list[RawOutput] = []
+        discovered_versions: dict[str, str | None] = {}
+        if self.discovery:
+            plan = self._discover(target, notes, raw_outputs, discovered_versions)
+        else:
+            plan = self.scope.plan(target, self.resolver, ipv4_only=self.ipv4_only)
         log.info(
             "scan of %s authorised: addresses %s, excluded %s",
             target,
@@ -145,15 +155,13 @@ class Orchestrator:
             raise NoPluginAvailableError(skipped)
 
         started = now()
-        tool_versions = {p.name: p.version() for p in runnable}
+        tool_versions = {**discovered_versions, **{p.name: p.version() for p in runnable}}
 
         # 3. Run every available plugin; each reports one asset per host it found.
         #    What several plugins say about the same host is merged into one asset.
         assets: list[Asset] = []
         out_of_scope: list[str] = []
-        raw_outputs: list[RawOutput] = []
-        notes: list[str] = []
-        if self.ipv4_only and plan.hostname:
+        if self.ipv4_only and (plan.hostname or plan.names):
             notes.append("IPv4 only: the name's IPv6 (AAAA) addresses were not looked up")
         for plugin in runnable:
             clock = time.monotonic()
@@ -187,6 +195,15 @@ class Orchestrator:
                     assets.append(found)
                 else:
                     _merge_into(known, found)
+
+        # Name every host after the names the scope guard resolved to it, whichever
+        # scanner reported it: tools see addresses, the names come from the plan.
+        for asset in assets:
+            names = plan.names_for(asset.ip or "")
+            if names:
+                asset.host, asset.names = names[0], names
+            elif plan.hostname and not asset.names:
+                asset.names = [plan.hostname]
 
         # 4. CVE stage: match each service against known vulnerabilities.
         if self.cve_source is not None:
@@ -256,6 +273,47 @@ class Orchestrator:
             raw_outputs=raw_outputs,
             **self._profile_record(),
         )
+
+    def _discover(
+        self,
+        target: str,
+        notes: list[str],
+        raw_outputs: list[RawOutput],
+        versions: dict[str, str | None],
+    ) -> ScanTarget:
+        """Find the names under `target`, keep those the scope allows, plan them."""
+        domain = target.strip().lower().rstrip(".")
+        if "." not in domain:
+            raise ScopeError(
+                f"Looking for names under {domain!r} is not supported: a wildcard over a "
+                "top-level name would authorise far too much."
+            )
+        if not self.scope.allows_discovery(domain):
+            raise ScopeError(
+                f"Looking for names under {domain!r} needs '*.{domain}' (or a wider "
+                "wildcard) in the scope: discovered names are only scanned if authorised."
+            )
+        usable = [p for p in self.discovery if p.is_available()]
+        if not usable:
+            raise NoPluginAvailableError([p.name for p in self.discovery])
+        found: list[str] = []
+        for plugin in usable:
+            versions[plugin.name] = plugin.version()
+            result = plugin.discover(domain)
+            raw_outputs.extend(result.raw)
+            notes.extend(f"{plugin.name}: {n}" for n in result.notes)
+            found += result.names
+            log.info("%s: %d name(s) under %s", plugin.name, len(result.names), domain)
+        plan, skipped = self.scope.plan_discovered(
+            domain, found, self.resolver, ipv4_only=self.ipv4_only
+        )
+        names = sorted({n for n, _ in plan.names})
+        notes.append(
+            f"discovery: {len(set(found))} name(s) found under {domain}; "
+            f"{len(names)} in scope and scanned"
+        )
+        notes += [f"not scanned: {name}: {why}" for name, why in skipped]
+        return plan
 
     def _profile_record(self) -> dict[str, Any]:
         """What every run records about how and under which authorisation it ran."""

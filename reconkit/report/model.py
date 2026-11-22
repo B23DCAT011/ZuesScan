@@ -97,6 +97,7 @@ def _host(asset: Asset, statuses: dict[str, str]) -> dict[str, Any]:
     return {
         "host": asset.host,
         "ip": asset.ip,
+        "names": list(asset.names),
         "services": [_service(s) for s in asset.services],
         "findings": [
             {**_finding(f), "status": statuses.get(f.fingerprint)} for f in asset.findings

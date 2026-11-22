@@ -77,7 +77,9 @@ def test_inline_comment_does_not_disable_entry() -> None:
         "10.0.0.300",  # looks like an IP but is not one
         "10.0.0.0/33",  # invalid prefix length
         "bad!host.lab",  # illegal character
-        "*.example.com",  # wildcards are not supported (yet) — must not silently never match
+        "*.com",  # a wildcard over a whole TLD authorises nothing sensible
+        "*example.com",  # a wildcard must be a whole label
+        "a.*.example.com",  # ... and the first one
         "!",  # deny marker with nothing after it
     ],
 )
