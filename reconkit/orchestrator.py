@@ -24,7 +24,7 @@ from typing import Any
 
 from reconkit import __version__
 from reconkit.cve import CveSource
-from reconkit.plugins.base import DiscoveryPlugin, ScanError, ScannerPlugin
+from reconkit.plugins.base import CheckPlugin, DiscoveryPlugin, ScanError, ScannerPlugin
 from reconkit.profiles import ScanProfile
 from reconkit.schema import Asset, Finding, RawOutput, ScanTarget
 from reconkit.scope import Resolver, Scope, ScopeError
@@ -113,6 +113,7 @@ class Orchestrator:
         engagement: str | None = None,
         clock: Callable[[], datetime] | None = None,
         discovery: list[DiscoveryPlugin] | None = None,
+        checks: list[CheckPlugin] | None = None,
     ) -> None:
         self.plugins = plugins
         self.scope = scope
@@ -129,6 +130,8 @@ class Orchestrator:
         # Name-finding plugins (subfinder): when set, a domain target is first expanded
         # into the names found under it, each checked against the scope.
         self.discovery = discovery or []
+        # Plugins that test what the scan found (nuclei), after the scanners.
+        self.checks = checks or []
 
     def run(self, target: str) -> ScanRun:
         # 1. Safety gate: refuse anything outside the authorised scope, and pin down
@@ -204,6 +207,30 @@ class Orchestrator:
                 asset.host, asset.names = names[0], names
             elif plan.hostname and not asset.names:
                 asset.names = [plan.hostname]
+
+        # 3b. Checks (nuclei): test what was found. Before the CVE stage, so that an
+        #     observed issue is kept over the same CVE inferred from a version.
+        for check in self.checks:
+            if not check.is_available():
+                skipped.append(check.name)
+                continue
+            tool_versions[check.name] = check.version()
+            clock = time.monotonic()
+            result = check.check(plan, assets)
+            raw_outputs.extend(result.raw)
+            notes.extend(f"{check.name}: {note}" for note in result.notes)
+            for found in result.assets:
+                known = next((a for a in assets if _same_host(a, found)), None)
+                if known is None or not self.scope.is_allowed(found.ip or found.host):
+                    continue  # a check may only report on hosts the scan found
+                known.findings.extend(found.findings)
+            log.info(
+                "%s: %d finding(s) in %.1f s",
+                check.name,
+                sum(len(a.findings) for a in result.assets),
+                time.monotonic() - clock,
+                extra={"event": "check.done", "plugin": check.name},
+            )
 
         # 4. CVE stage: match each service against known vulnerabilities.
         if self.cve_source is not None:

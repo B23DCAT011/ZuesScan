@@ -123,3 +123,22 @@ class DiscoveryPlugin(Protocol):
     def discover(self, domain: str) -> DiscoveryResult:
         """Names under `domain`. Raises :class:`ScanError` if the tool fails."""
         ...
+
+
+@runtime_checkable
+class CheckPlugin(Protocol):
+    """A tool that tests what the port scan found (nuclei on web services).
+
+    It runs after the scanners, on the merged hosts, and may only look at those hosts'
+    addresses. Findings come back as assets (one per host, matched by address).
+    """
+
+    name: str
+
+    def is_available(self) -> bool: ...
+
+    def version(self) -> str | None: ...
+
+    def check(self, plan: ScanTarget, assets: list[Asset]) -> ScanResult:
+        """Findings for `assets`. Raises :class:`ScanError` if the tool fails."""
+        ...

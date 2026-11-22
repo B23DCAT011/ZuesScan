@@ -85,7 +85,9 @@ Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây we
 - [x] `feat/logging` — logger theo module, `-v` / `-vv`, `--log-file`, `--log-format json`. (G19)
 - [x] `feat/plugin-subfinder` — `scan --discover`: subfinder tìm subdomain (thụ động), scope có
       wildcard `*.example.com`; mỗi tên vẫn phải phân giải ra địa chỉ trong scope mới được quét.
-- [ ] `feat/plugin-nuclei` — nuclei (template checks) chạy trên các dịch vụ web nmap tìm được.
+- [x] `feat/plugin-nuclei` — `scan --nuclei`: nuclei chạy trên dịch vụ web nmap tìm được, URL
+      theo địa chỉ đã duyệt, vhost qua Host/SNI, mặc định an toàn (không interactsh, không
+      template dos/fuzz/intrusive, giới hạn tốc độ); lỗi CVE quan sát được là `confirmed`.
 - [ ] (Nâng cao) Quét có đăng nhập — đối chiếu gói đã cài với Debian/Ubuntu security tracker.
 
 ## Giai đoạn 3 — Dịch vụ chạy nền

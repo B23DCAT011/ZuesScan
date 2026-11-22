@@ -34,6 +34,14 @@ reconkit scan 10.0.0.0/24 --scope scope.txt        # quét cả dải, tự lo�
 reconkit scan 10.0.0.0/24 --scope scope.txt --traceroute   # ghi cả đường đi tới từng host (profile full bật sẵn)
 ```
 
+### Kiểm tra web bằng nuclei (chủ động)
+
+`--nuclei` chạy template nuclei trên các dịch vụ HTTP(S) mà nmap tìm được. Đây là kiểm tra
+**chủ động** (gửi request khai thác an toàn), chỉ dùng khi giấy phép cho phép. Mặc định: không
+dùng interactsh (không để mục tiêu gọi ra máy chủ công cộng), bỏ các template `dos`, `fuzz`,
+`intrusive`, `bruteforce`, giới hạn số request/giây theo profile. URL luôn dùng địa chỉ đã
+duyệt; tên miền (vhost) được gửi qua Host header + SNI. Cần cài `nuclei`.
+
 ### Scan profile
 
 ```bash
