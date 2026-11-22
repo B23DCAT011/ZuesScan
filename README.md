@@ -66,8 +66,25 @@ reconkit raw 1 --db reconkit.db                 # in ra màn hình (pipe đượ
 reconkit raw 1 --db reconkit.db --out run1.xml  # ghi ra file
 ```
 
+## Báo cáo & bản đồ bề mặt tấn công
+
+```bash
+reconkit runs --db reconkit.db                          # danh sách các run, mới nhất trước
+reconkit report --db reconkit.db --html report.html     # báo cáo run mới nhất
+reconkit report --db reconkit.db --run 3 --html run3.html
+```
+
+`report.html` là **một file duy nhất, mở offline** (không tải gì từ mạng): bản đồ
+máy quét → router → dải mạng ⊃ host ⊃ cổng → lỗ hổng, kèm bảng finding (theo mức độ, có bằng
+chứng), bảng host và thông tin run. Bấm vào một node hoặc một dòng bảng để xem chi tiết. Đường
+nét đứt = có router không trả lời traceroute; chấm chấm = host chưa được traceroute.
+
+Dữ liệu trong báo cáo do chính máy bị quét khai ra (banner…), nên được coi là không tin cậy:
+nó chỉ được hiển thị dưới dạng chữ, và Content-Security-Policy của trang chỉ cho chạy đúng các
+đoạn script đã biết mã băm, cấm mọi kết nối mạng.
+
 > File DB chứa toàn bộ kết quả và output gốc của các lần quét: coi nó là dữ liệu nhạy cảm của
-> đợt kiểm thử, không chia sẻ và không commit.
+> đợt kiểm thử, không chia sẻ và không commit. Báo cáo HTML cũng vậy.
 
 | Exit code | Ý nghĩa |
 |---|---|

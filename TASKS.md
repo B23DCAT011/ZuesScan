@@ -40,7 +40,7 @@ format cũ), và lớp an toàn scope.
 | F8 ✅ | `fix/fingerprint-identity` | G12 — fingerprint theo IP + port + protocol + CVE/rule id, có số công thức (`v2:`); orchestrator là nơi duy nhất đặt fingerprint | Phải ổn định trước `feat/diff` |
 | F9 ✅ | `feat/evidence` | G13 — plugin trả `ScanResult` kèm output gốc; lưu nén + SHA-256 theo run; `reconkit raw`; điền `evidence` | Cần F7 (schema) |
 
-## Cột mốc M1 — Báo cáo HTML có bản đồ (tiếp theo)
+## Cột mốc M1 — Báo cáo HTML có bản đồ ✅
 
 Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây web server. Chỉ làm được sau F5
 (dữ liệu theo từng host) và F7 (finding gắn với service).
@@ -50,9 +50,12 @@ Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây we
       đi máy quét → router → dải mạng. Hop chỉ được *nhìn thấy*, không bị quét: probe luôn gửi
       tới host trong scope. Đã kiểm với nmap thật trên 127.0.0.1 (không có route, CLI giải
       thích); hop thật sẽ được kiểm trên lab Docker có router (Giai đoạn 3).
-- [ ] `feat/report-html` — `reconkit report --run <id> --html <file>`: một file HTML duy nhất,
-      nhúng sẵn dữ liệu đồ thị (JSON) + Cytoscape.js, mở offline. Phần Python chỉ dùng thư
-      viện chuẩn. (G18)
+- [x] `feat/report-html` — `reconkit report [--run <id>] --html <file>`: một file HTML duy nhất,
+      nhúng sẵn dữ liệu (JSON) + Cytoscape.js 3.34.4 (vendored, ghim SHA-256), mở offline. Bản
+      đồ đọc từ trái sang phải: máy quét → router → dải mạng ⊃ host ⊃ service → finding; bấm
+      vào node / dòng bảng để xem chi tiết. Dữ liệu quét coi là không tin cậy: JSON được escape,
+      trang chỉ ghi text, CSP chỉ cho chạy code có hash và cấm mọi kết nối mạng. Kèm
+      `reconkit runs` (danh sách run). Phần Python chỉ dùng thư viện chuẩn. (G18 — phần HTML)
 
 ## Giai đoạn 2 — Mở rộng theo chuẩn thực tế
 
