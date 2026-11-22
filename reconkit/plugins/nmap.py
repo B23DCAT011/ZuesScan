@@ -9,6 +9,12 @@ Safety: the scope guard decides the exact addresses to scan *before* a plugin is
 called, and nmap receives those addresses, never a name it would resolve again. nmap
 is invoked with an argument list (never a shell string), so a target cannot be used to
 inject extra commands.
+
+Traceroute (`traceroute=True`, off by default) adds `--traceroute`: after the port
+scan nmap sends probes to each live host with increasing TTL and records the routers
+that answer, which is what draws "scanner -> routers -> network" on the map. Its
+probes are addressed to the in-scope host only. It needs raw sockets (root on Linux,
+Npcap on Windows); without them, or for a local target, nmap reports no route.
 """
 
 from __future__ import annotations
@@ -19,7 +25,7 @@ import subprocess
 from xml.etree import ElementTree as ET
 
 from reconkit.plugins.base import ScanError, ScanResult
-from reconkit.schema import Asset, RawOutput, ScanTarget, Service
+from reconkit.schema import Asset, Hop, RawOutput, ScanTarget, Service
 
 
 class NmapPlugin:
@@ -27,10 +33,13 @@ class NmapPlugin:
 
     name = "nmap"
 
-    def __init__(self, extra_args: list[str] | None = None, timeout: int = 300) -> None:
+    def __init__(
+        self, extra_args: list[str] | None = None, timeout: int = 300, traceroute: bool = False
+    ) -> None:
         # -sV = service/version detection; -T4 = reasonable speed for a lab.
         self.extra_args = extra_args if extra_args is not None else ["-sV", "-T4"]
         self.timeout = timeout
+        self.traceroute = traceroute
 
     def is_available(self) -> bool:
         return shutil.which("nmap") is not None
@@ -55,7 +64,8 @@ class NmapPlugin:
         # Only addresses reach nmap, never a name: nmap would resolve a name again
         # by itself, possibly to an address the scope guard never saw.
         exclude = ["--exclude", ",".join(target.exclude)] if target.exclude else []
-        return ["nmap", *self.extra_args, "-oX", "-", *exclude, *target.addresses]
+        trace = ["--traceroute"] if self.traceroute else []
+        return ["nmap", *self.extra_args, *trace, "-oX", "-", *exclude, *target.addresses]
 
     def scan(self, target: ScanTarget) -> ScanResult:
         """Run nmap against `target`; return one `Asset` per host that responded,
@@ -180,9 +190,37 @@ class NmapPlugin:
                     ip=ip,
                     # A live host with nothing open is still a result worth keeping.
                     services=NmapPlugin._services(host),
+                    route=NmapPlugin._route(host),
                 )
             )
         return assets
+
+    @staticmethod
+    def _route(host: ET.Element) -> list[Hop]:
+        """The `<trace>` of one `<host>`: the routers between the scanner and it.
+
+        nmap leaves out the hops that never answered (so TTLs can have gaps) and writes
+        `rtt="--"` for a hop it did not time for this host (one it shares with a host
+        traced before).
+        """
+        trace = host.find("trace")
+        if trace is None:
+            return []
+        hops: dict[int, Hop] = {}
+        for hop in trace.findall("hop"):
+            try:
+                ttl = int(hop.get("ttl", ""))
+            except ValueError:
+                continue  # a hop without a distance cannot be placed on the path
+            if ttl < 1:
+                continue
+            hops[ttl] = Hop(
+                ttl=ttl,
+                ip=hop.get("ipaddr") or None,
+                rtt_ms=_rtt(hop.get("rtt")),
+                name=hop.get("host") or None,
+            )
+        return [hops[ttl] for ttl in sorted(hops)]
 
     @staticmethod
     def _ip(host: ET.Element) -> str | None:
@@ -229,3 +267,12 @@ class NmapPlugin:
                     )
                 )
         return services
+
+
+def _rtt(value: str | None) -> float | None:
+    """A hop's round-trip time in ms; None for "--", missing or unreadable."""
+    try:
+        rtt = float(value or "")
+    except ValueError:
+        return None
+    return rtt if rtt >= 0 else None

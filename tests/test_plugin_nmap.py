@@ -299,3 +299,61 @@ def test_scan_that_never_ran_has_no_output(monkeypatch: pytest.MonkeyPatch) -> N
     with pytest.raises(ScanError) as caught:
         NmapPlugin(timeout=5).scan(LAB)
     assert caught.value.output is None
+
+
+# --- traceroute: the path to each host, for the map (M1) ---------------------------
+
+TRACE = (DATA / "nmap_traceroute.xml").read_text(encoding="utf-8")
+
+
+def test_traceroute_is_off_by_default() -> None:
+    assert "--traceroute" not in NmapPlugin()._command(LAB)
+
+
+def test_traceroute_adds_the_flag_and_still_scans_only_the_addresses() -> None:
+    cmd = NmapPlugin(traceroute=True)._command(LAB)
+    assert "--traceroute" in cmd
+    assert cmd[-1] == "10.0.0.5"  # the target list is unchanged
+
+
+def test_route_is_read_hop_by_hop() -> None:
+    web, _, _ = NmapPlugin.parse_xml(TRACE)
+    assert [(h.ttl, h.ip, h.rtt_ms, h.name) for h in web.route] == [
+        (1, "192.168.1.1", 0.52, "gateway.lan"),
+        (3, "10.0.0.1", 3.10, None),  # hop 2 never answered: a gap, not invented
+        (4, "10.0.0.5", 3.40, None),  # the last hop is the host itself
+    ]
+
+
+def test_hop_not_timed_for_this_host_has_no_rtt() -> None:
+    _, other, _ = NmapPlugin.parse_xml(TRACE)
+    assert [h.rtt_ms for h in other.route] == [None, None, 3.90]  # rtt="--"
+    assert [h.ip for h in other.route] == ["192.168.1.1", "10.0.0.1", "10.0.0.7"]
+
+
+def test_host_without_trace_has_an_empty_route() -> None:
+    *_, untraced = NmapPlugin.parse_xml(TRACE)
+    assert untraced.ip == "10.0.0.9"
+    assert untraced.route == []
+    (plain,) = NmapPlugin.parse_xml(SAMPLE)
+    assert plain.route == []
+
+
+def test_unreadable_hops_are_skipped_and_the_rest_ordered() -> None:
+    xml = (
+        '<nmaprun><host><status state="up"/><address addr="10.0.0.5" addrtype="ipv4"/>'
+        '<trace><hop ttl="2" ipaddr="10.0.0.1" rtt="nan"/><hop ttl="x" ipaddr="1.1.1.1"/>'
+        '<hop ttl="0" ipaddr="1.1.1.2"/><hop ttl="1"/></trace></host></nmaprun>'
+    )
+    (asset,) = NmapPlugin.parse_xml(xml)
+    assert [(h.ttl, h.ip, h.rtt_ms) for h in asset.route] == [
+        (1, None, None),
+        (2, "10.0.0.1", None),
+    ]
+
+
+def test_scan_returns_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_run(monkeypatch, subprocess.CompletedProcess(["nmap"], 0, stdout=TRACE, stderr=""))
+    target = ScanTarget(requested="10.0.0.0/24", addresses=("10.0.0.0/24",))
+    assets = NmapPlugin(traceroute=True).scan(target).assets
+    assert [len(a.route) for a in assets] == [3, 3, 0]

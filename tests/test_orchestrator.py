@@ -6,7 +6,7 @@ from conftest import FakePlugin, fake_resolver, lab_asset, lab_resolver, lab_sco
 from reconkit.cve import CveSource, LocalCveSource
 from reconkit.orchestrator import NoPluginAvailableError, Orchestrator, RunStatus
 from reconkit.plugins.base import ScanError, ScannerPlugin
-from reconkit.schema import Asset, Finding, RawOutput, Service
+from reconkit.schema import Asset, Finding, Hop, RawOutput, Service
 from reconkit.scope import ResolutionError, Resolver, Scope, ScopeError
 
 OPENSSH_74 = Service(port=22, name="ssh", product="OpenSSH", version="7.4")
@@ -148,6 +148,23 @@ def test_merges_what_two_plugins_report_for_the_same_host() -> None:
         (443, "https"),
     ]
     assert asset.findings == [issue]
+
+
+def test_route_is_kept_when_reports_are_merged() -> None:
+    path = [Hop(ttl=1, ip="192.168.1.1"), Hop(ttl=2, ip="10.0.0.5")]
+    ports = FakePlugin([lab_asset(Service(port=22))])  # this tool does not trace
+    tracer = FakePlugin([Asset(host="10.0.0.5", ip="10.0.0.5", route=path)])
+    (asset,) = _orch([ports, tracer]).run("scanme.lab").assets
+    assert asset.route == path
+
+
+def test_first_traced_route_wins() -> None:
+    first = [Hop(ttl=1, ip="192.168.1.1")]
+    second = [Hop(ttl=1, ip="172.16.0.1")]
+    one = FakePlugin([Asset(host="10.0.0.5", ip="10.0.0.5", route=first)])
+    two = FakePlugin([Asset(host="10.0.0.5", ip="10.0.0.5", route=second)])
+    (asset,) = _orch([one, two]).run("scanme.lab").assets
+    assert asset.route == first
 
 
 def test_assets_without_ip_are_matched_by_name() -> None:

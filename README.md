@@ -31,7 +31,13 @@ printf 'scanme.lab\n10.0.0.0/24\n!10.0.0.1  # router, khong duoc quet\n' > scope
 
 reconkit scan scanme.lab --scope scope.txt --db reconkit.db
 reconkit scan 10.0.0.0/24 --scope scope.txt        # quét cả dải, tự loại trừ 10.0.0.1
+reconkit scan 10.0.0.0/24 --scope scope.txt --traceroute   # ghi cả đường đi tới từng host
 ```
+
+`--traceroute` ghi lại các router nằm giữa máy quét và từng host (dùng để vẽ bản đồ). Probe
+chỉ gửi tới host trong scope; router trên đường đi chỉ trả lời "TTL hết hạn", không bị quét.
+nmap cần quyền raw socket (root trên Linux, Npcap trên Windows); target nằm ngay trên máy
+quét thì không có route.
 
 Quy tắc của scope:
 

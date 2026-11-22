@@ -170,6 +170,24 @@ def _asset_key(ip: str | None, host: str) -> str:
     return host.strip().lower().rstrip(".")
 
 
+@dataclass(frozen=True, slots=True)
+class Hop:
+    """One router on the network path from the scanner to a host (traceroute).
+
+    A hop is *seen*, never scanned: traceroute sends its probes to the in-scope host
+    with a small TTL, and each router on the way that drops one answers "time
+    exceeded". No packet is ever addressed to the hop itself, so a hop needs no scope
+    entry — but it is also not an asset, and nothing is concluded about it.
+    """
+
+    ttl: int  # distance from the scanner: 1 = the first router
+    ip: str | None = None  # None when the tool saw an answer but gave no address
+    rtt_ms: float | None = None  # round-trip time; None when not measured for this host
+    # Reverse-DNS (PTR) name of the hop, for display only: whoever owns the address
+    # chooses it, so it identifies nothing.
+    name: str | None = None
+
+
 @dataclass(slots=True)
 class Asset:
     """A host discovered during recon, with the services found on it."""
@@ -178,3 +196,7 @@ class Asset:
     ip: str | None = None
     services: list[Service] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
+    # The path from the scanner to this host, ordered by TTL, when traceroute ran.
+    # Hops that never answered are missing, so the TTLs can have gaps. The last hop
+    # is usually the host itself.
+    route: list[Hop] = field(default_factory=list)
