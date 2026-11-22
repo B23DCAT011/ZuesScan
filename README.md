@@ -82,6 +82,25 @@ Quy tắc của scope:
 - **Kết quả được kiểm lại.** Máy nào scanner trả về mà nằm ngoài scope sẽ không được lưu và
   CLI in cảnh báo.
 
+### Theo dõi qua nhiều lần quét
+
+Mỗi lần quét được đối chiếu với **kho tài sản** (mọi host, cổng, lỗi đã từng thấy). Sau khi quét,
+CLI in ra những gì thay đổi, và cảnh báo khi một lỗi đã báo sửa vẫn còn (**fix giả**) hoặc lỗi cũ
+quay lại:
+
+```bash
+reconkit findings                     # lỗi còn mở, theo thứ tự ưu tiên
+reconkit finding 12                   # chi tiết + lịch sử của một lỗi
+reconkit finding 12 --claim-fixed     # báo đã sửa: lần quét sau sẽ xác minh (hoặc báo fix giả)
+reconkit finding 7 --accept --reason "máy cô lập, thay trong Q1" --until 2027-03-31
+reconkit inventory                    # mọi host / cổng đã thấy, thấy lần đầu / cuối khi nào
+reconkit diff                         # run mới nhất so với run trước đó cùng target
+reconkit diff 3 8                     # hai run bất kỳ (có cảnh báo nếu không so sánh được)
+```
+
+"Không thấy" chưa chắc là "đã vá": ReconKit chỉ kết luận một lỗi đã hết khi host vẫn trả lời,
+cổng đó chắc chắn đã được quét và dữ liệu CVE cùng loại — xem `docs/THIET-KE.md`.
+
 ### Giấy phép quét & audit trail
 
 File scope có thể ghi điều khoản của giấy phép, ReconKit sẽ tuân theo:

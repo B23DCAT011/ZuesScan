@@ -57,7 +57,7 @@ cột mốc M1 (giao diện đầu tiên) chỉ bắt đầu sau F9.
 Ràng buộc chung: lõi vẫn **không phụ thuộc thư viện ngoài**. Thư viện web và hàng đợi đặt
 trong gói tuỳ chọn `reconkit[server]`.
 
-## Vòng đời một lỗ hổng (dựa trên fingerprint)
+## Vòng đời một lỗ hổng (dựa trên fingerprint) — ✅ đã làm (`feat/diff`)
 
 ```
 MỚI → ĐANG MỞ → ĐÃ BÁO SỬA → (run sau không thấy) → ĐÃ XÁC MINH VÁ → (thấy lại) → TÁI XUẤT HIỆN
@@ -68,3 +68,21 @@ MỚI → ĐANG MỞ → ĐÃ BÁO SỬA → (run sau không thấy) → ĐÃ X�
 ```
 
 "Không thấy" chưa chắc là "đã vá". Chỉ xác nhận đã vá khi host vẫn phản hồi mà lỗi không còn.
+
+Cách ReconKit áp dụng quy tắc trên (`reconkit/inventory.py`): một run chỉ được coi là "đã nhìn
+vào" một lỗi khi (1) host trả lời, (2) cổng chắc chắn được quét — dịch vụ vẫn mở, hoặc cùng
+profile với lần thấy lỗi, hoặc profile liệt kê rõ cổng đó, và (3) với CVE: cùng loại dữ liệu CVE
+(seed / cache NVD). Run không nhìn vào thì **không đổi gì**. Host nằm trong kế hoạch quét mà
+không trả lời → `not_responding`, không phải "đã vá".
+
+| Trạng thái (code) | Nghĩa |
+|---|---|
+| `new` → `open` | thấy lần đầu → thấy lại |
+| `fix_claimed` | có người báo đã sửa (`reconkit finding ID --claim-fixed`) |
+| `fixed` | đã báo sửa và run sau (có nhìn vào) không còn thấy |
+| `fake_fix` ⚠ | đã báo sửa nhưng run sau vẫn thấy |
+| `gone` | tự hết mà chưa ai báo sửa: kiểm tra lại |
+| `reappeared` ⚠ | đã `fixed` / `gone` rồi lại thấy |
+| `accepted` | chấp nhận rủi ro, bắt buộc có lý do + hạn xem lại; quá hạn → `open` |
+
+Quyết định của con người (báo sửa, chấp nhận, mở lại) được ghi cả vào chuỗi audit (G21).
