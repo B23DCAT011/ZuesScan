@@ -79,10 +79,12 @@ def _print_summary(run: ScanRun, run_id: int, db_path: str) -> None:
             print(f"        priority: {_risk_line(f)}")
             if f.evidence:
                 print(f"        evidence: {f.evidence}")
-    for o in run.raw_outputs:
+    several = len(run.raw_outputs) > 1
+    for i, o in enumerate(run.raw_outputs, start=1):
+        pick = f" --index {i}" if several else ""
         print(
             f"\n  raw output kept: {o.plugin} ({o.format}, {o.size} bytes, "
-            f"sha256 {o.sha256[:12]}...)  ->  reconkit raw {run_id} --db {db_path}"
+            f"sha256 {o.sha256[:12]}...)  ->  reconkit raw {run_id}{pick} --db {db_path}"
         )
 
 
@@ -192,6 +194,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             scope=scope,
             cve_source=cve_source,
             profile=profile,
+            ipv4_only=args.ipv4_only,
         )
         return _open_db_and_scan(args, orch)
 
@@ -234,6 +237,8 @@ def _scan(args: argparse.Namespace, orch: Orchestrator, store: Storage) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
+    for note in run.notes:
+        print(f"note: {note}", file=sys.stderr)
     if run.skipped_plugins:
         skipped = ", ".join(run.skipped_plugins)
         print(f"warning: skipped unavailable scanners: {skipped}", file=sys.stderr)
@@ -479,20 +484,26 @@ def _cmd_raw(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
+    numbered = list(enumerate(outputs, start=1))
     if args.plugin:
-        outputs = [o for o in outputs if o.plugin == args.plugin]
-    if not outputs:
+        numbered = [(i, o) for i, o in numbered if o.plugin == args.plugin]
+    if args.index is not None:
+        numbered = [(i, o) for i, o in numbered if i == args.index]
+    if not numbered:
         which = f" from {args.plugin}" if args.plugin else ""
+        which += f" with index {args.index}" if args.index is not None else ""
         print(f"error: run #{args.run_id} has no raw output{which} stored", file=sys.stderr)
         return 1
-    if len(outputs) > 1:
-        names = ", ".join(o.plugin for o in outputs)
+    if len(numbered) > 1:
         print(
-            f"error: run has several raw outputs ({names}); pick one with --plugin", file=sys.stderr
+            f"error: run #{args.run_id} has {len(numbered)} raw outputs; pick one with --index:",
+            file=sys.stderr,
         )
+        for i, o in numbered:
+            print(f"  {i}  {o.plugin:<8} {' '.join(o.command)}", file=sys.stderr)
         return 2
 
-    (output,) = outputs
+    ((_, output),) = numbered
     # Details go to stderr so that stdout is the tool's output and nothing else.
     print(f"plugin:  {output.plugin} ({output.format})", file=sys.stderr)
     print(f"command: {' '.join(output.command)}", file=sys.stderr)
@@ -553,6 +564,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="record the network path to each host (for the map; slower)",
     )
     tuning.add_argument(
+        "--ipv4-only",
+        action="store_true",
+        help="look up and scan only the IPv4 addresses of a name (not its AAAA records)",
+    )
+    tuning.add_argument(
         "--assume-up",
         action="store_true",
         help="scan hosts that ignore ping (nmap -Pn); slow on ranges",
@@ -596,6 +612,9 @@ def build_parser() -> argparse.ArgumentParser:
     raw.add_argument("run_id", type=int, help="id of the run, as printed by `scan`")
     raw.add_argument("--db", default="reconkit.db", help="SQLite database path")
     raw.add_argument("--plugin", help="which scanner's output, if the run has several")
+    raw.add_argument(
+        "--index", type=int, help="which output, by its number (a dual-stack scan has two)"
+    )
     raw.add_argument("--out", help="write the output to this file instead of the screen")
     raw.set_defaults(func=_cmd_raw)
 

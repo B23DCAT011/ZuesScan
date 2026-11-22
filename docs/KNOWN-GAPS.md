@@ -264,7 +264,17 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     được; sửa file scope sau khi quét là mất dấu.
   - Sửa: lưu vào `scan_run` mã băm SHA-256 + đường dẫn của file scope, người chạy, và một
     trường tham chiếu giấy phép (`--engagement`); cân nhắc khung giờ trong file scope.
-- [ ] **G22. Chưa hỗ trợ IPv6.** (từ F6)
+- [x] **G22. Chưa hỗ trợ IPv6.** (từ F6)
+  - ✅ **Đã sửa (`feat/ipv6`)**: tên miền được phân giải ra **cả IPv4 lẫn IPv6** (A + AAAA) và
+    **mọi** địa chỉ, kể cả IPv6, phải nằm trong scope (không thì từ chối, nêu rõ địa chỉ).
+    `--ipv4-only` để chỉ dùng IPv4 — lựa chọn này được ghi vào run. nmap không trộn được hai họ
+    địa chỉ nên plugin chạy **một lượt mỗi họ** (`-6` cho IPv6), chia cả danh sách loại trừ;
+    họ nào không host nào trả lời (thường gặp: có bản ghi AAAA nhưng máy quét không đi được
+    IPv6) thì thành **ghi chú** của run, không làm hỏng cả lần quét, miễn họ kia có kết quả.
+    Dải IPv6 lớn hơn /112 bị từ chối: một subnet /64 có 2^64 địa chỉ, không quét quét lần lượt
+    được — host IPv6 được tìm qua DNS. Run có thêm `notes` (schema DB v9); `reconkit raw
+    --index` chọn một trong nhiều output. Đã kiểm với nmap thật: `localhost` → 127.0.0.1 và ::1.
+  - Còn lại: chưa tìm host IPv6 bằng cách khác ngoài DNS (vd Neighbor Discovery trong LAN).
   - Dẫn chứng: `resolve_ipv4()` chỉ hỏi bản ghi A; plugin nmap không truyền `-6` (nmap
     không trộn được IPv4 và IPv6 trong một lần chạy).
   - Hậu quả: tên miền có cả AAAA thì phần IPv6 không được kiểm tra scope lẫn quét — an toàn

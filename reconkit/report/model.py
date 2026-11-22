@@ -46,6 +46,7 @@ def report_model(run: ScanRun, run_id: int) -> dict[str, Any]:
             "skipped_scanners": list(run.skipped_plugins),
             "failed_scanner": run.failed_plugin,
             "out_of_scope": list(run.out_of_scope),
+            "notes": list(run.notes),
             "raw_outputs": [
                 {"plugin": o.plugin, "format": o.format, "size": o.size, "sha256": o.sha256}
                 for o in run.raw_outputs

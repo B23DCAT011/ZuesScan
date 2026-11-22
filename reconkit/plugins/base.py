@@ -37,11 +37,15 @@ class ScanError(Exception):
         plugin: str,
         stderr: str | None = None,
         output: RawOutput | None = None,
+        no_response: bool = False,
     ) -> None:
         super().__init__(message)
         self.plugin = plugin
         self.stderr = stderr
         self.output = output
+        # The tool ran fine but no host answered: for one address family of a
+        # dual-stack target this is a finding about reachability, not a broken scan.
+        self.no_response = no_response
 
 
 @dataclass
@@ -52,6 +56,8 @@ class ScanResult:
     assets: list[Asset] = field(default_factory=list)
     # The tool's own output, exactly as printed (usually one per invocation).
     raw: list[RawOutput] = field(default_factory=list)
+    # What a person should know about how the scan went, e.g. "IPv6: no host answered".
+    notes: list[str] = field(default_factory=list)
 
 
 @runtime_checkable

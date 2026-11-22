@@ -541,6 +541,7 @@
         "mono"],
       ["skipped scanners", run.skipped_scanners.join(", ")],
       ["out of scope (dropped)", run.out_of_scope.join(", ")],
+      ["notes", (run.notes || []).join("\n")],
       ["raw output kept", outputs.join("\n")]
     ];
     var built = kv(pairs);

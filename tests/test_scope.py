@@ -4,9 +4,17 @@ import socket
 from pathlib import Path
 
 import pytest
+from conftest import fake_resolver
 
 from reconkit.schema import ScanTarget
-from reconkit.scope import ResolutionError, Resolver, Scope, ScopeError, resolve_ipv4
+from reconkit.scope import (
+    ResolutionError,
+    Resolver,
+    Scope,
+    ScopeError,
+    resolve_addresses,
+    resolve_ipv4,
+)
 
 
 def test_exact_host_allowed() -> None:
@@ -204,7 +212,7 @@ def test_resolve_ipv4_returns_the_addresses_of_the_system_lookup(
         ]
 
     monkeypatch.setattr(socket, "getaddrinfo", lookup)
-    assert resolve_ipv4("scanme.lab") == ["10.0.0.5", "10.0.0.5", "10.0.0.6"]
+    assert resolve_ipv4("scanme.lab") == ["10.0.0.5", "10.0.0.6"]  # each address once
 
 
 def test_from_file(tmp_path: object) -> None:
@@ -216,3 +224,58 @@ def test_from_file(tmp_path: object) -> None:
     assert scope.is_allowed("scanme.lab")
     assert scope.is_allowed("10.0.0.9")
     assert not scope.is_allowed("10.0.0.1")
+
+
+# --- IPv6 (G22) ---------------------------------------------------------------------------
+
+
+def test_names_resolve_to_ipv4_and_ipv6(monkeypatch: pytest.MonkeyPatch) -> None:
+    def lookup(host: str, port: object, family: int = 0) -> list[tuple[object, ...]]:
+        assert family == socket.AF_UNSPEC
+        return [
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2001:db8::5", 0, 0, 0)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 0)),
+            (socket.AF_INET6, socket.SOCK_DGRAM, 17, "", ("2001:db8::5", 0, 0, 0)),
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", lookup)
+    assert resolve_addresses("scanme.lab") == ["10.0.0.5", "2001:db8::5"]
+
+
+def _dual(*extra: str) -> Scope:
+    return Scope.from_entries(["scanme.lab", "10.0.0.0/24", *extra])
+
+
+DUAL = fake_resolver({"scanme.lab": ["10.0.0.5", "2001:db8::5"]})
+
+
+def test_every_ipv6_address_of_a_name_must_be_in_scope_too() -> None:
+    with pytest.raises(ScopeError, match="resolves to 2001:db8::5"):
+        _dual().plan("scanme.lab", DUAL)
+    plan = _dual("2001:db8::/64").plan("scanme.lab", DUAL)
+    assert plan.addresses == ("10.0.0.5", "2001:db8::5")
+
+
+def test_ipv4_only_does_not_look_at_ipv6(monkeypatch: pytest.MonkeyPatch) -> None:
+    import reconkit.scope as scope_module
+
+    monkeypatch.setattr(scope_module, "resolve_ipv4", fake_resolver({"scanme.lab": ["10.0.0.5"]}))
+    monkeypatch.setattr(scope_module, "resolve_addresses", DUAL)
+    assert _dual().plan("scanme.lab", ipv4_only=True).addresses == ("10.0.0.5",)
+    with pytest.raises(ScopeError, match="IPv4 only"):
+        _dual("2001:db8::/64").plan("2001:db8::5", ipv4_only=True)
+
+
+def test_ipv6_targets_and_denylist() -> None:
+    scope = _dual("2001:db8::/64", "!2001:db8::1")
+    plan = scope.plan("2001:db8::/120")
+    assert plan.addresses == ("2001:db8::/120",)
+    assert plan.exclude == ("2001:db8::1",)
+    assert scope.plan("2001:DB8::5").addresses == ("2001:db8::5",)
+
+
+def test_ipv6_range_too_large_to_sweep_is_refused() -> None:
+    scope = _dual("2001:db8::/64")
+    assert scope.plan("2001:db8::/112").addresses == ("2001:db8::/112",)  # 65,536: fine
+    with pytest.raises(ScopeError, match="too many to sweep"):
+        scope.plan("2001:db8::/64")

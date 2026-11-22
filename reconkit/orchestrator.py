@@ -74,6 +74,9 @@ class ScanRun:
     # the ports a full scan does).
     profile: str | None = None
     profile_settings: dict[str, Any] | None = None
+    # What a person should know about how the run went (a scanner's notes, choices
+    # such as "IPv4 only" that narrowed what was looked at).
+    notes: list[str] = field(default_factory=list)
     # What the scope guard authorised for this run: resolved addresses, exclusions.
     plan: ScanTarget | None = None
     # Hosts a plugin reported that are outside the scope; dropped from `assets`.
@@ -90,6 +93,7 @@ class Orchestrator:
         cve_source: CveSource | None = None,
         resolver: Resolver | None = None,
         profile: ScanProfile | None = None,
+        ipv4_only: bool = False,
     ) -> None:
         self.plugins = plugins
         self.scope = scope
@@ -97,11 +101,13 @@ class Orchestrator:
         self.resolver = resolver  # None = the system resolver
         # Recorded with every run; the plugins were built with it.
         self.profile = profile
+        # Do not look up IPv6 (AAAA) addresses of a name: narrower, and noted as such.
+        self.ipv4_only = ipv4_only
 
     def run(self, target: str) -> ScanRun:
         # 1. Safety gate: refuse anything outside the authorised scope, and pin down
         #    the exact addresses to scan (names are resolved here, once).
-        plan = self.scope.plan(target, self.resolver)
+        plan = self.scope.plan(target, self.resolver, ipv4_only=self.ipv4_only)
 
         # 2. Fail loudly if nothing can scan: saving an empty run would look "clean".
         runnable, skipped = self._split_plugins()
@@ -116,8 +122,12 @@ class Orchestrator:
         assets: list[Asset] = []
         out_of_scope: list[str] = []
         raw_outputs: list[RawOutput] = []
+        notes: list[str] = []
+        if self.ipv4_only and plan.hostname:
+            notes.append("IPv4 only: the name's IPv6 (AAAA) addresses were not looked up")
         for plugin in runnable:
             result = plugin.scan(plan)
+            notes.extend(f"{plugin.name}: {note}" for note in result.notes)
             # Kept whole, including what it says about hosts dropped just below:
             # it is the record of what the tool really did.
             raw_outputs.extend(result.raw)
@@ -162,6 +172,7 @@ class Orchestrator:
             plan=plan,
             out_of_scope=out_of_scope,
             raw_outputs=raw_outputs,
+            notes=notes,
             **self._profile_record(),
         )
 
