@@ -105,10 +105,27 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
 
 ## Mức 2 — Thiếu so với công cụ thật
 
-- [ ] **G6. Chỉ quét 1.000 cổng phổ biến** (mặc định của nmap).
+- [x] **G6. Chỉ quét 1.000 cổng phổ biến** (mặc định của nmap).
   Sửa: scan profile `quick` / `full` (`-p-`); quét định kỳ dùng `full`.
-- [ ] **G7. Cố định `-T4` và timeout 300s.**
+  - ✅ **Đã sửa (`feat/scan-profiles`)**: 4 profile dựng sẵn — `quick` (100 cổng), `standard`
+    (1.000 cổng, mặc định, giữ đúng hành vi cũ `-sV -T4`), `full` (`-p -` cả 65.535 cổng +
+    traceroute, timeout 4 giờ, mỗi host tối đa 1 giờ), `gentle` (`-T2`, tối đa 50 gói/giây cho
+    mạng yếu). Mỗi run lưu **tên profile và toàn bộ thông số** (schema DB v6): kết quả của
+    `quick` và `full` không so được với nhau — quét thật trên 127.0.0.1 cho thấy `quick` bỏ sót
+    cổng 903 mà `standard` thấy.
+  - Còn lại: chưa quét UDP (`-sU` chậm và cần quyền root; danh sách cổng chỉ nhận TCP). Chưa có
+    bước "tìm cổng nhanh rồi mới `-sV` trên cổng mở" như masscan/naabu → nmap.
+- [x] **G7. Cố định `-T4` và timeout 300s.**
   Sửa: cấu hình được tốc độ, timeout, rate limit (file config + cờ CLI).
+  - ✅ **Đã sửa (`feat/scan-profiles`)**: file TOML (`--config`, bảng `[profiles.<tên>]`, kế thừa
+    một profile dựng sẵn bằng `base`) và cờ CLI ghi đè từng thông số (`--ports`, `--top-ports`,
+    `--timing`, `--max-rate`, `--host-timeout`, `--timeout`, `--[no-]traceroute`,
+    `--assume-up`). Thứ tự ưu tiên: dựng sẵn < file cấu hình < cờ CLI. Mọi giá trị được kiểm
+    **trước khi quét**: khóa lạ, sai kiểu, ngoài khoảng, ghi đè profile dựng sẵn → lỗi, exit 2;
+    danh sách cổng chỉ nhận số / dải số nên không thể chèn thêm tuỳ chọn cho nmap (vd
+    `-oN file`). nmap quá thời gian → giữ lại phần output đã in làm bằng chứng.
+  - Còn lại: chưa tự giảm tốc khi mạng báo nghẽn (nmap đã tự làm một phần trong `-T`); chưa
+    có khung giờ được phép quét (→ G21).
 - [ ] **G8. CVE khớp đúng phiên bản, bỏ qua CPE.**
   Sửa: khớp theo CPE + **dải phiên bản** (`versionStartIncluding`, `versionEndExcluding`…).
   - Thêm: nmap thật trả version kiểu `7.4p1 Debian 10+deb9u7`, không phải `7.4` → so khớp
