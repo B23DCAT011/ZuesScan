@@ -396,3 +396,71 @@ def test_traceroute_that_recorded_nothing_is_explained(
     err = capsys.readouterr().err
     assert "no route recorded for 1 of 1 host(s)" in err
     assert "raw-socket privileges" in err
+
+
+# --- runs / report (M1) ---------------------------------------------------------------
+
+
+def test_runs_lists_what_was_stored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    db = _scan_once(tmp_path, monkeypatch, FakePlugin([lab_asset(Service(port=22))]))
+    capsys.readouterr()
+    assert cli.main(["runs", "--db", str(db)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].split()[:3] == ["ID", "STARTED", "(UTC)"]
+    assert lines[1].split()[0] == "1"
+    assert lines[1].split()[3:] == ["completed", "1", "1", "0", "scanme.lab"]
+
+
+def test_runs_and_report_never_create_a_database(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    missing = tmp_path / "nope.db"
+    assert cli.main(["runs", "--db", str(missing)]) == 2
+    assert cli.main(["report", "--db", str(missing), "--html", str(tmp_path / "r.html")]) == 2
+    assert "database not found" in capsys.readouterr().err
+    assert not missing.exists()
+
+
+def test_report_of_the_latest_run_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    db = _scan_once(tmp_path, monkeypatch, FakePlugin([lab_asset(Service(port=22))]))
+    _scan_once(tmp_path, monkeypatch, FakePlugin([lab_asset(Service(port=443))]))
+    capsys.readouterr()
+    out = tmp_path / "report.html"
+
+    assert cli.main(["report", "--db", str(db), "--html", str(out)]) == 0
+    assert "report of run #2 (scanme.lab, completed)" in capsys.readouterr().out
+    page = out.read_text(encoding="utf-8")
+    assert page.startswith("<!doctype html>")
+    assert '"port":443' in page and '"port":22' not in page
+
+    assert cli.main(["report", "--db", str(db), "--run", "1", "--html", str(out)]) == 0
+    assert '"port":22' in out.read_text(encoding="utf-8")
+
+
+def test_report_of_an_unknown_run_or_an_empty_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    empty = tmp_path / "empty.db"
+    Storage(empty).close()
+    out = str(tmp_path / "r.html")
+    assert cli.main(["report", "--db", str(empty), "--html", out]) == 2
+    assert "no run stored" in capsys.readouterr().err
+
+    db = _scan_once(tmp_path, monkeypatch, FakePlugin([lab_asset()]))
+    capsys.readouterr()
+    assert cli.main(["report", "--db", str(db), "--run", "9", "--html", out]) == 2
+    assert "no run #9" in capsys.readouterr().err
+
+
+def test_report_that_cannot_be_written_is_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    db = _scan_once(tmp_path, monkeypatch, FakePlugin([lab_asset()]))
+    capsys.readouterr()
+    out = str(tmp_path / "no-such-dir" / "r.html")
+    assert cli.main(["report", "--db", str(db), "--html", out]) == 1
+    assert "cannot write" in capsys.readouterr().err

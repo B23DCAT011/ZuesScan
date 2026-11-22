@@ -174,8 +174,8 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     thông báo lỗi và stderr của tool, không có host nào. Lý do: khi quét theo lịch, "quét bị
     hỏng" mà không để lại gì thì trông y hệt "chưa ai quét". Run `failed` không thể bị đọc
     nhầm thành "đã quét, không thấy gì". Bị scope từ chối (exit 3) vẫn không tạo run.
-  - Còn lại: chưa có lệnh CLI xem danh sách run (→ báo cáo, G18); lần bị scope từ chối chưa
-    để lại dấu vết (→ G21).
+  - Còn lại: ~~chưa có lệnh CLI xem danh sách run~~ (✅ M1: `reconkit runs`); lần bị scope từ
+    chối chưa để lại dấu vết (→ G21).
 - [x] **G15. Thiếu index khóa ngoại, thiếu `ON DELETE CASCADE`, chưa có migration.**
   Sửa: index FK, cascade, bảng `schema_version` + migration đơn giản.
   - ✅ **Đã sửa (F7)**: mọi khóa ngoại có index và `ON DELETE CASCADE` (riêng
@@ -209,6 +209,15 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
 
 - [x] **G17. Chưa có CI.** Sửa: GitHub Actions chạy pytest + ruff + mypy cho mọi PR. (F1, `chore/ci`)
 - [ ] **G18. Chỉ in ra màn hình.** Sửa: xuất báo cáo JSON / HTML / SARIF.
+  - ✅ **Phần HTML (M1, `feat/report-html`)**: `reconkit report --html` sinh một file HTML tự
+    chứa (bản đồ Cytoscape.js + bảng finding / host + thông tin run), mở offline. Dữ liệu quét
+    (banner, tên sản phẩm) do máy bị quét tự khai nên có thể độc: JSON được escape để không thoát
+    được khỏi thẻ `<script>`, script của trang chỉ ghi text (không `innerHTML`), CSP chỉ cho
+    chạy script / style có SHA-256 đã liệt kê và `default-src 'none'` (trang không gọi mạng được).
+    `reconkit runs` liệt kê các run.
+  - Còn lại: JSON / SARIF (→ GĐ 2). Báo cáo chưa so sánh hai run (→ `feat/diff`). Mỗi báo cáo
+    nặng ~470 KB vì nhúng nguyên Cytoscape.js. Host được nhóm theo /24 (/64) vì từ ngoài không
+    thấy subnet mask thật.
 - [ ] **G19. Dùng `print`, chưa có logging.** Sửa: module `logging`, cờ `--verbose`.
 - [ ] **G20. Chưa có Docker, README chưa có demo.** Sửa: Dockerfile, ảnh/GIF demo, mục
   "Known limitations" trong README trỏ về file này.

@@ -3,6 +3,7 @@
 `reconkit scan <target> --scope <file>` wires the pieces together: load scope ->
 build orchestrator with the nmap plugin -> run -> persist to SQLite -> print a summary.
 `reconkit raw <run id>` gives back the scanner's own output kept for a run.
+`reconkit runs` lists the stored runs; `reconkit report` turns one into a report.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from reconkit.cve import LocalCveSource
 from reconkit.orchestrator import NoPluginAvailableError, Orchestrator, ScanRun, now
 from reconkit.plugins.base import ScanError
 from reconkit.plugins.nmap import NmapPlugin
+from reconkit.report import render_html, report_model
 from reconkit.schema import Asset
 from reconkit.scope import ResolutionError, Scope, ScopeError
 from reconkit.storage import SCHEMA_VERSION, Storage, StorageError
@@ -194,10 +196,76 @@ def _record_failure(
     return 4
 
 
+def _db_exists(path: str) -> bool:
+    """Reading commands never create a database: say so if there is none."""
+    if Path(path).is_file():
+        return True
+    print(f"error: database not found: {path}", file=sys.stderr)
+    return False
+
+
+def _cmd_runs(args: argparse.Namespace) -> int:
+    """List the stored runs, newest first."""
+    if not _db_exists(args.db):
+        return 2
+    try:
+        with Storage(args.db) as store:
+            runs = store.list_runs(args.limit)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if not runs:
+        print(f"no run stored in {args.db}")
+        return 0
+    print(
+        f"{'ID':>4}  {'STARTED (UTC)':<19}  {'STATUS':<9}  {'HOSTS':>5}  {'SVCS':>5}  "
+        f"{'FINDINGS':>8}  TARGET"
+    )
+    for r in runs:
+        started = r.started_at[:19].replace("T", " ")
+        print(
+            f"{r.id:>4}  {started:<19}  {r.status:<9}  {r.hosts:>5}  {r.services:>5}  "
+            f"{r.findings:>8}  {r.target}"
+        )
+    return 0
+
+
+def _cmd_report(args: argparse.Namespace) -> int:
+    """Write the report of one run (the latest by default)."""
+    if not _db_exists(args.db):
+        return 2
+    try:
+        with Storage(args.db) as store:
+            run_id = args.run if args.run is not None else store.latest_run_id()
+            if run_id is None:
+                print(f"error: no run stored in {args.db}", file=sys.stderr)
+                return 2
+            run = store.load_run(run_id)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if run is None:
+        print(f"error: no run #{run_id} in {args.db}", file=sys.stderr)
+        return 2
+
+    page = render_html(report_model(run, run_id))
+    try:
+        Path(args.html).write_text(page, encoding="utf-8", newline="\n")
+    except OSError as exc:
+        print(f"error: cannot write {args.html}: {exc}", file=sys.stderr)
+        return 1
+    print(f"report of run #{run_id} ({run.target}, {run.status}) written to {args.html}")
+    print(
+        "note: the report contains the scan results; share it only with people "
+        "authorised to see them.",
+        file=sys.stderr,
+    )
+    return 0
+
+
 def _cmd_raw(args: argparse.Namespace) -> int:
     """Print (or save) the raw scanner output stored for a run."""
-    if not Path(args.db).is_file():
-        print(f"error: database not found: {args.db}", file=sys.stderr)
+    if not _db_exists(args.db):
         return 2
     try:
         with Storage(args.db) as store:
@@ -269,6 +337,19 @@ def build_parser() -> argparse.ArgumentParser:
     raw.add_argument("--plugin", help="which scanner's output, if the run has several")
     raw.add_argument("--out", help="write the output to this file instead of the screen")
     raw.set_defaults(func=_cmd_raw)
+
+    runs = sub.add_parser("runs", help="list the stored runs, newest first")
+    runs.add_argument("--db", default="reconkit.db", help="SQLite database path")
+    runs.add_argument("--limit", type=int, default=20, help="how many runs (default 20)")
+    runs.set_defaults(func=_cmd_runs)
+
+    report = sub.add_parser("report", help="write the report of a run (map + tables)")
+    report.add_argument("--run", type=int, help="id of the run (default: the latest)")
+    report.add_argument("--db", default="reconkit.db", help="SQLite database path")
+    report.add_argument(
+        "--html", required=True, help="write a self-contained HTML report to this file"
+    )
+    report.set_defaults(func=_cmd_report)
     return parser
 
 
