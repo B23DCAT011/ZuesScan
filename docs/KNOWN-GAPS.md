@@ -378,3 +378,16 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     `print` vẫn dùng cho phần trả lời người dùng ở CLI — đó là giao diện, không phải log.
 - [ ] **G20. Chưa có Docker, README chưa có demo.** Sửa: Dockerfile, ảnh/GIF demo, mục
   "Known limitations" trong README trỏ về file này.
+  - ✅ **Docker (`chore/docker`)**: `Dockerfile` (image gốc ghim digest, gói Python ghim phiên bản
+    + mã băm, user không phải root, nmap chỉ có `cap_net_raw`), `compose.yaml` (Redis có AOF,
+    web / worker / scheduler, FS chỉ đọc, `cap_drop: ALL`, chỉ worker có `NET_RAW`, healthcheck,
+    web chỉ ở 127.0.0.1), `reconkit backup` (backup trực tuyến + kiểm tra + SHA-256 + mã băm đầu
+    chuỗi audit, xoay vòng, `--verify`). CI build image và quét thật một container bằng SYN scan
+    + traceroute với user thường chỉ giữ `NET_RAW`. Đã chạy thử cả stack: scheduler → worker →
+    API → backup trong lúc chạy.
+  - Còn lại: **ảnh / GIF demo** trong README (làm cùng `feat/lab`, trên lab có lỗ hổng thật);
+    image **chưa có nuclei / subfinder** (thực tế: tải bản release ghim phiên bản + kiểm
+    checksum/chữ ký trong build stage); chưa **quét lỗ hổng chính image** (Trivy/Grype trong CI)
+    và chưa **ký image** (cosign) / xuất SBOM; digest image gốc phải tự cập nhật (Dependabot /
+    Renovate); backup chưa tự chạy theo lịch và chưa mã hoá — thực tế: job định kỳ + đẩy bản mã
+    hoá (age/GPG) ra kho ngoài (S3 có object lock).

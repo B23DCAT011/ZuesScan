@@ -363,3 +363,66 @@ Bảo mật:
   (`textContent`), CSP chỉ cho chạy `app.js` của chính server và chỉ gọi về chính server; mọi
   response có `nosniff`, `X-Frame-Options: DENY`, `no-referrer`, `no-store`.
 - Không có `/docs` (Swagger UI tải script từ CDN); schema ở `/api/v1/openapi.json`.
+
+## Docker
+
+Cả dịch vụ (Redis, web, worker, scheduler) chạy bằng Docker Compose:
+
+```bash
+cp deploy/service.example.toml deploy/service.toml       # sửa targets, scope (deploy/ được mount vào /config)
+docker compose up -d --build
+docker compose run --rm --no-deps web token --name alice --role operator   # dán khối [[tokens]] vào deploy/service.toml
+# mở http://127.0.0.1:8000 — sửa service.toml có hiệu lực ngay, không cần khởi động lại
+docker compose up -d --scale worker=3                    # thêm worker
+docker compose logs -f worker
+```
+
+Image và compose được làm cứng theo cách làm thật:
+
+- **Chuỗi cung ứng**: image gốc ghim theo digest; mọi gói Python ghim **phiên bản và mã băm**
+  (`docker/requirements.lock`, `docker/build.lock`, sinh lại bằng `sh docker/lock.sh` ngay
+  trong image gốc); nmap lấy từ kho Debian có ký. Không tải gì từ nơi khác.
+- **Không chạy root**: user `reconkit` (uid 10001). nmap được `setcap cap_net_raw` — đúng một
+  quyền để mở raw socket (SYN scan, traceroute) mà không cần root.
+- **Ít quyền nhất**: mọi container ReconKit có root filesystem **chỉ đọc**, `cap_drop: ALL`,
+  `no-new-privileges`. Chỉ **worker** được trả lại `NET_RAW` (và phải tắt `no-new-privileges`,
+  vì đó là cách duy nhất để tiến trình không phải root nhận capability của file nmap). Container
+  web / scheduler **không chạy được nmap** dù có bị chiếm quyền.
+- Web chỉ publish ra `127.0.0.1:8000`; Redis không publish cổng nào. Muốn phục vụ máy khác:
+  đặt reverse proxy có TLS phía trước (xem "Web API & dashboard").
+- Healthcheck: Redis (`PING`), web (`/healthz` — cấu hình, database, hàng đợi). Log xoay vòng
+  10 MB × 5.
+
+Mạng quét: worker nằm trong mạng bridge của compose (quét ra ngoài qua NAT; traceroute thấy
+gateway của Docker là hop đầu). Để quét LAN của máy chủ không qua NAT (Linux):
+`network_mode: host` cho worker. Lab có lỗ hổng chạy chung mạng với worker: xem "Lab".
+
+Dữ liệu CVE thật trong Docker:
+
+```bash
+docker compose run --rm -e NVD_API_KEY worker cve sync --cache /data/reconkit-cve.db
+# rồi bật cve_cache = "/data/reconkit-cve.db" trong deploy/service.toml
+```
+
+### Sao lưu & khôi phục
+
+```bash
+reconkit backup --db reconkit.db --out-dir backups --keep 14     # ngoài Docker
+docker compose exec worker reconkit backup --db /data/reconkit.db --out-dir /data/backups --keep 14
+docker compose cp worker:/data/backups ./backups                 # đưa ra ngoài volume!
+reconkit backup --verify backups/reconkit-20261123T042247Z.db
+```
+
+`backup` dùng API backup trực tuyến của SQLite nên **an toàn khi worker đang ghi** (chép file
+DB thẳng thì có thể ra bản hỏng), mở DB nguồn ở chế độ chỉ đọc, rồi kiểm bản sao: `PRAGMA
+integrity_check`, chuỗi băm của audit trail, và ghi SHA-256 vào `<file>.sha256` (đọc được bằng
+`sha256sum -c`). Nó in **mã băm đầu chuỗi audit** — cất mã này ở nơi khác (ticket, email cho
+khách hàng) để sau này chứng minh lịch sử không bị viết lại. `--keep N` chỉ xoá các bản
+`reconkit-<thời gian>.db` cũ do chính nó tạo.
+
+Khôi phục: `docker compose stop web worker scheduler` → `reconkit backup --verify <file>` →
+chép file vào volume làm `/data/reconkit.db` → `docker compose start`. Bản sao lưu nằm cùng
+volume với DB thì không chống được hỏng đĩa: luôn `docker compose cp` ra nơi khác.
+
+Image **chưa có nuclei và subfinder** (target bật `nuclei` / `discover` sẽ báo bỏ qua scanner
+không có) — xem G20.

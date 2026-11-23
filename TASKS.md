@@ -104,5 +104,8 @@ Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây we
       script; trình duyệt dùng cookie HttpOnly + SameSite=Strict + header chống CSRF; vai trò
       viewer / operator; `service.toml` đổi là có hiệu lực ngay (thu hồi token), hỏng thì từ chối
       mọi request. Còn lại: G23.
-- [ ] Đóng gói Docker Compose + volume + backup DB; README có demo (G20).
+- [x] `chore/docker` — `Dockerfile` (không root, nmap chỉ `cap_net_raw`, phụ thuộc ghim theo mã
+      băm), `compose.yaml` (Redis + web + worker + scheduler, FS chỉ đọc, `cap_drop: ALL`),
+      `reconkit backup` (sao lưu trực tuyến có kiểm tra, `--verify`, `--keep`); CI build và
+      quét thử trong container. Còn lại: ảnh demo (cùng `feat/lab`), nuclei/subfinder trong image.
 - [ ] Lab mục tiêu (Metasploitable / container có lỗ hổng) trong network nội bộ.
