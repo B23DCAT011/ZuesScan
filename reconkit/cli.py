@@ -386,6 +386,25 @@ def _cmd_audit(args: argparse.Namespace) -> int:
     return 1
 
 
+def _cmd_mcp(args: argparse.Namespace) -> int:
+    """Serve ReconKit's tools to an AI agent over MCP (stdin/stdout)."""
+    try:
+        from reconkit import mcp_server
+    except ImportError as exc:
+        print(
+            f"error: this command needs the MCP extra: pip install 'reconkit[mcp]' ({exc})",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        mcp_server.serve(args.url)
+    except mcp_server.ApiError as exc:
+        # stdout belongs to the protocol: every message goes to stderr.
+        print(f"error: {exc.detail}", file=sys.stderr)
+        return 2 if exc.status in (0, 401) else 1
+    return 0
+
+
 def _cmd_tools(args: argparse.Namespace) -> int:
     """nuclei, subfinder and the nuclei templates, installed by ReconKit itself."""
     root = Path(args.root) if args.root else tools.default_root()
@@ -1214,6 +1233,14 @@ def build_parser() -> argparse.ArgumentParser:
     delete.add_argument("--yes", action="store_true", help="confirm: the run cannot be restored")
     delete.add_argument("--operator", help="who deletes it (default: user@host)")
     delete.set_defaults(func=_cmd_delete)
+
+    mcp_cmd = sub.add_parser(
+        "mcp", help="serve ReconKit to AI agents over MCP (stdio; needs a running service)"
+    )
+    mcp_cmd.add_argument(
+        "--url", help="the ReconKit service (default: $RECONKIT_URL, else http://127.0.0.1:8000)"
+    )
+    mcp_cmd.set_defaults(func=_cmd_mcp)
 
     tools_cmd = sub.add_parser(
         "tools", help="install nuclei, subfinder and nuclei templates (pinned, no admin)"
