@@ -2,7 +2,7 @@
 
 Mục tiêu: một **sản phẩm chạy được thật**, đủ chuẩn để đưa vào portfolio xin việc. Không
 dùng lý do "chỉ là lab" để bỏ qua điểm yếu: chỗ nào đã nhìn ra thì sửa; đường tắt nào cố ý
-giữ tạm phải ghi vào [`docs/KNOWN-GAPS.md`](docs/KNOWN-GAPS.md) (mã `G1`…`G24`).
+giữ tạm phải ghi vào [`docs/KNOWN-GAPS.md`](docs/KNOWN-GAPS.md) (mã `G1`…`G25`).
 
 Quy trình: mỗi task = 1 nhánh (`feat/` · `fix/` · `refactor/` · `chore/` · `docs/`), chạy đủ
 pytest + ruff + mypy trước khi commit, rồi `git merge --no-ff` vào `main` và push (từ
@@ -140,8 +140,11 @@ Mục tiêu: mang ReconKit sang máy khác mà cài nhanh, thêm / bớt công c
       của nmap, templates, key của subfinder, dữ liệu CVE, gói dịch vụ, Redis; lệnh cài đúng cho
       từng hệ điều hành; không tự cài gói hệ thống. Tìm ra và sửa: image thiếu SSH client,
       `subfinder -version` ghi cấu hình vào `/data`.
-- [ ] `feat/plugin-registry` — registry plugin + entry points, bật / tắt bằng cấu hình, mỗi plugin
-      khai báo mức chủ động (scope cho phép tới đâu), `reconkit plugins`, bộ test hợp đồng.
+- [x] `feat/plugin-registry` — registry + entry points `reconkit.plugins`; `--scanner/--check/
+      --discoverer` và `scanners/checks/discoverers` trong `service.toml`; mỗi plugin khai
+      `activity`, scope đặt trần `@activity` (mặc định `scan` → nuclei cần `@activity active`);
+      `reconkit plugins`; `reconkit.plugins.contract`; gói mẫu `examples/reconkit-exposed-git`;
+      `docs/PLUGINS.md`; doctor kiểm cả plugin ngoài. Còn lại: G25.
 - [ ] `feat/tools-install` — `reconkit tools install|verify` cho nuclei / subfinder / templates:
       ghim phiên bản + SHA-256, nhiều hệ điều hành, thư mục của người dùng, không cần admin.
 - [ ] `chore/release` — version theo tag, phát hành gói Python và image (nhiều kiến trúc, ký,

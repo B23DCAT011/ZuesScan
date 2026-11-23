@@ -240,7 +240,9 @@ def test_empty_chain() -> None:
 @pytest.fixture
 def _lab(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("reconkit.scope.resolve_addresses", lab_resolver)
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: FakePlugin([lab_asset()]))
+    monkeypatch.setattr(
+        "reconkit.plugins.registry.NmapPlugin", lambda **_: FakePlugin([lab_asset()])
+    )
 
 
 @pytest.mark.usefixtures("_lab")

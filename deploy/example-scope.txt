@@ -1,3 +1,4 @@
 # Allowlist for the "example" target: one host / IP / CIDR per line, '!' to exclude.
-# Optional: @engagement, @expires, @window (see README "Giấy phép quét & audit trail").
+# Optional: @engagement, @expires, @window (see README "Giấy phép quét & audit trail"),
+# and @activity active to allow exploitation checks such as nuclei (default: scan).
 192.0.2.10

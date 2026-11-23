@@ -198,7 +198,11 @@ def test_checks_run_after_the_scan_and_win_over_version_matches() -> None:
     scanner = FakePlugin([Asset(host="10.0.0.5", ip="10.0.0.5", services=[APACHE])])
     check = FakeCheck()
     orch = Orchestrator(
-        [scanner], lab_scope(), cve_source=LocalCveSource(), resolver=lab_resolver, checks=[check]
+        [scanner],
+        lab_scope("@activity active"),
+        cve_source=LocalCveSource(),
+        resolver=lab_resolver,
+        checks=[check],
     )
     run = orch.run("10.0.0.5")
     assert [a.ip for a in check.seen[0]] == ["10.0.0.5"]  # it saw what the scan found
@@ -217,7 +221,9 @@ def test_checks_run_after_the_scan_and_win_over_version_matches() -> None:
 
 def test_missing_check_tool_makes_the_run_partial() -> None:
     scanner = FakePlugin([Asset(host="10.0.0.5", ip="10.0.0.5", services=[APACHE])])
-    orch = Orchestrator([scanner], lab_scope(), resolver=lab_resolver, checks=[FakeCheck(False)])
+    orch = Orchestrator(
+        [scanner], lab_scope("@activity active"), resolver=lab_resolver, checks=[FakeCheck(False)]
+    )
     run = orch.run("10.0.0.5")
     assert (run.status, run.skipped_plugins) == (RunStatus.PARTIAL, ["checker"])
 
@@ -227,7 +233,7 @@ def test_cli_nuclei_flag(
 ) -> None:
     monkeypatch.setattr("reconkit.scope.resolve_addresses", lab_resolver)
     monkeypatch.setattr(
-        "reconkit.scanning.NmapPlugin",
+        "reconkit.plugins.registry.NmapPlugin",
         lambda **_: FakePlugin([Asset(host="10.0.0.5", ip="10.0.0.5", services=[APACHE])]),
     )
     made: list[object] = []
@@ -236,9 +242,9 @@ def test_cli_nuclei_flag(
         made.append(profile)
         return FakeCheck()
 
-    monkeypatch.setattr("reconkit.scanning.NucleiPlugin", make)
+    monkeypatch.setattr("reconkit.plugins.registry.NucleiPlugin", make)
     scope = tmp_path / "scope.txt"
-    scope.write_text("10.0.0.0/24\n", encoding="utf-8")
+    scope.write_text("@activity active\n10.0.0.0/24\n", encoding="utf-8")
     argv = ["scan", "10.0.0.5", "--scope", str(scope), "--db", str(tmp_path / "d"), "--no-cve"]
     assert cli.main(argv) == 0
     assert made == []  # active checks only when asked for

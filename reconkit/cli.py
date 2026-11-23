@@ -22,6 +22,7 @@ import logging
 import os
 import re
 import secrets
+import shutil
 import sys
 from collections import Counter
 from pathlib import Path
@@ -44,6 +45,7 @@ from reconkit.diff import diff_runs
 from reconkit.inventory import ACTIVE, Status
 from reconkit.inventory_store import FindingEvent, InventoryError
 from reconkit.orchestrator import DISCOVER_LIMIT, RunStatus, ScanRun
+from reconkit.plugins import registry as plugin_registry
 from reconkit.profiles import DEFAULT_PROFILE, ProfileError, ScanProfile, load_profiles
 from reconkit.report import render_html, stored_model
 from reconkit.report.sarif import to_sarif
@@ -191,6 +193,9 @@ def _spec(args: argparse.Namespace) -> ScanSpec:
         cve_db=args.cve_db,
         cve_cache=args.cve_cache,
         credentials=args.credentials,
+        scanners=args.scanner or [],
+        checks=args.check or [],
+        discoverers=args.discoverer or [],
         nuclei=args.nuclei,
         nuclei_templates=args.nuclei_templates,
         discover=args.discover,
@@ -379,6 +384,46 @@ def _cmd_audit(args: argparse.Namespace) -> int:
     for problem in report.problems:
         print(f"PROBLEM: {problem}", file=sys.stderr)
     return 1
+
+
+def _cmd_plugins(args: argparse.Namespace) -> int:
+    """The plugins ReconKit knows: built in or from installed packages."""
+    registry = plugin_registry.load()
+    rows = []
+    for spec in registry.plugins.values():
+        path = shutil.which(spec.binary) if spec.binary else None
+        rows.append(
+            {
+                "name": spec.name,
+                "kind": spec.kind,
+                "activity": str(spec.activity),
+                "binary": spec.binary,
+                "found": path is not None or spec.binary is None,
+                "path": path,
+                "needs": list(spec.needs),
+                "source": spec.source,
+                "summary": spec.summary,
+            }
+        )
+    if args.json:
+        print(json.dumps({"plugins": rows, "problems": registry.problems}, indent=2))
+        return 0
+    print(f"{'NAME':<14} {'KIND':<10} {'ACTIVITY':<9} {'READY':<6} {'SOURCE':<12} SUMMARY")
+    for r in rows:
+        ready = "yes" if r["found"] else "no"
+        print(
+            f"{r['name']:<14} {r['kind']:<10} {r['activity']:<9} {ready:<6} "
+            f"{r['source']:<12} {r['summary']}"
+        )
+        if not r["found"]:
+            print(f"{'':<14} needs the program {r['binary']!r}: see reconkit doctor")
+    for problem in registry.problems:
+        print(f"warning: {problem}", file=sys.stderr)
+    print(
+        "\nactivity: passive < scan < active. A scope allows up to scan unless it says "
+        "otherwise ('@activity active')."
+    )
+    return 0
 
 
 def _cmd_doctor(args: argparse.Namespace) -> int:
@@ -972,6 +1017,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="record the network path to each host (for the map; slower)",
     )
     tuning.add_argument(
+        "--scanner",
+        action="append",
+        metavar="NAME",
+        help="scanner plugin to use, repeatable (default: nmap; see reconkit plugins)",
+    )
+    tuning.add_argument(
+        "--check",
+        action="append",
+        metavar="NAME",
+        help="check plugin to run on what was found, repeatable (e.g. nuclei)",
+    )
+    tuning.add_argument(
+        "--discoverer",
+        action="append",
+        metavar="NAME",
+        help="discovery plugin to find names with, repeatable (default with --discover: subfinder)",
+    )
+    tuning.add_argument(
         "--discover",
         action="store_true",
         help="first find the names under the target domain (subfinder; needs *.domain "
@@ -1082,6 +1145,10 @@ def build_parser() -> argparse.ArgumentParser:
     delete.add_argument("--yes", action="store_true", help="confirm: the run cannot be restored")
     delete.add_argument("--operator", help="who deletes it (default: user@host)")
     delete.set_defaults(func=_cmd_delete)
+
+    plugins_cmd = sub.add_parser("plugins", help="list the scanner, check and discovery plugins")
+    plugins_cmd.add_argument("--json", action="store_true", help="machine-readable output")
+    plugins_cmd.set_defaults(func=_cmd_plugins)
 
     doctor_cmd = sub.add_parser(
         "doctor", help="check the tools, rights and data this machine scans with"

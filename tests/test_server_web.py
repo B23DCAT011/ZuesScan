@@ -57,7 +57,7 @@ def _lab(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("reconkit.scope.resolve_ipv4", lab_resolver)
     monkeypatch.setattr("reconkit.scope.resolve_addresses", lab_resolver)
     fake = FakePlugin([lab_asset(VSFTPD)])
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: fake)
+    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", lambda **_: fake)
 
 
 class App:

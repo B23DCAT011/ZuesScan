@@ -27,7 +27,7 @@ from reconkit.cve import CveSource
 from reconkit.plugins.base import CheckPlugin, DiscoveryPlugin, ScanError, ScannerPlugin
 from reconkit.profiles import ScanProfile
 from reconkit.schema import Asset, Confidence, Finding, RawOutput, ScanTarget
-from reconkit.scope import Resolver, Scope, ScopeError
+from reconkit.scope import Activity, Resolver, Scope, ScopeError
 
 log = logging.getLogger(__name__)
 
@@ -143,6 +143,7 @@ class Orchestrator:
         # 1. Safety gate: refuse anything outside the authorised scope, and pin down
         #    the exact addresses to scan (names are resolved here, once).
         self.scope.check_time(self.clock())  # expired, or outside the agreed hours?
+        self.scope.check_activity(self.activities())  # exploitation checks authorised?
         notes: list[str] = []
         raw_outputs: list[RawOutput] = []
         discovered_versions: dict[str, str | None] = {}
@@ -399,6 +400,22 @@ class Orchestrator:
         )
         notes += _summarise_skipped(skipped)
         return plan
+
+    def activities(self) -> list[tuple[str, Activity]]:
+        """What each requested plugin does to a target, as it declares (`activity`).
+
+        A plugin that does not say is assumed to go as far as its kind can: a scanner
+        scans, a discovery plugin scans (it may query the target's DNS), and a check
+        is active — an undeclared check must not slip past `@activity`.
+        """
+        declared: list[tuple[str, Activity]] = []
+        for kind, default in (
+            (self.plugins, Activity.SCAN),
+            (self.discovery, Activity.SCAN),
+            (self.checks, Activity.ACTIVE),
+        ):
+            declared += [(p.name, getattr(p, "activity", default)) for p in kind]
+        return declared
 
     def _profile_record(self) -> dict[str, Any]:
         """What every run records about how and under which authorisation it ran."""

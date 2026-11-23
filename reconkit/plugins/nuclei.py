@@ -59,6 +59,7 @@ from urllib.parse import urlsplit
 from reconkit.plugins.base import ScanError, ScanResult
 from reconkit.profiles import BUILTIN, DEFAULT_PROFILE, ScanProfile
 from reconkit.schema import Asset, Confidence, Finding, RawOutput, ScanTarget, Service, Severity
+from reconkit.scope import Activity
 
 EXCLUDED_TAGS = ("dos", "fuzz", "intrusive", "bruteforce")
 EXCLUDED_SEVERITIES = ("info",)
@@ -116,6 +117,7 @@ class NucleiPlugin:
     """Check plugin backed by the `nuclei` binary."""
 
     name = "nuclei"
+    activity = Activity.ACTIVE  # sends exploitation checks
 
     def __init__(
         self,

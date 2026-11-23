@@ -41,6 +41,19 @@ pytest
 pip install -e ".[dev,server,server-test]"   # thêm test của dịch vụ chạy nền (Redis giả trong RAM)
 ```
 
+## Plugin: thêm / bớt công cụ
+
+```bash
+reconkit plugins                                   # plugin nào có, loại gì, mức chủ động, sẵn sàng chưa
+reconkit scan 10.0.0.0/24 --scope scope.txt --check nuclei --check exposed-git
+pip install ./examples/reconkit-exposed-git        # thêm một plugin = cài một gói Python
+```
+
+nmap, nuclei, subfinder, kiểm tra gói qua SSH là plugin dựng sẵn; công cụ khác thêm bằng một gói
+Python khai báo entry point `reconkit.plugins` — không sửa ReconKit. Mỗi plugin khai **mức chủ
+động** (`passive` / `scan` / `active`) và file scope quyết định được tới đâu (`@activity`).
+Hướng dẫn viết plugin, bộ kiểm tra hợp đồng và ví dụ: [`docs/PLUGINS.md`](docs/PLUGINS.md).
+
 ## Kiểm tra máy: `reconkit doctor`
 
 Trước khi quét trên một máy mới, `reconkit doctor` cho biết máy có gì, thiếu gì và **lệnh cài
@@ -224,8 +237,15 @@ File scope có thể ghi điều khoản của giấy phép, ReconKit sẽ tuân
 @engagement PT-2026-014, ký 2026-11-01 với ACME IT   # ghi vào mỗi run
 @expires 2026-12-31 +07:00                           # sau ngày này: từ chối quét
 @window Mon-Fri 22:00-06:00 +07:00                   # chỉ quét trong khung giờ này
+@activity active                                     # cho phép kiểm tra khai thác (nuclei)
 10.0.0.0/24
 ```
+
+`@activity` là mức chủ động tối đa giấy phép cho phép: `passive` (chỉ hỏi nguồn công khai),
+`scan` (quét cổng, nhận diện dịch vụ — **mặc định**), `active` (gửi request khai thác: nuclei).
+Thiếu dòng này mà chạy `--nuclei` thì bị **từ chối trước khi gửi gói tin nào** (mã thoát 3) và
+lần từ chối được ghi vào audit trail: được khai thác hay không là điều khoản của giấy phép,
+không phải một cờ dòng lệnh.
 
 Mỗi run lưu người chạy (`--operator`, mặc định `user@máy`), engagement, đường dẫn + SHA-256 của
 file scope (và nội dung của nó), cùng danh sách địa chỉ đã được duyệt. Mọi lần quét, mọi lần bị

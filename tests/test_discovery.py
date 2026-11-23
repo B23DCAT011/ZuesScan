@@ -227,10 +227,10 @@ def test_cli_discover(
 ) -> None:
     monkeypatch.setattr("reconkit.scope.resolve_addresses", DNS)
     monkeypatch.setattr(
-        "reconkit.scanning.SubfinderPlugin", lambda **_: FakeDiscovery(["api.example.com"])
+        "reconkit.plugins.registry.SubfinderPlugin", lambda **_: FakeDiscovery(["api.example.com"])
     )
     asset = Asset(host="10.0.0.5", ip="10.0.0.5", services=[Service(port=443, name="https")])
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: FakePlugin([asset]))
+    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", lambda **_: FakePlugin([asset]))
     scope = tmp_path / "scope.txt"
     scope.write_text("example.com\n*.example.com\n10.0.0.0/24\n", encoding="utf-8")
     argv = ["scan", "example.com", "--discover", "--scope", str(scope), "--db", str(tmp_path / "d")]

@@ -1,6 +1,7 @@
 # ReconKit lab: deliberately vulnerable containers on two isolated Docker networks
 # (lab/compose.lab.yaml). Nothing outside these two ranges may be scanned.
 @engagement LAB-DEMO, ReconKit lab on isolated internal Docker networks
+@activity active   # the lab exists to be exploited: nuclei may confirm its flaws
 10.66.1.0/24
 10.66.2.0/24
 !10.66.1.0/28   # the workers' own addresses (see ip_range in compose.lab.yaml)

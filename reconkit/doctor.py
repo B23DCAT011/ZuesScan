@@ -397,8 +397,34 @@ def gather(config: str | None = None, cve_cache: str = "reconkit-cve.db") -> lis
         except ImportError:
             missing.append(module)
     checks.append(check_server_extra(missing))
+    checks += check_plugins()
     if config:
         checks += check_service(config)
+    return checks
+
+
+def check_plugins() -> list[Check]:
+    """Plugins from installed packages: loadable, and is the program they run here?"""
+    from reconkit.plugins import registry
+
+    loaded = registry.load()
+    checks = [Check("plugins", ERROR, problem) for problem in loaded.problems]
+    for spec in loaded.plugins.values():
+        if spec.source == "built-in":
+            continue  # checked one by one above
+        if spec.binary and shutil.which(spec.binary) is None:
+            checks.append(
+                Check(
+                    f"plugin {spec.name}",
+                    MISSING,
+                    f"needs the program {spec.binary!r} (from {spec.source})",
+                    f"install {spec.binary}, see the documentation of {spec.source}",
+                )
+            )
+        else:
+            checks.append(
+                Check(f"plugin {spec.name}", OK, f"{spec.kind}, {spec.activity} ({spec.source})")
+            )
     return checks
 
 

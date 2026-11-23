@@ -34,6 +34,7 @@ from reconkit import debian
 from reconkit.cve.cache import CveCache
 from reconkit.plugins.base import ScanError, ScanResult
 from reconkit.schema import Asset, Confidence, Finding, RawOutput, ScanTarget, Severity
+from reconkit.scope import Activity
 
 _URGENCY = {
     "high": Severity.HIGH,
@@ -102,6 +103,7 @@ class SshPackagesPlugin:
     """Check plugin: logs in with SSH and compares installed packages with the tracker."""
 
     name = "ssh-packages"
+    activity = Activity.SCAN  # logs in read-only
 
     def __init__(
         self, credentials: list[SshCredential], cache: CveCache, timeout: int = 120
