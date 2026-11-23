@@ -7,6 +7,8 @@ target by its `name`; it never brings its own address, scope file or options.
     [service]
     db = "/data/reconkit.db"
     cve_cache = "/data/reconkit-cve.db"    # optional: NVD data for the CVE stage
+    nuclei_templates = "/opt/nuclei-templates"   # optional (the image sets it already)
+    subfinder_config = "/config/subfinder.yaml"  # optional: API keys of subfinder's sources
     redis_url = "redis://redis:6379/0"
     queue = "reconkit"
 
@@ -23,6 +25,7 @@ target by its `name`; it never brings its own address, scope file or options.
     every = "24h"                  # optional: scheduled scan (m, h or d)
     engagement = "PT-2026-014"
     nuclei = false
+    discover_limit = 1000          # with discover = true: names considered at most
 
     [notify]
     webhook = "https://hooks.example.com/..."   # optional; Slack-compatible {"text": ...}
@@ -65,6 +68,7 @@ class Target:
     discover: bool = False
     credentials: str | None = None
     ipv4_only: bool = False
+    discover_limit: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +84,8 @@ class ServiceConfig:
     redis_url: str = "redis://localhost:6379/0"
     queue: str = "reconkit"
     cve_cache: str | None = None
+    nuclei_templates: str | None = None
+    subfinder_config: str | None = None
     tokens: tuple[Token, ...] = ()
     targets: dict[str, Target] = field(default_factory=dict)
     notify: Notify = Notify()
@@ -117,7 +123,11 @@ def load_config(path: str | Path) -> ServiceConfig:
         raise ConfigError(f"cannot read service config {path}: {exc}") from None
     _only(data, {"service", "tokens", "targets", "notify"}, str(path))
     service = data.get("service") or {}
-    _only(service, {"db", "cve_cache", "redis_url", "queue"}, "[service]")
+    _only(
+        service,
+        {"db", "cve_cache", "redis_url", "queue", "nuclei_templates", "subfinder_config"},
+        "[service]",
+    )
     if "db" not in service:
         raise ConfigError(f"{path}: [service] needs db = <path of the database>")
     tokens = tuple(_token(t, i) for i, t in enumerate(data.get("tokens", []), start=1))
@@ -142,6 +152,8 @@ def load_config(path: str | Path) -> ServiceConfig:
         redis_url=str(service.get("redis_url", "redis://localhost:6379/0")),
         queue=str(service.get("queue", "reconkit")),
         cve_cache=service.get("cve_cache"),
+        nuclei_templates=service.get("nuclei_templates"),
+        subfinder_config=service.get("subfinder_config"),
         tokens=tokens,
         targets=targets,
         notify=Notify(webhook=webhook, min_priority=notify.get("min_priority", "P2")),
@@ -189,6 +201,7 @@ def _target(raw: dict[str, Any], i: int) -> Target:
         "discover",
         "credentials",
         "ipv4_only",
+        "discover_limit",
     }
     _only(raw, allowed, where)
     try:
@@ -211,4 +224,13 @@ def _target(raw: dict[str, Any], i: int) -> Target:
         discover=bool(raw.get("discover", False)),
         credentials=raw.get("credentials"),
         ipv4_only=bool(raw.get("ipv4_only", False)),
+        discover_limit=_positive(raw.get("discover_limit"), f"{where} ({name}) discover_limit"),
     )
+
+
+def _positive(value: object, what: str) -> int | None:
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise ConfigError(f"{what} must be a whole number of at least 1")
+    return value

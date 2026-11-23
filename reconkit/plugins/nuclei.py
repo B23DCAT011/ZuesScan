@@ -1,4 +1,4 @@
-"""nuclei adapter — template checks against the web services a scan found.
+"""nuclei adapter — template checks against the services a scan found.
 
 nuclei (ProjectDiscovery) sends requests described by community templates and reports
 the ones whose response matches: a CVE that answers like the vulnerable version, an
@@ -8,9 +8,13 @@ exposed admin panel, a misconfiguration. Unlike a version match, a hit is an
 It is a **check** plugin: it runs after the port scan, on what the scan found
 (`check(plan, assets)`), never on targets of its own:
 
-* targets are URLs built from the open HTTP(S) services, always with the **address**
-  the scope guard approved (`http://10.0.0.5:8080`), never a name nuclei would resolve
-  again;
+* web services become URLs built with the **address** the scope guard approved
+  (`http://10.0.0.5:8080`), never a name nuclei would resolve again;
+* other open TCP services become `address:port`, checked in a run of their own with
+  only the protocols that apply (`-pt javascript,tcp,ssl`: an SSH server vulnerable to
+  Terrapin, a Redis without a password). Measured on the lab: the same SSH port fed to
+  every template took 147 s for the same single match that 163 network templates found
+  at once - most templates are HTTP ones, which an SSH port can only time out on;
 * a virtual host (a name pointing at that address) is tested by sending its name in
   the `Host` header and TLS SNI — one nuclei run per name — so a site is checked as
   itself while the connection still goes to the approved address.
@@ -21,16 +25,33 @@ Safe defaults, because a scan must not harm or leak:
   ProjectDiscovery server, sending engagement data outside.
 * `-etags dos,fuzz,intrusive,bruteforce`: no template that floods, fuzzes or tries
   passwords; `-rl`: requests per second capped (the profile's max rate, else 50).
+  Code, headless, file and DAST templates are never enabled (`-code`, `-headless`,
+  `-lfa`, `-dast` are not passed).
+* `-dut`: only templates whose signature checks out (ProjectDiscovery signs its
+  templates): an edited or planted template does not run.
+* `-es info`: no informational templates (technology detection, missing headers):
+  ReconKit records weaknesses, not inventory trivia.
 * `-duc`: no update check from inside a scan.
+
+Templates: given a directory (`templates`, e.g. the copy pinned in the Docker image),
+nuclei runs exactly those, offline, from a fresh configuration directory of its own for
+each run — nothing carries over between scans, and the templates' version (from a
+`.reconkit-version` file next to them) is recorded with the run. Without one, nuclei
+uses its own installation and configuration, as on a workstation.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
+import tempfile
+import time
 from collections import defaultdict
+from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -39,7 +60,12 @@ from reconkit.profiles import BUILTIN, DEFAULT_PROFILE, ScanProfile
 from reconkit.schema import Asset, Confidence, Finding, RawOutput, ScanTarget, Service, Severity
 
 EXCLUDED_TAGS = ("dos", "fuzz", "intrusive", "bruteforce")
+EXCLUDED_SEVERITIES = ("info",)
+NETWORK_PROTOCOLS = ("javascript", "tcp", "ssl")  # nuclei's -pt names for non-web checks
 DEFAULT_RATE = 50
+# Where the Docker image (or an administrator) says the pinned templates are.
+TEMPLATES_ENV = "RECONKIT_NUCLEI_TEMPLATES"
+VERSION_FILE = ".reconkit-version"
 
 _SEVERITY = {
     "info": Severity.INFO,
@@ -49,6 +75,20 @@ _SEVERITY = {
     "critical": Severity.CRITICAL,
 }
 _TLS_PORTS = {443, 8443, 9443, 4443}
+
+
+def default_templates() -> str | None:
+    """The templates directory named by the environment, if any."""
+    return os.environ.get(TEMPLATES_ENV) or None
+
+
+def templates_version(directory: str) -> str | None:
+    """The version recorded next to a templates directory (e.g. "10.5.2")."""
+    try:
+        text = Path(directory, VERSION_FILE).read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return text.lstrip("v") or None
 
 
 def web_url(ip: str, service: Service) -> str | None:
@@ -61,35 +101,60 @@ def web_url(ip: str, service: Service) -> str | None:
     return f"{'https' if tls else 'http'}://{host}:{service.port}"
 
 
+def network_target(ip: str, service: Service) -> str | None:
+    """`address:port` of an open TCP service that is not a web service."""
+    if service.protocol != "tcp" or web_url(ip, service) is not None:
+        return None
+    if service.state not in (None, "open"):
+        return None
+    host = f"[{ip}]" if ":" in ip else ip
+    return f"{host}:{service.port}"
+
+
 class NucleiPlugin:
     """Check plugin backed by the `nuclei` binary."""
 
     name = "nuclei"
 
-    def __init__(self, profile: ScanProfile | None = None, timeout: int | None = None) -> None:
+    def __init__(
+        self,
+        profile: ScanProfile | None = None,
+        timeout: int | None = None,
+        templates: str | None = None,
+    ) -> None:
         self.profile = profile or BUILTIN[DEFAULT_PROFILE]
-        self.timeout = timeout or self.profile.timeout
+        self.timeout = timeout or self.profile.timeout  # for all of this check's runs
         self.rate = self.profile.max_rate or DEFAULT_RATE
+        self.templates = templates
+        self.clock: Callable[[], float] = time.monotonic  # replaceable in tests
 
     def is_available(self) -> bool:
         return shutil.which("nuclei") is not None
 
     def version(self) -> str | None:
+        """The engine's version, and the templates' when they are pinned:
+        "3.11.1 (templates 10.5.2)". Two runs are comparable only with both."""
         try:
-            proc = subprocess.run(
-                ["nuclei", "-version"],
-                capture_output=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=15,
-                check=False,
-            )
+            with tempfile.TemporaryDirectory(prefix="reconkit-nuclei-") as home:
+                proc = subprocess.run(
+                    ["nuclei", "-version"],
+                    capture_output=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=15,
+                    check=False,
+                    env=self._env(home) if self.templates is not None else None,
+                )
         except (OSError, subprocess.SubprocessError):
             return None
         match = re.search(r"Engine Version:\s*v?(\d+(?:\.\d+)+)", proc.stderr + proc.stdout)
-        return match.group(1) if match else None
+        if match is None:
+            return None
+        if self.templates is None:
+            return match.group(1)
+        return f"{match.group(1)} (templates {templates_version(self.templates) or 'unknown'})"
 
-    def command(self, vhost: str | None) -> list[str]:
+    def command(self, vhost: str | None, network: bool = False) -> list[str]:
         command = [
             "nuclei",
             "-jsonl",
@@ -97,8 +162,11 @@ class NucleiPlugin:
             "-nc",
             "-duc",
             "-ni",
+            "-dut",
             "-etags",
             ",".join(EXCLUDED_TAGS),
+            "-es",
+            ",".join(EXCLUDED_SEVERITIES),
             "-rl",
             str(self.rate),
             "-timeout",
@@ -106,24 +174,56 @@ class NucleiPlugin:
             "-retries",
             "1",
         ]
+        if self.templates is not None:
+            command += ["-t", self.templates]
+        if network:
+            command += ["-pt", ",".join(NETWORK_PROTOCOLS)]
         if vhost:
             command += ["-H", f"Host: {vhost}", "-sni", vhost]
         return command
 
     def check(self, plan: ScanTarget, assets: list[Asset]) -> ScanResult:
-        """Run nuclei on the web services of `assets`; their findings, as assets."""
+        """Run nuclei on the services of `assets`; their findings, as assets.
+
+        The whole check shares one time budget (`timeout`). If it runs out, the findings
+        so far are kept and the result is marked incomplete; the remaining runs (other
+        virtual hosts) are skipped and listed.
+        """
         if not self.is_available():
             raise ScanError("nuclei is not installed or not on PATH", plugin=self.name)
+        if self.templates is not None and not Path(self.templates).is_dir():
+            raise ScanError(f"nuclei templates not found: {self.templates}", plugin=self.name)
         groups = self.targets(assets)
         result = ScanResult()
         if not groups:
-            result.notes.append("no web service to check")
+            result.notes.append("no service to check")
             return result
         found: dict[str, Asset] = {}
-        for vhost, urls in groups.items():
-            raw = self._run(vhost, urls)
+        deadline = self.clock() + self.timeout
+        runs = [
+            (vhost, part, network)
+            for vhost, inputs in groups.items()
+            for network, part in (
+                (False, [i for i in inputs if "://" in i]),
+                (True, [i for i in inputs if "://" not in i]),
+            )
+            if part
+        ]
+        for vhost, inputs, network in runs:
+            left = int(deadline - self.clock())
+            if left < 1:
+                result.incomplete = True
+                result.notes.append(f"not checked, out of time: {_label(vhost, inputs)}")
+                continue
+            raw, finished = self._run(self.command(vhost, network), inputs, left)
             result.raw.append(raw)
-            for ip, finding in self.parse_jsonl(raw.content, vhost):
+            if not finished:
+                result.incomplete = True
+                result.notes.append(
+                    f"stopped after its time limit ({self.timeout}s) while checking "
+                    f"{_label(vhost, inputs)}: findings so far are kept"
+                )
+            for ip, finding in self.parse_jsonl(raw.content, vhost if not network else None):
                 asset = found.setdefault(ip, Asset(host=ip, ip=ip))
                 asset.findings.append(finding)
         # Tie each finding to the service the scan found on that port.
@@ -137,7 +237,11 @@ class NucleiPlugin:
 
     @staticmethod
     def targets(assets: list[Asset]) -> dict[str | None, list[str]]:
-        """URLs to check, grouped by the virtual host name to send (None: by address)."""
+        """Inputs to check, grouped by the virtual host name to send (None: by address).
+
+        Web services are checked once per name pointing at the host (as that site);
+        other services have no notion of a site and are checked once, by address.
+        """
         groups: dict[str | None, list[str]] = defaultdict(list)
         for asset in assets:
             if not asset.ip:
@@ -146,38 +250,69 @@ class NucleiPlugin:
             vhosts: list[str | None] = list(asset.names) or [None]
             for vhost in vhosts:
                 groups[vhost] += urls
+            groups[None] += [t for t in (network_target(asset.ip, s) for s in asset.services) if t]
         return {k: v for k, v in groups.items() if v}
 
-    def _run(self, vhost: str | None, urls: list[str]) -> RawOutput:
-        command = self.command(vhost)
-        try:
-            proc = subprocess.run(
-                command,
-                input="\n".join(urls) + "\n",
-                capture_output=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=self.timeout,
-                check=True,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise ScanError(f"nuclei timed out after {self.timeout}s", plugin=self.name) from exc
-        except subprocess.CalledProcessError as exc:
-            raise ScanError(
-                f"nuclei exited with code {exc.returncode}",
-                plugin=self.name,
-                stderr=(exc.stderr or "").strip() or None,
-            ) from exc
-        except OSError as exc:
-            raise ScanError(f"could not start nuclei: {exc}", plugin=self.name) from exc
-        # The URL list is part of what was run: keep it with the command.
-        return RawOutput(
+    def _env(self, home: str | None) -> dict[str, str] | None:
+        """nuclei's environment: its own fresh home and configuration when templates are
+        pinned (nothing read from or left in the user's), else the caller's."""
+        if home is None:
+            return None
+        return {
+            **os.environ,
+            "HOME": home,
+            "USERPROFILE": home,  # Windows
+            "NUCLEI_CONFIG_DIR": str(Path(home, "config")),
+        }
+
+    def _run(self, command: list[str], inputs: list[str], timeout: int) -> tuple[RawOutput, bool]:
+        """One nuclei run; its output and whether it finished in time."""
+        with tempfile.TemporaryDirectory(prefix="reconkit-nuclei-") as home:
+            env = None
+            if self.templates is not None:
+                config = Path(home, "config")
+                config.mkdir()
+                # The templates' default exclusions (noisy or risky ones), as nuclei would
+                # install them next to its own configuration.
+                ignore = Path(self.templates, ".nuclei-ignore")
+                if ignore.is_file():
+                    shutil.copyfile(ignore, config / ".nuclei-ignore")
+                env = self._env(home)
+            finished = True
+            try:
+                proc = subprocess.run(
+                    command,
+                    input="\n".join(inputs) + "\n",
+                    capture_output=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=timeout,
+                    check=True,
+                    env=env,
+                )
+                stdout, stderr = proc.stdout, proc.stderr
+            except subprocess.TimeoutExpired as exc:
+                # nuclei prints each match as it finds it: what came before the time
+                # limit is real, only incomplete.
+                finished = False
+                stdout, stderr = _text(exc.stdout), _text(exc.stderr)
+            except subprocess.CalledProcessError as exc:
+                raise ScanError(
+                    f"nuclei exited with code {exc.returncode}",
+                    plugin=self.name,
+                    stderr=(exc.stderr or "").strip() or None,
+                ) from exc
+            except OSError as exc:
+                raise ScanError(f"could not start nuclei: {exc}", plugin=self.name) from exc
+        # The input list is part of what was run: keep it with the command.
+        raw = RawOutput(
             plugin=self.name,
             format="nuclei-jsonl",
-            command=(*command, "<", *urls),
-            content=proc.stdout,
-            stderr=proc.stderr.strip(),
+            command=(*command, "<", *inputs),
+            content=stdout,
+            stderr=stderr.strip(),
         )
+        return raw, finished
 
     @staticmethod
     def parse_jsonl(text: str, vhost: str | None = None) -> list[tuple[str, Finding]]:
@@ -194,6 +329,17 @@ class NucleiPlugin:
             if parsed is not None:
                 results.append(parsed)
         return results
+
+
+def _label(vhost: str | None, inputs: list[str]) -> str:
+    what = ", ".join(inputs[:3]) + (f" and {len(inputs) - 3} more" if len(inputs) > 3 else "")
+    return f"{what} as {vhost}" if vhost else what
+
+
+def _text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    return value.decode("utf-8", "replace") if isinstance(value, bytes) else value
 
 
 def _finding(hit: dict[str, Any], vhost: str | None) -> tuple[str, Finding] | None:

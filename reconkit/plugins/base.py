@@ -61,6 +61,9 @@ class ScanResult:
     # CVEs shown NOT to affect a host (address -> CVE ids), e.g. because an installed
     # package carries the fix: version-based guesses for them are withdrawn.
     cleared: dict[str, set[str]] = field(default_factory=dict)
+    # The tool stopped before it finished (its time limit): what it found so far is
+    # kept, and the run is marked partial - absence of a finding proves nothing.
+    incomplete: bool = False
 
 
 @runtime_checkable

@@ -31,6 +31,8 @@ from reconkit.scope import Resolver, Scope, ScopeError
 
 log = logging.getLogger(__name__)
 
+DISCOVER_LIMIT = 1000
+
 
 class NoPluginAvailableError(Exception):
     """None of the configured scanner plugins can run on this machine."""
@@ -114,6 +116,7 @@ class Orchestrator:
         clock: Callable[[], datetime] | None = None,
         discovery: list[DiscoveryPlugin] | None = None,
         checks: list[CheckPlugin] | None = None,
+        discover_limit: int = DISCOVER_LIMIT,
     ) -> None:
         self.plugins = plugins
         self.scope = scope
@@ -130,6 +133,9 @@ class Orchestrator:
         # Name-finding plugins (subfinder): when set, a domain target is first expanded
         # into the names found under it, each checked against the scope.
         self.discovery = discovery or []
+        # At most this many discovered names are resolved and considered: sources can
+        # return tens of thousands, mostly junk.
+        self.discover_limit = discover_limit
         # Plugins that test what the scan found (nuclei), after the scanners.
         self.checks = checks or []
 
@@ -211,13 +217,30 @@ class Orchestrator:
         # 3b. Checks (nuclei): test what was found. Before the CVE stage, so that an
         #     observed issue is kept over the same CVE inferred from a version.
         cleared: dict[str, set[str]] = {}
+        degraded = False  # a check failed or ran out of time: the run is partial
         for check in self.checks:
             if not check.is_available():
                 skipped.append(check.name)
                 continue
             tool_versions[check.name] = check.version()
             clock = time.monotonic()
-            result = check.check(plan, assets)
+            try:
+                result = check.check(plan, assets)
+            except ScanError as exc:
+                # The port scan already succeeded: a broken check must not throw its
+                # results away. The run is kept as partial, with what went wrong.
+                degraded = True
+                notes.append(f"{check.name} failed, its checks are missing: {exc}")
+                if exc.output is not None:
+                    raw_outputs.append(exc.output)
+                log.warning(
+                    "%s failed: %s",
+                    check.name,
+                    exc,
+                    extra={"event": "check.failed", "plugin": check.name},
+                )
+                continue
+            degraded = degraded or result.incomplete
             raw_outputs.extend(result.raw)
             notes.extend(f"{check.name}: {note}" for note in result.notes)
             for ip, cves in result.cleared.items():
@@ -275,7 +298,11 @@ class Orchestrator:
             for finding in asset.findings:
                 finding.asset = asset.host
                 finding.ip = asset.ip
-                unique.setdefault(finding.compute_fingerprint(), finding)
+                key = finding.compute_fingerprint()
+                if key in unique:
+                    _merge_finding(unique[key], finding)
+                else:
+                    unique[key] = finding
             asset.findings = list(unique.values())
 
         return ScanRun(
@@ -283,7 +310,7 @@ class Orchestrator:
             started_at=started,
             finished_at=now(),
             assets=assets,
-            status=RunStatus.PARTIAL if skipped else RunStatus.COMPLETED,
+            status=RunStatus.PARTIAL if skipped or degraded else RunStatus.COMPLETED,
             tool_versions=tool_versions,
             skipped_plugins=skipped,
             plan=plan,
@@ -353,15 +380,24 @@ class Orchestrator:
             notes.extend(f"{plugin.name}: {n}" for n in result.notes)
             found += result.names
             log.info("%s: %d name(s) under %s", plugin.name, len(result.names), domain)
+        # The names closest to the domain first (api.example.com before
+        # a.b.c.example.com): real hosts are mostly there, junk mostly deep.
+        unique = sorted(set(found), key=lambda n: (n.count("."), len(n), n))
+        considered = unique[: self.discover_limit]
+        if len(unique) > len(considered):
+            notes.append(
+                f"discovery: {len(unique)} name(s) found, only the {len(considered)} closest "
+                f"to {domain} considered (limit {self.discover_limit}); all are in the raw output"
+            )
         plan, skipped = self.scope.plan_discovered(
-            domain, found, self.resolver, ipv4_only=self.ipv4_only
+            domain, considered, self.resolver, ipv4_only=self.ipv4_only
         )
         names = sorted({n for n, _ in plan.names})
         notes.append(
-            f"discovery: {len(set(found))} name(s) found under {domain}; "
+            f"discovery: {len(unique)} name(s) found under {domain}; "
             f"{len(names)} in scope and scanned"
         )
-        notes += [f"not scanned: {name}: {why}" for name, why in skipped]
+        notes += _summarise_skipped(skipped)
         return plan
 
     def _profile_record(self) -> dict[str, Any]:
@@ -389,6 +425,47 @@ class Orchestrator:
 def now() -> str:
     """The current time, as stored in a run: ISO 8601, UTC."""
     return datetime.now(UTC).isoformat()
+
+
+def _summarise_skipped(skipped: list[tuple[str, str]], shown: int = 20) -> list[str]:
+    """Notes about the names not scanned: the first few with their reason, then a count
+    (one note per name would bury the run under thousands of lines)."""
+    notes = [f"not scanned: {name}: {why}" for name, why in skipped[:shown]]
+    if len(skipped) > shown:
+        notes.append(
+            f"not scanned: {len(skipped) - shown} more name(s), for the same kinds of reason"
+        )
+    return notes
+
+
+def _merge_finding(kept: Finding, other: Finding) -> None:
+    """Fold a second report of the same issue into the first one kept.
+
+    The first one wins on identity and confidence (checks run before the CVE stage, so
+    an observed issue is kept over the same CVE inferred from a version). Facts about
+    the vulnerability itself come from the vulnerability database when one of the two
+    is a database match (no `rule_id`): its CVSS, KEV date and EPSS are the curated
+    ones, a template's are copies made when it was written. Nothing known is lost.
+    """
+    curated = other if other.rule_id is None and kept.rule_id is not None else None
+    if curated is not None:
+        kept.severity = curated.severity
+        kept.cvss_score = curated.cvss_score if curated.cvss_score is not None else kept.cvss_score
+        kept.cvss_vector = curated.cvss_vector or kept.cvss_vector
+        kept.cwe = curated.cwe or kept.cwe
+        kept.kev_added = curated.kev_added or kept.kev_added
+        kept.epss = curated.epss if curated.epss is not None else kept.epss
+    else:
+        kept.cvss_score = kept.cvss_score if kept.cvss_score is not None else other.cvss_score
+        kept.cvss_vector = kept.cvss_vector or other.cvss_vector
+        kept.cwe = kept.cwe or other.cwe
+        kept.kev_added = kept.kev_added or other.kev_added
+        kept.epss = kept.epss if kept.epss is not None else other.epss
+    kept.description = kept.description or other.description
+    if other.evidence and other.evidence not in kept.evidence:
+        kept.evidence = (
+            f"{kept.evidence}\nAlso: {other.evidence}" if kept.evidence else other.evidence
+        )
 
 
 def _same_host(a: Asset, b: Asset) -> bool:
