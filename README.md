@@ -52,13 +52,37 @@ reconkit scan 10.0.0.0/24 --scope scope.txt        # quét cả dải, tự lo�
 reconkit scan 10.0.0.0/24 --scope scope.txt --traceroute   # ghi cả đường đi tới từng host (profile full bật sẵn)
 ```
 
-### Kiểm tra web bằng nuclei (chủ động)
+### Kiểm tra chủ động bằng nuclei
 
-`--nuclei` chạy template nuclei trên các dịch vụ HTTP(S) mà nmap tìm được. Đây là kiểm tra
-**chủ động** (gửi request khai thác an toàn), chỉ dùng khi giấy phép cho phép. Mặc định: không
-dùng interactsh (không để mục tiêu gọi ra máy chủ công cộng), bỏ các template `dos`, `fuzz`,
-`intrusive`, `bruteforce`, giới hạn số request/giây theo profile. URL luôn dùng địa chỉ đã
-duyệt; tên miền (vhost) được gửi qua Host header + SNI. Cần cài `nuclei`.
+`--nuclei` chạy template nuclei trên các dịch vụ mà nmap tìm được. Đây là kiểm tra **chủ động**
+(gửi request khai thác an toàn), chỉ dùng khi giấy phép cho phép. Lỗi nuclei thấy được là
+`confirmed` — mạnh hơn suy đoán theo phiên bản.
+
+```bash
+reconkit scan 10.0.0.0/24 --scope scope.txt --nuclei
+reconkit scan 10.0.0.0/24 --scope scope.txt --nuclei --nuclei-templates /opt/nuclei-templates
+```
+
+- **Web** (HTTP/HTTPS) được kiểm bằng URL theo **địa chỉ** đã duyệt; tên miền (vhost) gửi qua
+  Host header + SNI. **Dịch vụ khác** (SSH, Redis, FTP…) được kiểm bằng `địa-chỉ:cổng` trong một
+  lượt riêng chỉ với template mạng (`-pt javascript,tcp,ssl`) — vd OpenSSH dính *Terrapin*
+  (CVE-2023-48795). Đo trên lab: cho cổng SSH chạy qua mọi template mất 147 s, chỉ template mạng
+  thì tức thì, cùng kết quả.
+- **An toàn**: không interactsh (mục tiêu không gọi ra máy chủ công cộng), bỏ template `dos`,
+  `fuzz`, `intrusive`, `bruteforce`, không bật template `code` / `headless` / `file` / DAST,
+  chỉ chạy template **có chữ ký hợp lệ** của ProjectDiscovery (`-dut`: template bị sửa hay bị
+  cài thêm không chạy), bỏ mức `info` (nhận diện công nghệ, thiếu header — không phải lỗ hổng),
+  giới hạn request/giây theo `--max-rate` của profile (mặc định 50).
+- **Templates ghim**: `--nuclei-templates DIR` (hoặc biến `RECONKIT_NUCLEI_TEMPLATES`; image
+  Docker đặt sẵn) chạy đúng bộ templates đó, offline, với thư mục cấu hình mới cho mỗi lần chạy;
+  phiên bản templates được ghi cùng run (`nuclei 3.11.1 (templates 10.5.2)`). Không có thì
+  nuclei dùng cài đặt riêng của máy.
+- **Thời gian**: cả bước nuclei dùng chung giới hạn `timeout` của profile. Hết giờ thì giữ
+  những gì đã thấy, run thành `partial` kèm ghi chú (thiếu finding không chứng minh là sạch).
+  nuclei hỏng giữa chừng cũng không làm mất kết quả nmap — run `partial`.
+- Một CVE vừa được nuclei thấy vừa khớp theo phiên bản là **một** finding: giữ bản quan sát
+  (`confirmed`, bằng chứng của nuclei) nhưng lấy CVSS / KEV / EPSS từ cơ sở dữ liệu CVE, và
+  nối thêm bằng chứng theo phiên bản.
 
 ### Quét có đăng nhập (Debian)
 
@@ -124,7 +148,13 @@ Quy tắc của scope:
 - **Wildcard.** `*.example.com` cho phép mọi *tên* dưới example.com (không gồm example.com).
   `reconkit scan example.com --discover` dùng subfinder tìm subdomain (thụ động, không gửi gì
   tới mục tiêu), rồi chỉ quét những tên có mọi địa chỉ nằm trong scope; tên bị loại được ghi
-  lại kèm lý do. Cần cài `subfinder` (ProjectDiscovery).
+  lại kèm lý do (20 tên đầu, còn lại đếm gộp). Nguồn công khai có thể trả về **hàng chục nghìn**
+  tên (thử thật với `example.com`: 25.514 tên, 87% từ một bộ dữ liệu rác), nên: chỉ xét tối đa
+  `--discover-limit` tên (mặc định 1000, ưu tiên tên gần tên miền gốc), phân giải song song, và
+  bỏ tên chỉ trỏ về đúng địa chỉ của bản ghi **wildcard DNS** (`*.example.com` trả lời mọi tên).
+  API key cho các nguồn của subfinder nằm trong file provider config của subfinder:
+  `--subfinder-config FILE` (hoặc `RECONKIT_SUBFINDER_CONFIG`, hoặc file sẵn có của bạn ở
+  `~/.config/subfinder/`); không có key thì chỉ các nguồn miễn phí trả lời.
 - **IPv6 cũng vậy.** Tên được phân giải ra cả IPv4 và IPv6; địa chỉ IPv6 cũng phải có trong
   scope (vd `2001:db8::/64`), hoặc quét `--ipv4-only`. Không quét quét dải IPv6 lớn hơn /112.
 - **Deny thắng allow.** Quét một dải có chứa địa chỉ bị cấm thì địa chỉ đó được loại trừ

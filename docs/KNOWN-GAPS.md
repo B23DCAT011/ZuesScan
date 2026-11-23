@@ -349,6 +349,34 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
   - Webhook chưa ký (HMAC) nên bên nhận không xác minh được nguồn; URL webhook là bí mật — đừng
     commit `service.toml` thật.
 
+- [ ] **G24. nuclei và subfinder chạy thật: những gì đã kiểm và còn thiếu.** (Bài 8)
+  - ✅ **`feat/tool-runtime`** (đo bằng nuclei 3.11.1 + templates 10.5.2, subfinder 2.17.0 thật):
+    - check (nuclei) lỗi hoặc hết giờ **không** còn làm hỏng cả lần quét: kết quả nmap giữ lại,
+      run `partial`; hết giờ thì giữ finding đã thấy. Trước đây profile `standard` (900 s) với
+      vài web server là đủ để mất trắng kết quả.
+    - dịch vụ không phải web được kiểm (`ip:port`, chỉ template mạng); templates ghim chạy offline
+      với cấu hình riêng mỗi lần; chỉ template có chữ ký (`-dut`); bỏ mức `info`; phiên bản
+      templates ghi vào run.
+    - finding trùng (nuclei + theo phiên bản) được **gộp**: trước đây bản quan sát thắng nhưng
+      đánh rơi ngày KEV / CVSS của NVD (Apache 2.4.49 bị xếp P2 thay vì P1).
+    - discovery có giới hạn tên, phân giải song song, lọc wildcard DNS, ghi chú gộp (trước đây
+      25.514 tên = 25.514 lượt DNS tuần tự và 25.514 dòng ghi chú).
+  - Còn lại:
+    - **Không interactsh** → template phát hiện qua kênh ngoài (OAST: Log4Shell mù, SSRF mù…)
+      không chạy. Thực tế: tự dựng máy chủ interactsh trong mạng của mình (`-iserver`, `-itoken`).
+    - nuclei lưu **request/response đầy đủ** làm bằng chứng — có thể chứa dữ liệu của mục tiêu
+      (vd nội dung `/etc/passwd` khi xác nhận LFI). DB vốn là dữ liệu nhạy cảm, nhưng chưa có
+      che bớt (redaction) hay tuỳ chọn `-or`.
+    - nuclei **không thấy** lỗi thì finding theo phiên bản vẫn giữ nguyên độ tin cậy (đúng: nhiều
+      lỗi phụ thuộc cấu hình, như CVE-2021-41773 cần `Require all granted`), nhưng chưa ghi lại
+      "đã thử, không khai thác được" như một quan sát.
+    - Templates mới ra hằng ngày: bản ghim cần cập nhật định kỳ (dựng lại image). Template tự
+      viết phải được ký (`nuclei -sign`) mới chạy dưới `-dut`.
+    - Rate mặc định 50 req/s: một web server ~4 phút; dải lớn cần `max_rate` cao hơn hoặc
+      `timeout` dài hơn trong profile.
+    - subfinder chỉ thụ động (không brute-force DNS); không có API key thì ít nguồn; lọc wildcard
+      chỉ dựa trên một tên ngẫu nhiên (zone có nhiều mức wildcard có thể lọt).
+
 ## Mức 3 — Hoàn thiện sản phẩm / portfolio
 
 - [x] **G17. Chưa có CI.** Sửa: GitHub Actions chạy pytest + ruff + mypy cho mọi PR. (F1, `chore/ci`)

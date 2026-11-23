@@ -2,7 +2,7 @@
 
 Mục tiêu: một **sản phẩm chạy được thật**, đủ chuẩn để đưa vào portfolio xin việc. Không
 dùng lý do "chỉ là lab" để bỏ qua điểm yếu: chỗ nào đã nhìn ra thì sửa; đường tắt nào cố ý
-giữ tạm phải ghi vào [`docs/KNOWN-GAPS.md`](docs/KNOWN-GAPS.md) (mã `G1`…`G23`).
+giữ tạm phải ghi vào [`docs/KNOWN-GAPS.md`](docs/KNOWN-GAPS.md) (mã `G1`…`G24`).
 
 Quy trình: mỗi task = 1 nhánh (`feat/` · `fix/` · `refactor/` · `chore/` · `docs/`), chạy đủ
 pytest + ruff + mypy trước khi commit, rồi `git merge --no-ff` vào `main` và push (từ
@@ -111,3 +111,20 @@ Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây we
 - [x] `feat/lab` — `lab/`: Apache 2.4.49, OpenSSH 7.5 (DMZ) và nginx 1.20.0 sau một router NAT
       (mạng internal), hai mạng cách ly (không Internet, không chạm host); `up.sh` / `demo.sh` /
       `down.sh`; kịch bản vòng đời cho ra "fixed" và "fake fix" thật. Ảnh demo trong README (G20).
+
+## Giai đoạn 4 — Công cụ ngoài chạy thật (nuclei, subfinder)
+
+Hai plugin đã có từ giai đoạn 2 nhưng mới được test bằng output mẫu. Giai đoạn này chạy chúng
+thật (nuclei 3.11.1, templates 10.5.2, subfinder 2.17.0), sửa những gì chạy thật làm lộ ra, và
+đưa chúng vào image Docker và lab. Ghi chép: G24, Bài 8.
+
+- [x] `feat/tool-runtime` — nuclei: templates ghim chạy offline với cấu hình riêng, `-dut`, bỏ
+      `info`, dịch vụ không phải web qua `ip:port` + template mạng, chung một giới hạn thời gian,
+      hết giờ / lỗi không làm mất kết quả nmap (run `partial`), gộp finding trùng giữ dữ liệu
+      KEV/CVSS. subfinder: provider config (`--subfinder-config`), home tạm; discovery:
+      `--discover-limit`, phân giải song song, lọc wildcard DNS, ghi chú gộp.
+- [ ] `chore/docker-tools` — nuclei, subfinder, templates trong image: ghim phiên bản + SHA-256
+      từ file checksums chính thức, cập nhật bằng một lệnh.
+- [ ] `feat/lab-nuclei` — Apache trong lab khai thác được thật để nuclei xác nhận
+      CVE-2021-41773; lab bật nuclei; CI kiểm `confirmed`.
+

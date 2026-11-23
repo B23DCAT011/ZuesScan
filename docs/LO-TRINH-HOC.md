@@ -16,6 +16,7 @@ Ghi chú thiết kế ban đầu: [`GHI-CHU.md`](../GHI-CHU.md).
 | 5 | Kiến trúc: pipeline, plugin, repository, transaction, migration | orchestrator, storage | ✅ 2026-11-22 |
 | 6 | Công cụ thật (OpenVAS, Nessus, nuclei, DefectDojo) so với ReconKit | toàn dự án | ✅ 2026-11-22 |
 | 7 | Từ công cụ thành dịch vụ: hàng đợi, web an toàn, container, lab cô lập | `server/`, Docker, `lab/` | ✅ 2026-11-23 |
+| 8 | nuclei & subfinder ngoài đời thật: templates, chữ ký, OAST, wildcard DNS | `plugins/nuclei.py`, `plugins/subfinder.py` | ✅ 2026-11-23 |
 
 ---
 
@@ -385,3 +386,50 @@ ReconKit lo phần quét định kỳ có kiểm soát.
   dùng fakeredis trong process, còn kiểm tra đầu-cuối phải dùng Redis thật.
 - Trên Windows không có `fork()` / `SIGALRM`: worker chạy job trong tiến trình, hẹn giờ bằng
   luồng — ổn để phát triển, còn chạy thật thì worker nên ở Linux (container).
+
+---
+
+## Bài 8 — nuclei & subfinder ngoài đời thật
+
+**Thuật ngữ**
+
+- **Template (nuclei)**: file YAML mô tả request gửi đi và điều kiện (matcher) để coi là
+  "trúng". Có nhiều *giao thức*: `http` (~11.800 template), `javascript` / `tcp` (dịch vụ mạng:
+  SSH, Redis, SMB…), `ssl`, `dns`, `headless` (trình duyệt), `code` (chạy script trên **máy
+  quét**), `file` (đọc file trên máy quét). Loại cuối cùng nguy hiểm cho chính máy quét.
+- **Template signing**: ProjectDiscovery ký template chính thức (`# digest:` cuối file);
+  `-dut` chỉ chạy template có chữ ký hợp lệ → template bị sửa hay bị cài cắm không chạy.
+- **OAST / interactsh**: kiểm tra "mù" — gửi payload khiến mục tiêu gọi ra một máy chủ ngoài
+  (DNS/HTTP callback) để chứng minh lỗi (Log4Shell, SSRF mù). Mặc định dùng máy chủ công cộng
+  của ProjectDiscovery → dữ liệu engagement đi ra ngoài.
+- **Passive vs active recon**: subfinder hỏi *nguồn công khai* (certificate transparency, bộ dữ
+  liệu DNS, công cụ tìm kiếm), không gửi gì tới mục tiêu. Brute-force DNS / quét là chủ động.
+- **Wildcard DNS**: bản ghi `*.example.com` trả lời **mọi** tên → mọi tên "rác" đều phân giải
+  được. Cách phát hiện chuẩn: hỏi một tên ngẫu nhiên; trả lời được thì zone là wildcard.
+
+**Thực tế người ta làm thế nào**
+
+- Đội pentest / bug bounty chạy nuclei theo **tầng**: nhận diện công nghệ trước, rồi chỉ chạy
+  template hợp với công nghệ đó (`-as`, hoặc chọn theo tag), mức `info` để làm bản đồ chứ không
+  làm "lỗ hổng". Doanh nghiệp tự dựng **interactsh** nội bộ.
+- Templates là phần cập nhật nhanh nhất (hằng ngày); bản build cố định ghim phiên bản và cập
+  nhật có kiểm soát, giống mọi phụ thuộc khác; template tự viết được ký bằng khoá riêng.
+- Kết quả subfinder luôn được **lọc** trước khi dùng: phân giải (dnsx/massdns, song song), bỏ
+  wildcard, giới hạn số lượng, rồi mới tới httpx/nmap.
+
+**ReconKit có theo không** — và những gì chỉ lộ ra khi chạy thật:
+
+| Hiện tượng đo được (lab, nuclei 3.11.1, templates 10.5.2, subfinder 2.17.0) | Đã xử lý |
+|---|---|
+| Profile `standard` (900 s) + vài web server: nuclei vượt giờ → **cả lần quét thất bại**, mất kết quả nmap | ✅ một giới hạn chung, hết giờ giữ kết quả, run `partial` |
+| Cổng SSH cho chạy qua mọi template: 147 s; chỉ template mạng (`-pt javascript,tcp,ssl`): tức thì, cùng kết quả. `-pt network` **không** phải tên hợp lệ (khớp 1 template) | ✅ lượt riêng cho dịch vụ không phải web, tên đã kiểm bằng `-tl` |
+| CVE-2021-41773: phiên bản dính lỗi nhưng template **không** khai thác được với cấu hình mặc định của httpd | ✅ đúng là "firm", không phải "confirmed" (lab sau sẽ cấu hình khai thác được) |
+| Finding nuclei thắng finding theo phiên bản nhưng làm rơi ngày KEV → Apache tụt từ P1 xuống P2 | ✅ gộp, lấy dữ liệu CVE từ cơ sở dữ liệu |
+| nuclei ghi cấu hình vào `$HOME`, cần `.nuclei-ignore` cạnh cấu hình; chạy được với FS chỉ đọc khi có `NUCLEI_CONFIG_DIR` | ✅ thư mục cấu hình tạm mỗi lần chạy |
+| subfinder trên `example.com`: 25.514 tên trong 3 s, 87% từ một nguồn rác | ✅ giới hạn, song song, lọc wildcard, ghi chú gộp |
+| interactsh, che dữ liệu trong bằng chứng | ❌ G24 |
+
+Bài học chung: một plugin "đã có test" bằng output mẫu vẫn chưa phải plugin chạy được. Output
+mẫu cho biết **định dạng**; chỉ chạy thật mới cho biết **thời gian, khối lượng, và hành vi lúc
+hỏng** — ba thứ quyết định nó có dùng được trong vận hành hay không.
+
