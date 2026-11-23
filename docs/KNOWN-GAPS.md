@@ -365,6 +365,13 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     Terrapin; CI chạy cả lab với nuclei. `check_rate` tách khỏi `max_rate` (trước đây giới hạn
     hợp với nuclei làm nmap quét đủ cổng chậm ~30 lần).
   - Còn lại:
+    - **Job lab của CI chập chờn một lần** (run c94ab6b, 2026-11-24): bước "nuclei confirmed
+      what the versions suggested" hỏng, rồi qua ngay ở lần sau với cùng code (c470989), và
+      cùng code đó chạy local đạt. Nghi nuclei lỡ một template mạng (Terrapin, JavaScript SSH)
+      khi runner bị tải nặng — chưa chứng minh vì log CI cần đăng nhập. Job giờ in bảng
+      finding, các run và log worker khi hỏng (`ci/lab-diagnostics`) để lần sau thấy nguyên
+      nhân. Nếu lặp lại: tăng timeout của nuclei cho template mạng trong profile `lab`, hoặc
+      quét lại trước khi kết luận.
     - **Không interactsh** → template phát hiện qua kênh ngoài (OAST: Log4Shell mù, SSRF mù…)
       không chạy. Thực tế: tự dựng máy chủ interactsh trong mạng của mình (`-iserver`, `-itoken`).
     - nuclei lưu **request/response đầy đủ** làm bằng chứng — có thể chứa dữ liệu của mục tiêu
