@@ -7,6 +7,12 @@ section of a version as its release notes, so every tag needs one.
 ## [Unreleased]
 
 ### Added
+- Install without editing a file: `--config` is optional for `web`, `worker`, `scheduler`,
+  `enqueue` and `user` ($ZUES_CONFIG, else settings from ZUES_DB, ZUES_REDIS_URL,
+  ZUES_QUEUE, ZUES_CVE_CACHE, ZUES_WEBHOOK, ZUES_NOTIFY_MIN_PRIORITY, with targets, scopes
+  and tokens from the dashboard). compose.yaml no longer needs deploy/service.toml:
+  `docker compose up -d`, `docker compose exec web zues user add NAME --role admin`, then
+  everything in Settings. The lab keeps its file through ZUES_CONFIG.
 - Dashboard **Settings** page (admins): targets, scopes and tokens in tables (service.toml's
   marked read-only), a scope editor with a template and the directives' syntax, a target
   form (scope, profile, schedule, plugins by kind with their activity and whether the
