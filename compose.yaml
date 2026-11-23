@@ -17,6 +17,13 @@ x-zues: &zues
   read_only: true
   tmpfs:
     - /tmp
+  environment:
+    # Without service.toml the service reads these, and targets, scopes and tokens are
+    # added in the dashboard (the first admin: docker compose exec web zues user add NAME
+    # --role admin). To use a file instead: ZUES_CONFIG=/config/service.toml (in ./deploy).
+    ZUES_CONFIG: ${ZUES_CONFIG:-}
+    ZUES_DB: /data/zues.db
+    ZUES_REDIS_URL: redis://redis:6379/0
   volumes:
     - data:/data
     - ./deploy:/config:ro
@@ -49,7 +56,7 @@ services:
 
   web:
     <<: *zues
-    command: ["web", "--config", "/config/service.toml", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["web", "--host", "0.0.0.0", "--port", "8000"]
     # Published on the host's loopback only. To serve other machines, put a TLS reverse
     # proxy in front (it must send X-Forwarded-Proto; set FORWARDED_ALLOW_IPS to its
     # address) instead of publishing plain HTTP on the network.
@@ -67,7 +74,7 @@ services:
 
   worker:
     <<: *zues
-    command: ["worker", "--config", "/config/service.toml"]
+    command: ["worker"]
     # nmap needs raw sockets for SYN scans and traceroute. The image gives the nmap
     # binary that one capability (setcap cap_net_raw), which a non-root process can
     # only gain on exec if no-new-privileges is off: so it is off here, and only here.
@@ -80,7 +87,7 @@ services:
 
   scheduler:
     <<: *zues
-    command: ["scheduler", "--config", "/config/service.toml"]
+    command: ["scheduler"]
 
 volumes:
   data:

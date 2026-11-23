@@ -803,7 +803,7 @@ def _server(args: argparse.Namespace) -> Any:
         )
         return None
     try:
-        return config.load_config(args.config), queue, scheduler
+        return config.load_config(config.config_path(args.config)), queue, scheduler
     except config.ConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return None
@@ -819,6 +819,12 @@ def _cmd_token(args: argparse.Namespace) -> int:
     return 0
 
 
+SERVICE_CONFIG_HELP = (
+    "service.toml (default: $ZUES_CONFIG; without one, settings come from ZUES_DB, "
+    "ZUES_REDIS_URL, ... and targets from the dashboard)"
+)
+
+
 def _cmd_user(args: argparse.Namespace) -> int:
     """Dashboard tokens, kept in the service's database: the first admin is made here."""
     from zues_scan.server import managed
@@ -826,7 +832,7 @@ def _cmd_user(args: argparse.Namespace) -> int:
     from zues_scan.storage import Storage, StorageError
 
     try:
-        config = load_config(args.config)
+        config = load_config(args.config)  # None: $ZUES_CONFIG, else the environment
     except ConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -932,7 +938,9 @@ def _cmd_web(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
     try:
-        web.serve(args.config, host=args.host, port=args.port)
+        from zues_scan.server.config import config_path
+
+        web.serve(config_path(args.config), host=args.host, port=args.port)
     except ConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -1341,7 +1349,10 @@ def build_parser() -> argparse.ArgumentParser:
     user = sub.add_parser(
         "user", help="dashboard tokens kept in the service's database (the first admin)"
     )
-    user.add_argument("--config", required=True, help="service.toml")
+    user.add_argument(
+        "--config",
+        help=SERVICE_CONFIG_HELP,
+    )
     users = user.add_subparsers(dest="user_command", required=True)
     add = users.add_parser("add", help="create a token; it is printed once")
     add.add_argument("name", help="who it is for (recorded as operator)")
@@ -1353,22 +1364,34 @@ def build_parser() -> argparse.ArgumentParser:
 
     enqueue = sub.add_parser("enqueue", help="queue a scan of a configured target (service)")
     enqueue.add_argument("target", help="the target's name in service.toml")
-    enqueue.add_argument("--config", required=True, help="service.toml")
+    enqueue.add_argument(
+        "--config",
+        help=SERVICE_CONFIG_HELP,
+    )
     enqueue.add_argument("--operator", help="who asks for it (default: user@host)")
     enqueue.set_defaults(func=_cmd_enqueue)
 
     worker = sub.add_parser("worker", help="run queued scans (service; needs Redis)")
-    worker.add_argument("--config", required=True, help="service.toml")
+    worker.add_argument(
+        "--config",
+        help=SERVICE_CONFIG_HELP,
+    )
     worker.add_argument("--burst", action="store_true", help="stop when the queue is empty")
     worker.set_defaults(func=_cmd_worker)
 
     scheduler = sub.add_parser("scheduler", help="queue the targets' scheduled scans")
-    scheduler.add_argument("--config", required=True, help="service.toml")
+    scheduler.add_argument(
+        "--config",
+        help=SERVICE_CONFIG_HELP,
+    )
     scheduler.add_argument("--once", action="store_true", help="one round, then stop")
     scheduler.set_defaults(func=_cmd_scheduler)
 
     web = sub.add_parser("web", help="serve the web API and dashboard (service)")
-    web.add_argument("--config", required=True, help="service.toml")
+    web.add_argument(
+        "--config",
+        help=SERVICE_CONFIG_HELP,
+    )
     web.add_argument(
         "--host", default="127.0.0.1", help="address to listen on (default: local only)"
     )
