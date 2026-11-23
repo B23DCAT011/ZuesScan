@@ -126,6 +126,8 @@ thật (nuclei 3.11.1, templates 10.5.2, subfinder 2.17.0), sửa những gì ch
 - [x] `chore/docker-tools` — nuclei, subfinder, templates trong image: ghim phiên bản + SHA-256
       từ file checksums chính thức (`docker/tools.lock`), `python docker/tools.py update`, chỉ lấy
       đúng binary, giải nén an toàn; CI kiểm phiên bản trong image khớp lock. Image 182 → 401 MB.
-- [ ] `feat/lab-nuclei` — Apache trong lab khai thác được thật để nuclei xác nhận
-      CVE-2021-41773; lab bật nuclei; CI kiểm `confirmed`.
+- [x] `feat/lab-nuclei` — Apache trong lab cấu hình khai thác được (như vulhub) để nuclei xác
+      nhận CVE-2021-41773; target lab bật nuclei với profile `lab`; profile có `check_rate` riêng
+      (request/giây của nuclei) tách khỏi `max_rate` (gói/giây của nmap); `reconkit finding`
+      hiện độ tin cậy; CI kiểm `confirmed`, Terrapin và phiên bản templates trong run.
 

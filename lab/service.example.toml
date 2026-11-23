@@ -10,7 +10,9 @@ queue = "reconkit"
 name = "lab-dmz"
 target = "10.66.1.0/24"
 scope = "/config/lab-scope.txt"
-profile = "full"                         # all ports + traceroute
+config = "/config/profiles.toml"         # the fast "lab" profile
+profile = "lab"                          # all ports + traceroute, nuclei at 300 req/s
+nuclei = true                            # active checks: confirm what versions suggest
 every = "30m"
 engagement = "LAB-DEMO"
 
@@ -18,7 +20,9 @@ engagement = "LAB-DEMO"
 name = "lab-internal"                    # behind the router: one more hop on the map
 target = "10.66.2.0/24"
 scope = "/config/lab-scope.txt"
-profile = "full"
+config = "/config/profiles.toml"
+profile = "lab"
+nuclei = true
 every = "30m"
 engagement = "LAB-DEMO"
 

@@ -124,6 +124,18 @@ jobs:
           grep -Eq '^ +[0-9]+ +fake_fix .*CVE-2021-41773' demo.txt
           grep -Eq '^ +[0-9]+ +fixed .*CVE-2021-23017' demo.txt
           grep -Eq '^ +[0-9]+ +accepted .*CVE-2018-15473' demo.txt
+      - name: nuclei confirmed what the versions suggested
+        run: |
+          grep -Eq '^ +[0-9]+ +(new|open) .*CVE-2023-48795' demo.txt  # Terrapin, on SSH
+          grep -q 'confidence: confirmed' demo.txt                # Apache CVE-2021-41773
+      - name: each run records nuclei's and the templates' versions
+        run: |
+          docker compose -p reconkit-lab exec -T worker python -c "
+          from reconkit.storage import Storage
+          with Storage('/data/reconkit.db') as store:
+              versions = store.load_run(store.latest_run_id()).tool_versions
+          print(versions)
+          assert '(templates ' in versions['nuclei'], versions"
       - name: the lab cannot reach the Internet
         run: |
           probe='timeout 5 bash -c "</dev/tcp/1.1.1.1/443"'

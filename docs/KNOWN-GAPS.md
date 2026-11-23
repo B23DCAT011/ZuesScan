@@ -361,6 +361,9 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       đánh rơi ngày KEV / CVSS của NVD (Apache 2.4.49 bị xếp P2 thay vì P1).
     - discovery có giới hạn tên, phân giải song song, lọc wildcard DNS, ghi chú gộp (trước đây
       25.514 tên = 25.514 lượt DNS tuần tự và 25.514 dòng ghi chú).
+  - ✅ **`feat/lab-nuclei`**: lab có Apache khai thác được → nuclei xác nhận CVE-2021-41773 và
+    Terrapin; CI chạy cả lab với nuclei. `check_rate` tách khỏi `max_rate` (trước đây giới hạn
+    hợp với nuclei làm nmap quét đủ cổng chậm ~30 lần).
   - Còn lại:
     - **Không interactsh** → template phát hiện qua kênh ngoài (OAST: Log4Shell mù, SSRF mù…)
       không chạy. Thực tế: tự dựng máy chủ interactsh trong mạng của mình (`-iserver`, `-itoken`).

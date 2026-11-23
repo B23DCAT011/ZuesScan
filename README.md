@@ -127,9 +127,14 @@ File cấu hình (TOML) thêm profile mới dựa trên một profile dựng s�
 [profiles.nightly]
 base = "full"
 timing = 3
-max_rate = 300        # gói/giây
+max_rate = 300        # gói/giây của nmap
+check_rate = 20       # request/giây của kiểm tra chủ động (nuclei); mặc định: max_rate, rồi 50
 host_timeout = 1800   # bỏ một host sau 30 phút
 ```
+
+`max_rate` (gói tin của nmap) và `check_rate` (request HTTP/mạng của nuclei) là hai thứ khác
+nhau: gói SYN rất nhẹ, request khai thác thì nặng. Gộp làm một từng làm lần quét đủ 65.535 cổng
+của lab chậm đi ~30 lần (nmap bị giới hạn theo mức hợp với nuclei).
 
 Mỗi run lưu tên profile và toàn bộ thông số: hai run khác profile thì không nhìn cùng một tập
 cổng, nên không so sánh được với nhau.
@@ -506,16 +511,24 @@ sh lab/down.sh      # xoá sạch lab (cả database của nó)
 
 ```
                  lab-dmz 10.66.1.0/24                          lab-internal 10.66.2.0/24
- worker ──────┬── Apache 2.4.49  .20  (CVE-2021-41773, KEV → P1)
- (.1-.14)     ├── OpenSSH 7.5    .22  (CVE-2018-15473 → P4)
+ worker ──────┬── Apache 2.4.49  .20  (CVE-2021-41773, KEV → P1, nuclei: confirmed)
+ (.1-.14)     ├── OpenSSH 7.5    .22  (CVE-2018-15473 → P4; Terrapin CVE-2023-48795: confirmed)
               └── router        .254 ═══ NAT ═══ .254 ──┬── nginx 1.20.0 .30 (CVE-2021-23017 → P3)
 ```
 
-- Scheduler tự quét hai mạng ngay khi lên và mỗi 30 phút (profile `full`: mọi cổng +
-  traceroute). Quét `lab-internal` đi qua **router thật**: bản đồ có hop `10.66.1.254`.
+- Scheduler tự quét hai mạng ngay khi lên và mỗi 30 phút (profile `lab` trong
+  `lab/profiles.toml`: mọi cổng + traceroute, nuclei 300 request/giây). Quét `lab-internal` đi
+  qua **router thật**: bản đồ có hop `10.66.1.254`.
+- Các target của lab bật **nuclei** (templates ghim trong image): Apache được cấu hình khai thác
+  được như vulhub (`lab/apache/Dockerfile`: cho phép thư mục gốc + bật CGI), nên template
+  CVE-2021-41773 **xác nhận** lỗi (`confirmed`, bằng chứng là câu trả lời của máy chủ); OpenSSH
+  7.5 bị xác nhận dính **Terrapin** qua template mạng. Với cấu hình mặc định của httpd 2.4.49,
+  cùng template đó *không* khai thác được — phiên bản dính lỗi chưa chắc khai thác được, và
+  ReconKit giữ đúng mức `firm` khi chưa có bằng chứng.
 - `demo.sh`: báo đã sửa Apache và nginx, chấp nhận rủi ro OpenSSH (có lý do + ngày xem lại),
   rồi chỉ nâng cấp **nginx** lên 1.27.5 và quét lại → nginx **fixed** (đã xác minh), Apache
-  **fake fix** (báo sửa mà vẫn còn) — kèm cảnh báo webhook nếu `[notify]` có URL.
+  **fake fix** (báo sửa mà vẫn còn — và nuclei vừa khai thác lại được) — kèm cảnh báo webhook
+  nếu `[notify]` có URL.
 
 | Fix giả trên dashboard | Bản đồ DMZ |
 |---|---|

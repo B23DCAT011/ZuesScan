@@ -181,6 +181,7 @@ def _spec(args: argparse.Namespace) -> ScanSpec:
             "top_ports": args.top_ports,
             "timing": args.timing,
             "max_rate": args.max_rate,
+            "check_rate": args.check_rate,
             "host_timeout": args.host_timeout,
             "timeout": args.timeout,
             "traceroute": args.traceroute,
@@ -558,6 +559,8 @@ def _cmd_finding(args: argparse.Namespace) -> int:
     if row.port:
         print(f"  port: {row.port}/{row.protocol}")
     print(f"  status: {row.status} since {row.status_since[:19]}")
+    if row.confidence:
+        print(f"  confidence: {row.confidence}")
     if row.accepted_until:
         print(f"  accepted until: {row.accepted_until}")
     print(
@@ -945,6 +948,9 @@ def build_parser() -> argparse.ArgumentParser:
     ports.add_argument("--top-ports", type=int, help="the N most common ports")
     tuning.add_argument("--timing", type=int, choices=range(6), help="nmap -T0 ... -T5")
     tuning.add_argument("--max-rate", type=int, help="send at most N packets per second")
+    tuning.add_argument(
+        "--check-rate", type=int, help="active checks (nuclei): at most N requests per second"
+    )
     tuning.add_argument("--host-timeout", type=int, help="give up on one host after N seconds")
     tuning.add_argument("--timeout", type=int, help="stop the whole scan after N seconds")
     tuning.add_argument(

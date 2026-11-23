@@ -56,8 +56,10 @@ services:
     restart: unless-stopped
 
   apache:
-    # Apache httpd 2.4.49: CVE-2021-41773 (path traversal, on CISA's KEV list).
-    image: httpd:2.4.49@sha256:dcba0d12e2362fb0c50ec524ae8aa1cca4a4ba7216617a57e7bbca20767e79cc
+    # Apache httpd 2.4.49: CVE-2021-41773 (path traversal, on CISA's KEV list),
+    # configured to be exploitable (lab/apache/Dockerfile): nuclei confirms it.
+    build: lab/apache
+    image: reconkit-lab-apache:local
     networks:
       lab-dmz: { ipv4_address: 10.66.1.20 }
     restart: unless-stopped
