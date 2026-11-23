@@ -14,6 +14,7 @@ from reconkit import __version__, priority
 from reconkit.orchestrator import ScanRun, now
 from reconkit.report.graph import build_graph
 from reconkit.schema import Asset, Finding, Hop, Service, Severity
+from reconkit.storage import Storage
 
 # Bump when a field changes meaning or disappears; adding a field is not a new version.
 MODEL_VERSION = 1
@@ -90,6 +91,26 @@ def report_model(
         "changes": list(changes or []),
         "graph": build_graph(run.assets),
     }
+
+
+def stored_model(store: Storage, run_id: int) -> dict[str, Any] | None:
+    """The report model of stored run `run_id`, with each finding's lifecycle status
+    and what the run changed in the inventory; None if there is no such run."""
+    run = store.load_run(run_id)
+    if run is None:
+        return None
+    changes = [
+        {
+            "finding_id": e.finding_id,
+            "event": e.event,
+            "from": e.old_status,
+            "to": e.new_status,
+            "title": e.title,
+            "host": e.host,
+        }
+        for e in store.changes_in_run(run_id)
+    ]
+    return report_model(run, run_id, statuses=store.finding_statuses(), changes=changes)
 
 
 def _host(asset: Asset, statuses: dict[str, str]) -> dict[str, Any]:

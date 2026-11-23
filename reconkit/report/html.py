@@ -39,16 +39,7 @@ def render_html(model: dict[str, Any]) -> str:
             raise ValueError(f"{name} cannot be inlined in a <script> element")
 
     run = model["run"]
-    csp = "; ".join(
-        [
-            "default-src 'none'",
-            f"script-src {_hash(cytoscape)} {_hash(script)}",
-            f"style-src {_hash(css)}",
-            "img-src data:",
-            "base-uri 'none'",
-            "form-action 'none'",
-        ]
-    )
+    csp = page_csp()
     parts = {
         "TITLE": html.escape(f"ReconKit — run #{run['id']} — {run['target']}"),
         "CSP": html.escape(csp),
@@ -60,6 +51,22 @@ def render_html(model: dict[str, Any]) -> str:
     # One pass over the template only: text that was just put in (scan data that
     # happens to contain "{{SCRIPT}}") is never searched for placeholders again.
     return _PLACEHOLDER.sub(lambda m: parts[m.group(1)], _read("assets/template.html"))
+
+
+def page_csp() -> str:
+    """The report page's Content-Security-Policy: only its own inlined scripts and
+    stylesheet (by SHA-256), no network at all. The same for every report."""
+    scripts = (_read("vendor/cytoscape.min.js"), _read("assets/report.js"))
+    return "; ".join(
+        [
+            "default-src 'none'",
+            f"script-src {' '.join(_hash(text) for text in scripts)}",
+            f"style-src {_hash(_read('assets/report.css'))}",
+            "img-src data:",
+            "base-uri 'none'",
+            "form-action 'none'",
+        ]
+    )
 
 
 def json_for_html(data: Any) -> str:

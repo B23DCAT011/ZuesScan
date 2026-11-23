@@ -26,7 +26,7 @@ from reconkit.inventory import (
     when_seen,
 )
 from reconkit.orchestrator import RunStatus, ScanRun
-from reconkit.schema import Asset, Finding
+from reconkit.schema import Asset, Finding, Severity
 
 
 class InventoryError(Exception):
@@ -55,6 +55,18 @@ class FindingRow:
     last_seen: str
     accepted_until: str | None
     note: str | None
+
+    def as_finding(self) -> Finding:
+        """This inventoried finding as a Finding, to rank it like any other."""
+        return Finding(
+            asset=self.host,
+            title=self.title,
+            severity=Severity(self.severity),
+            cve=self.cve,
+            cvss_score=self.cvss_score,
+            kev_added=self.kev_added,
+            epss=self.epss,
+        )
 
 
 @dataclass(frozen=True, slots=True)
