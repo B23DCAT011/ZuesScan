@@ -26,7 +26,7 @@ def test_verbosity_levels() -> None:
 
 
 def test_json_lines_carry_the_extra_fields(tmp_path: Path) -> None:
-    path = tmp_path / "zues_scan.log"
+    path = tmp_path / "zues.log"
     logs.setup(0, str(path), "json")
     logging.getLogger("zues_scan.test").info("run #%d saved", 7, extra={"run_id": 7})
     for handler in logging.getLogger("zues_scan").handlers:

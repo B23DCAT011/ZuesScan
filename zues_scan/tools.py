@@ -4,8 +4,8 @@
     python -m zues_scan.tools update            # newest releases -> zues_scan/data/tools.lock
 
 Only single-binary, MIT-licensed tools are installed this way, into the user's own data
-directory (no administrator rights): `~/.local/share/zues_scan/tools` on Linux,
-`~/Library/Application Support/zues_scan/tools` on macOS, `%LOCALAPPDATA%\\zues\\tools`
+directory (no administrator rights): `~/.local/share/zues/tools` on Linux,
+`~/Library/Application Support/zues/tools` on macOS, `%LOCALAPPDATA%\\zues\\tools`
 on Windows, or `$ZUES_TOOLS_DIR`. System packages (nmap, ssh) are left to the system's
 package manager: `zues doctor` prints the command.
 
