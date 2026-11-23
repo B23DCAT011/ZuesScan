@@ -25,9 +25,16 @@ Lines starting with `@` state the terms of the authorisation itself (G21):
     @engagement PT-2026-014, signed 2026-11-01 by ACME IT    # recorded with each run
     @expires 2026-12-31 +07:00     # no scan after that day (offset: +07:00, default UTC)
     @window Mon-Fri 22:00-06:00 +07:00   # only then; repeatable; may cross midnight
+    @activity active               # how far the testing may go (default: scan)
 
 A scan outside the expiry date or every window is refused like an out-of-scope
 target. An unknown directive is an error.
+
+`@activity` is the ceiling the rules of engagement set, as each plugin declares what
+it does: `passive` (asks third parties only — subfinder), `scan` (finds what is there:
+port and service scans, read-only logins — nmap, the SSH package check), `active`
+(tries flaws with crafted requests — nuclei). Without the directive, a scope allows
+`scan`: a check that exploits must be authorised in writing, not by a command flag.
 
 A hostname entry authorises the *name* only. Before a scan the name is resolved and
 every address it points at must itself be in the allowlist (see `Scope.plan`), so a
@@ -45,11 +52,32 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
+from enum import IntEnum
 from pathlib import Path
 
 from reconkit.schema import ScanTarget
 
 Network = ipaddress.IPv4Network | ipaddress.IPv6Network
+
+
+class Activity(IntEnum):
+    """How far a plugin goes with a target; a scope sets the highest allowed."""
+
+    PASSIVE = 0  # asks third parties only: nothing reaches the targets
+    SCAN = 1  # finds what is there: port and service scans, read-only logins
+    ACTIVE = 2  # tries flaws: crafted requests, exploitation checks
+
+    def __str__(self) -> str:
+        return self.name.lower()
+
+    @classmethod
+    def parse(cls, text: str) -> Activity:
+        try:
+            return cls[text.strip().upper()]
+        except KeyError:
+            raise ScopeError(
+                f"unknown activity {text.strip()!r} (known: passive, scan, active)"
+            ) from None
 
 
 class ScopeError(Exception):
@@ -168,6 +196,7 @@ class Scope:
     engagement: str | None = None
     expires: datetime | None = None  # first moment it no longer holds
     windows: list[TimeWindow] = field(default_factory=list)
+    activity: Activity = Activity.SCAN  # the most a plugin may do (@activity)
     # Where the scope came from, and the SHA-256 of its exact bytes: recorded with
     # every run, so that "which scope authorised this?" has an answer.
     path: str | None = None
@@ -212,8 +241,25 @@ class Scope:
             self.expires = _parse_expiry(value)
         elif name == "window":
             self.windows.append(_parse_window(value))
+        elif name == "activity":
+            self.activity = Activity.parse(value)
         else:
-            raise ScopeError(f"unknown directive @{name} (known: @engagement, @expires, @window)")
+            raise ScopeError(
+                f"unknown directive @{name} (known: @engagement, @expires, @window, @activity)"
+            )
+
+    def check_activity(self, plugins: list[tuple[str, Activity]]) -> None:
+        """Refuse plugins that would go further than the authorisation allows."""
+        beyond = [(name, act) for name, act in plugins if act > self.activity]
+        if beyond:
+            names = ", ".join(f"{name} ({act})" for name, act in beyond)
+            source = f" in {self.path}" if self.path else ""
+            verb = "goes" if len(beyond) == 1 else "go"
+            raise ScopeError(
+                f"{names} {verb} beyond what the authorisation{source} allows "
+                f"(@activity {self.activity}). If the rules of engagement cover it, add "
+                f"'@activity {max(act for _, act in beyond)}' to the scope file."
+            )
 
     def check_time(self, moment: datetime) -> None:
         """Refuse a scan at `moment` if the authorisation has expired or is not open."""

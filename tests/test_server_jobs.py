@@ -63,7 +63,7 @@ def service_config(
 
 def use_scanner(monkeypatch: pytest.MonkeyPatch, *services: Service) -> FakePlugin:
     fake = FakePlugin([lab_asset(*services)])
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: fake)
+    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", lambda **_: fake)
     return fake
 
 
@@ -182,7 +182,9 @@ def test_a_failed_scan_is_recorded_and_not_alerted(
     from reconkit.plugins.base import ScanError
 
     error = ScanError("nmap exited with code 1", plugin="fake", stderr="boom")
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: FakePlugin([], error=error))
+    monkeypatch.setattr(
+        "reconkit.plugins.registry.NmapPlugin", lambda **_: FakePlugin([], error=error)
+    )
 
     summary = scan_target(service_config(tmp_path), "lab", "alice")
 

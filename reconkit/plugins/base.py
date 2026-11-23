@@ -68,7 +68,13 @@ class ScanResult:
 
 @runtime_checkable
 class ScannerPlugin(Protocol):
-    """A recon tool adapter."""
+    """A recon tool adapter.
+
+    Every plugin should also say how far it goes with a target, as a class attribute
+    `activity` (`reconkit.scope.Activity`: passive, scan or active). The scope's
+    `@activity` ceiling is checked against it before anything is sent; a plugin that
+    does not say is assumed to go as far as its kind can (see `Orchestrator.activities`).
+    """
 
     name: str
 

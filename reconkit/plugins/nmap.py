@@ -35,6 +35,7 @@ from xml.etree import ElementTree as ET
 from reconkit.plugins.base import ScanError, ScanResult
 from reconkit.profiles import BUILTIN, DEFAULT_PROFILE, ScanProfile
 from reconkit.schema import Asset, Hop, RawOutput, ScanTarget, Service
+from reconkit.scope import Activity
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +55,7 @@ class NmapPlugin:
     """Scanner plugin backed by the `nmap` binary."""
 
     name = "nmap"
+    activity = Activity.SCAN  # finds open ports and services
 
     def __init__(self, profile: ScanProfile | None = None) -> None:
         self.profile = profile if profile is not None else BUILTIN[DEFAULT_PROFILE]

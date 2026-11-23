@@ -26,6 +26,7 @@ from reconkit.plugins.ssh_packages import (
     load_credentials,
 )
 from reconkit.schema import Asset, Confidence, ScanTarget, Service
+from reconkit.scope import Activity
 
 OS_RELEASE = (
     'PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"\nNAME="Debian GNU/Linux"\n'
@@ -291,6 +292,7 @@ class PackageCheck:
     """Stands in for the SSH plugin: the installed OpenSSH carries CVE-2018-15473's fix."""
 
     name = "ssh-packages"
+    activity = Activity.SCAN  # a read-only login, like the real one
 
     def is_available(self) -> bool:
         return True

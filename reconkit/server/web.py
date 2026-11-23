@@ -285,8 +285,9 @@ def targets(who: Viewer, config: Config) -> list[dict[str, Any]]:
             "profile": t.profile,
             "every_seconds": int(t.every.total_seconds()) if t.every else None,
             "engagement": t.engagement,
-            "nuclei": t.nuclei,
-            "discover": t.discover,
+            "nuclei": t.nuclei or "nuclei" in t.checks,
+            "discover": t.discover or bool(t.discoverers),
+            "checks": sorted({*t.checks, *(["nuclei"] if t.nuclei else [])}),
             "authenticated": t.credentials is not None,  # never the key file's path
             "last_started_at": starts.get((t.target, t.profile)),
         }

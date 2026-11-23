@@ -28,6 +28,7 @@ from pathlib import Path
 
 from reconkit.plugins.base import DiscoveryResult, ScanError
 from reconkit.schema import RawOutput
+from reconkit.scope import Activity
 
 CONFIG_ENV = "RECONKIT_SUBFINDER_CONFIG"
 _NAME = re.compile(r"(?=.{1,253}$)([a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?\.)+[a-z][a-z0-9-]*")
@@ -37,6 +38,7 @@ class SubfinderPlugin:
     """Discovery plugin backed by the `subfinder` binary."""
 
     name = "subfinder"
+    activity = Activity.PASSIVE  # asks public sources only
 
     def __init__(
         self, timeout: int = 600, max_minutes: int = 8, provider_config: str | None = None

@@ -21,7 +21,7 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr("reconkit.scope.resolve_ipv4", lab_resolver)
     monkeypatch.setattr("reconkit.scope.resolve_addresses", lab_resolver)
     fake = FakePlugin([lab_asset(Service(port=21, product="vsftpd", version="2.3.4"))])
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: fake)
+    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", lambda **_: fake)
     scope = tmp_path / "scope.txt"
     scope.write_text("scanme.lab\n10.0.0.0/24\n", encoding="utf-8")
     path = tmp_path / "reconkit.db"

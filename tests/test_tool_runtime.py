@@ -205,7 +205,7 @@ def _run(check: Check, cve: bool = False) -> Any:
     scanner = FakePlugin([Asset(host="10.0.0.5", ip="10.0.0.5", services=[APACHE])])
     orch = Orchestrator(
         [scanner],
-        lab_scope(),
+        lab_scope("@activity active"),
         resolver=lab_resolver,
         checks=[check],
         cve_source=LocalCveSource() if cve else None,
@@ -389,7 +389,7 @@ def test_bad_tool_settings_stop_before_scanning(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     scanner = FakePlugin([])
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: scanner)
+    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", lambda **_: scanner)
     (tmp_path / "scope.txt").write_text("example.com\n*.example.com\n", encoding="utf-8")
     argv = ["scan", "example.com", "--scope", "scope.txt", "--db", "r.db", "--discover", *extra]
     assert cli.main(argv) == 2
@@ -409,10 +409,10 @@ def test_the_image_sets_the_templates_by_environment(
 
     monkeypatch.setenv("RECONKIT_NUCLEI_TEMPLATES", str(templates))
     monkeypatch.setattr("reconkit.scope.resolve_addresses", lab_resolver)
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: FakePlugin([]))
-    monkeypatch.setattr("reconkit.scanning.NucleiPlugin", Made)
+    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", lambda **_: FakePlugin([]))
+    monkeypatch.setattr("reconkit.plugins.registry.NucleiPlugin", Made)
     scope = tmp_path / "scope.txt"
-    scope.write_text("10.0.0.0/24\n", encoding="utf-8")
+    scope.write_text("@activity active\n10.0.0.0/24\n", encoding="utf-8")
     argv = ["scan", "10.0.0.5", "--scope", str(scope), "--db", str(tmp_path / "r.db"), "--nuclei"]
     cli.main(argv)
     assert made[0]["templates"] == str(templates)

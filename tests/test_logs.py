@@ -40,7 +40,9 @@ def test_json_lines_carry_the_extra_fields(tmp_path: Path) -> None:
 @pytest.fixture
 def _lab(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[str]:
     monkeypatch.setattr("reconkit.scope.resolve_addresses", lab_resolver)
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: FakePlugin([lab_asset()]))
+    monkeypatch.setattr(
+        "reconkit.plugins.registry.NmapPlugin", lambda **_: FakePlugin([lab_asset()])
+    )
     scope = tmp_path / "scope.txt"
     scope.write_text("scanme.lab\n10.0.0.0/24\n", encoding="utf-8")
     return ["scan", "scanme.lab", "--scope", str(scope), "--db", str(tmp_path / "x.db")]

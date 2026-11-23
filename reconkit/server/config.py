@@ -24,7 +24,7 @@ target by its `name`; it never brings its own address, scope file or options.
     profile = "full"
     every = "24h"                  # optional: scheduled scan (m, h or d)
     engagement = "PT-2026-014"
-    nuclei = false
+    nuclei = false                 # or: checks = ["nuclei"] (plugin names: reconkit plugins)
     discover_limit = 1000          # with discover = true: names considered at most
 
     [notify]
@@ -66,6 +66,9 @@ class Target:
     engagement: str | None = None
     nuclei: bool = False
     discover: bool = False
+    scanners: tuple[str, ...] = ()  # plugin names (reconkit plugins); empty: nmap
+    checks: tuple[str, ...] = ()
+    discoverers: tuple[str, ...] = ()
     credentials: str | None = None
     ipv4_only: bool = False
     discover_limit: int | None = None
@@ -199,6 +202,9 @@ def _target(raw: dict[str, Any], i: int) -> Target:
         "engagement",
         "nuclei",
         "discover",
+        "scanners",
+        "checks",
+        "discoverers",
         "credentials",
         "ipv4_only",
         "discover_limit",
@@ -222,10 +228,21 @@ def _target(raw: dict[str, Any], i: int) -> Target:
         engagement=raw.get("engagement"),
         nuclei=bool(raw.get("nuclei", False)),
         discover=bool(raw.get("discover", False)),
+        scanners=_names(raw.get("scanners"), f"{where} ({name}) scanners"),
+        checks=_names(raw.get("checks"), f"{where} ({name}) checks"),
+        discoverers=_names(raw.get("discoverers"), f"{where} ({name}) discoverers"),
         credentials=raw.get("credentials"),
         ipv4_only=bool(raw.get("ipv4_only", False)),
         discover_limit=_positive(raw.get("discover_limit"), f"{where} ({name}) discover_limit"),
     )
+
+
+def _names(value: object, what: str) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not all(isinstance(v, str) and v for v in value):
+        raise ConfigError(f'{what} must be a list of plugin names, e.g. ["nuclei"]')
+    return tuple(value)
 
 
 def _positive(value: object, what: str) -> int | None:

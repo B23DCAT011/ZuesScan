@@ -47,7 +47,7 @@ def test_scan_end_to_end(
 
     # Replace the real nmap plugin with a deterministic fake.
     fake = FakePlugin([lab_asset(Service(port=22, name="ssh", product="OpenSSH", version="7.4"))])
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: fake)
+    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", lambda **_: fake)
 
     code = cli.main(["scan", "scanme.lab", "--scope", _scope_file(tmp_path), "--db", str(db)])
     out = capsys.readouterr().out
@@ -78,7 +78,7 @@ def test_range_scan_is_reported_and_stored_per_host(
             lab_asset(host="10.0.0.7", ip="10.0.0.7"),  # up, nothing open
         ]
     )
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: fake)
+    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", lambda **_: fake)
 
     code = cli.main(["scan", "10.0.0.0/24", "--scope", _scope_file(tmp_path), "--db", str(db)])
     out = capsys.readouterr().out
@@ -102,7 +102,7 @@ def test_range_scan_excludes_denied_addresses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     fake = FakePlugin([lab_asset(host="10.0.0.5", ip="10.0.0.5")])
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: fake)
+    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", lambda **_: fake)
     scope = _scope_file(tmp_path, "10.0.0.0/24\n!10.0.0.1  # router\n")
 
     code = cli.main(["scan", "10.0.0.0/24", "--scope", scope, "--db", str(tmp_path / "x.db")])
@@ -117,7 +117,7 @@ def test_range_scan_excludes_denied_addresses(
 def test_scan_refuses_out_of_scope(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: FakePlugin([]))
+    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", lambda **_: FakePlugin([]))
     code = cli.main(
         [
             "scan",
@@ -137,7 +137,7 @@ def test_scan_refuses_name_pointing_outside_the_scope(
 ) -> None:
     # G4: the name is in the allowlist, the machine behind it is not.
     fake = FakePlugin([])
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: fake)
+    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", lambda **_: fake)
     monkeypatch.setattr(
         "reconkit.scope.resolve_addresses", fake_resolver({"scanme.lab": ["203.0.113.9"]})
     )
@@ -156,7 +156,7 @@ def test_scan_refuses_name_pointing_outside_the_scope(
 def test_scan_of_unresolvable_name_is_recorded_as_a_failed_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: FakePlugin([]))
+    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", lambda **_: FakePlugin([]))
     monkeypatch.setattr("reconkit.scope.resolve_addresses", fake_resolver({}))
     db = tmp_path / "x.db"
 
@@ -180,7 +180,7 @@ def test_out_of_scope_host_in_results_is_warned_about_and_not_saved(
             lab_asset(host="192.0.2.50", ip="192.0.2.50"),  # the tool strayed
         ]
     )
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: fake)
+    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", lambda **_: fake)
     db = tmp_path / "out.db"
 
     code = cli.main(["scan", "10.0.0.0/24", "--scope", _scope_file(tmp_path), "--db", str(db)])
@@ -197,7 +197,7 @@ def test_out_of_scope_host_in_results_is_warned_about_and_not_saved(
 def test_scan_rejects_invalid_scope_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: FakePlugin([]))
+    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", lambda **_: FakePlugin([]))
     scope = _scope_file(tmp_path, "scanme.lab\nnot a host\n")
     code = cli.main(["scan", "scanme.lab", "--scope", scope, "--db", str(tmp_path / "x.db")])
     assert code == 2  # bad input, same as a missing scope file
@@ -211,7 +211,9 @@ def test_scan_failure_is_reported_and_recorded_as_a_failed_run(
 ) -> None:
     db = tmp_path / "out.db"
     error = ScanError("nmap exited with code 1", plugin="nmap", stderr="requires root\nQUITTING!")
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: FakePlugin([], error=error))
+    monkeypatch.setattr(
+        "reconkit.plugins.registry.NmapPlugin", lambda **_: FakePlugin([], error=error)
+    )
 
     code = cli.main(["scan", "scanme.lab", "--scope", _scope_file(tmp_path), "--db", str(db)])
     captured = capsys.readouterr()
@@ -237,9 +239,13 @@ def test_run_after_a_failed_one_gets_the_next_id(
     db = tmp_path / "out.db"
     args = ["scan", "scanme.lab", "--scope", _scope_file(tmp_path), "--db", str(db)]
     error = ScanError("nmap timed out", plugin="fake")
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: FakePlugin([], error=error))
+    monkeypatch.setattr(
+        "reconkit.plugins.registry.NmapPlugin", lambda **_: FakePlugin([], error=error)
+    )
     assert cli.main(args) == 4
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: FakePlugin([lab_asset()]))
+    monkeypatch.setattr(
+        "reconkit.plugins.registry.NmapPlugin", lambda **_: FakePlugin([lab_asset()])
+    )
     assert cli.main(args) == 0
 
     assert "Scan run #2" in capsys.readouterr().out
@@ -254,7 +260,7 @@ def test_database_from_a_newer_reconkit_is_refused_before_scanning(
         store._conn.execute("INSERT INTO schema_version VALUES (999, 'later')")
         store._conn.commit()
     fake = FakePlugin([lab_asset()])
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: fake)
+    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", lambda **_: fake)
 
     code = cli.main(["scan", "scanme.lab", "--scope", _scope_file(tmp_path), "--db", str(db)])
 
@@ -267,7 +273,9 @@ def test_scan_without_any_scanner_is_recorded_as_a_failed_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     db = tmp_path / "out.db"
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: FakePlugin([], available=False))
+    monkeypatch.setattr(
+        "reconkit.plugins.registry.NmapPlugin", lambda **_: FakePlugin([], available=False)
+    )
 
     code = cli.main(["scan", "scanme.lab", "--scope", _scope_file(tmp_path), "--db", str(db)])
     captured = capsys.readouterr()
@@ -288,7 +296,7 @@ def test_scan_without_any_scanner_is_recorded_as_a_failed_run(
 
 def _scan_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake: FakePlugin) -> Path:
     db = tmp_path / "out.db"
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: fake)
+    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", lambda **_: fake)
     cli.main(["scan", "scanme.lab", "--scope", _scope_file(tmp_path), "--db", str(db)])
     return db
 
@@ -362,7 +370,7 @@ def test_traceroute_flag_reaches_the_plugin_and_route_is_shown_and_stored(
         options.update(kwargs)
         return fake
 
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", make)
+    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", make)
     db = tmp_path / "out.db"
     argv = ["scan", "scanme.lab", "--scope", _scope_file(tmp_path), "--db", str(db)]
 
@@ -383,7 +391,7 @@ def test_traceroute_is_off_unless_asked(
         options.update(kwargs)
         return FakePlugin([lab_asset()])
 
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", make)
+    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", make)
     cli.main(["scan", "scanme.lab", "--scope", _scope_file(tmp_path), "--db", str(tmp_path / "d")])
     assert options["profile"].traceroute is False
     assert "route:" not in capsys.readouterr().out
@@ -392,7 +400,9 @@ def test_traceroute_is_off_unless_asked(
 def test_traceroute_that_recorded_nothing_is_explained(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: FakePlugin([lab_asset()]))
+    monkeypatch.setattr(
+        "reconkit.plugins.registry.NmapPlugin", lambda **_: FakePlugin([lab_asset()])
+    )
     argv = ["scan", "scanme.lab", "--scope", _scope_file(tmp_path), "--db", str(tmp_path / "d")]
 
     assert cli.main([*argv, "--traceroute"]) == 0  # still a good scan
@@ -479,7 +489,7 @@ def _capture_profile(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         options.update(kwargs)
         return FakePlugin([lab_asset(Service(port=22))])
 
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", make)
+    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", make)
     return options
 
 
@@ -560,7 +570,9 @@ def test_finding_shows_its_confidence(
 def test_unusable_cve_file_stops_the_scan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: FakePlugin([lab_asset()]))
+    monkeypatch.setattr(
+        "reconkit.plugins.registry.NmapPlugin", lambda **_: FakePlugin([lab_asset()])
+    )
     db = tmp_path / "out.db"
     argv = ["scan", "scanme.lab", "--scope", _scope_file(tmp_path), "--db", str(db)]
     assert cli.main([*argv, "--cve-db", str(tmp_path / "nope.json")]) == 2
@@ -657,7 +669,9 @@ def test_scan_matches_against_the_nvd_cache(
     cache = str(tmp_path / "cve.db")
     cli.main(["cve", "sync", "--cache", cache])
     svc = Service(port=80, name="http", product="nginx", version="1.14.2")
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: FakePlugin([lab_asset(svc)]))
+    monkeypatch.setattr(
+        "reconkit.plugins.registry.NmapPlugin", lambda **_: FakePlugin([lab_asset(svc)])
+    )
     capsys.readouterr()
 
     argv = ["scan", "scanme.lab", "--scope", _scope_file(tmp_path), "--db", str(tmp_path / "d")]
@@ -706,7 +720,7 @@ def test_ipv4_only_flag_and_notes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     fake = FakePlugin([lab_asset()])
-    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: fake)
+    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", lambda **_: fake)
     dual = fake_resolver({"scanme.lab": ["10.0.0.5", "2001:db8::5"]})
     monkeypatch.setattr("reconkit.scope.resolve_addresses", dual)
     argv = ["scan", "scanme.lab", "--scope", _scope_file(tmp_path), "--db", str(tmp_path / "d")]
