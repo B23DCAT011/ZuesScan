@@ -1,0 +1,29 @@
+# ReconKit service configuration for Docker Compose. Copy it to deploy/service.toml
+# (git-ignored) and edit: compose mounts this folder read-only at /config.
+#
+# Only the targets listed here can be scanned, by the scheduler or through the web.
+
+[service]
+db = "/data/reconkit.db"                 # in the `data` volume
+# cve_cache = "/data/reconkit-cve.db"    # NVD data: docker compose run --rm worker cve sync ...
+redis_url = "redis://redis:6379/0"       # the `redis` service of compose.yaml
+queue = "reconkit"
+
+# One block per person or script: `docker compose run --rm web token --name alice --role operator`
+# prints the token once and the block to paste here. Never store the token itself.
+# [[tokens]]
+# name = "alice"
+# sha256 = "<64 hex characters>"
+# role = "operator"                      # viewer: read only; operator: scans and decisions
+
+[[targets]]
+name = "example"
+target = "192.0.2.10"                    # TEST-NET-1: replace with a host you are authorised to scan
+scope = "/config/example-scope.txt"
+profile = "standard"
+# every = "24h"                          # scheduled scan
+# engagement = "PT-2026-001"
+
+# [notify]
+# webhook = "https://hooks.slack.com/services/..."
+# min_priority = "P2"

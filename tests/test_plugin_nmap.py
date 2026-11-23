@@ -4,6 +4,7 @@ Parsing is tested on a saved XML sample; `scan()` is tested by replacing
 `subprocess.run`, so each failure mode can be triggered on demand.
 """
 
+import errno
 import shutil
 import subprocess
 from pathlib import Path
@@ -163,6 +164,24 @@ def test_scan_wraps_nonzero_exit_and_keeps_stderr(monkeypatch: pytest.MonkeyPatc
         NmapPlugin().scan(LAB)
     assert excinfo.value.plugin == "nmap"
     assert excinfo.value.stderr == "You requested a scan type which requires root"
+
+
+def test_a_refused_raw_socket_says_how_to_allow_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    # In a container without NET_RAW (or with no-new-privileges), nmap's raw socket is
+    # refused and it only prints "QUITTING!": the error must say what to change.
+    failure = subprocess.CalledProcessError(
+        returncode=1, cmd=["nmap"], stderr="dnet: Failed to open device eth0\nQUITTING!\n"
+    )
+    _fake_run(monkeypatch, failure)
+    with pytest.raises(ScanError, match="--cap-add NET_RAW and no-new-privileges off"):
+        NmapPlugin().scan(LAB)
+
+
+def test_a_binary_the_process_may_not_execute_says_why(monkeypatch: pytest.MonkeyPatch) -> None:
+    # nmap carries a file capability the container's bounding set lacks: exec gives EPERM.
+    _fake_run(monkeypatch, PermissionError(errno.EPERM, "Operation not permitted", "nmap"))
+    with pytest.raises(ScanError, match="could not start nmap: .*CAP_NET_RAW"):
+        NmapPlugin().scan(LAB)
 
 
 def test_scan_wraps_timeout(monkeypatch: pytest.MonkeyPatch) -> None:

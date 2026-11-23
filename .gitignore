@@ -36,3 +36,7 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# Docker deployment: the real config holds token hashes, webhook URLs and scopes
+deploy/service.toml
+backups/
