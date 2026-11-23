@@ -105,21 +105,27 @@ jobs:
           status = {c["name"]: c["status"] for c in report["checks"]}
           print(status)
           assert report["ready"], report
-          for tool in ("nmap", "nmap rights", "nuclei", "nuclei templates", "subfinder", "ssh"):
+          tools = ("nmap", "nmap rights", "nuclei", "nuclei templates", "subfinder", "dnsx", "ssh")
+          for tool in tools:
               assert status[tool] == "ok", (tool, status[tool])
           PY
-      - name: nuclei, templates and subfinder are the locked versions
+      - name: every tool in the image is the locked version
         run: |
-          nuclei=$(awk '$1 == "nuclei" && $3 == "linux-amd64" { print $2; exit }' zues_scan/data/tools.lock)
-          templates=$(awk '$1 == "nuclei-templates" && $3 == "any" { print $2; exit }' zues_scan/data/tools.lock)
-          subfinder=$(awk '$1 == "subfinder" && $3 == "linux-amd64" { print $2; exit }' zues_scan/data/tools.lock)
-          versions=$(docker run --rm --read-only --tmpfs /tmp --entrypoint python zues-scan:ci -c '
+          docker run --rm --read-only --tmpfs /tmp --entrypoint python zues-scan:ci -c '
+          from zues_scan import tools
+          from zues_scan.plugins.dnsx import DnsxPlugin
           from zues_scan.plugins.nuclei import NucleiPlugin, default_templates
           from zues_scan.plugins.subfinder import SubfinderPlugin
-          print(NucleiPlugin(templates=default_templates()).version())
-          print(SubfinderPlugin().version())')
-          echo "$versions"
-          test "$versions" = "$(printf '%s (templates %s)\n%s' "$nuclei" "$templates" "$subfinder")"
+          lock = tools.for_platform(tools.read_lock(), "linux-amd64")
+          want = {tool: lock[tool].version for tool in tools.BINARIES}
+          want["nuclei"] += f" (templates {lock[tools.TEMPLATES].version})"
+          seen = {
+              "nuclei": NucleiPlugin(templates=default_templates()).version(),
+              "subfinder": SubfinderPlugin().version(),
+              "dnsx": DnsxPlugin().version(),
+          }
+          print(seen)
+          assert seen == want, (seen, want)'
 
   # The whole system on the vulnerable lab: compose stack + targets behind a router,
   # scheduled scans, then the lifecycle demo must end with a verified fix and a fake fix.

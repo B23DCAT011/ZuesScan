@@ -101,7 +101,7 @@ def tools_hint(tool: str) -> str:
 
 def install_hint(tool: str, system: System) -> str:
     """The command that installs `tool` here (system packages are left to the user)."""
-    if tool in ("nuclei", "subfinder", "nuclei-templates"):
+    if tool in (*tools.BINARIES, tools.TEMPLATES):
         return tools_hint(tool)
     if system.name == "Linux":
         for family in system.distro.split():
@@ -365,6 +365,7 @@ def _version(command: list[str]) -> str | None:
 
 
 def gather(config: str | None = None, cve_cache: str = "zues-cve.db") -> list[Check]:
+    from zues_scan.plugins.dnsx import DnsxPlugin
     from zues_scan.plugins.nuclei import NucleiPlugin, default_templates, templates_version
     from zues_scan.plugins.subfinder import SubfinderPlugin
 
@@ -395,6 +396,8 @@ def gather(config: str | None = None, cve_cache: str = "zues-cve.db") -> list[Ch
         check_tool("subfinder", subfinder, plugin.version() if subfinder else None, system)
     )
     checks.append(check_providers(os.environ.get("ZUES_SUBFINDER_CONFIG") or plugin.providers()))
+    dnsx = tools.which("dnsx")
+    checks.append(check_tool("dnsx", dnsx, DnsxPlugin().version() if dnsx else None, system))
     ssh = shutil.which("ssh")
     checks.append(check_tool("ssh", ssh, _version(["ssh", "-V"]) if ssh else None, system))
     checks.append(check_cve_cache(cve_cache, datetime.now(UTC)))

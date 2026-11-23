@@ -63,6 +63,7 @@ class ScanSpec:
     nuclei_templates: str | None = None  # default: $ZUES_NUCLEI_TEMPLATES
     discover: bool = False  # = discoverers += ["subfinder"]
     subfinder_config: str | None = None  # default: $ZUES_SUBFINDER_CONFIG
+    dns_wordlist: str | None = None  # dnsx; default: ZuesScan's own list
     discover_limit: int | None = None
     ipv4_only: bool = False
     operator: str | None = None
@@ -136,12 +137,19 @@ def execute(spec: ScanSpec) -> Outcome:
         providers = spec.subfinder_config or os.environ.get(SUBFINDER_CONFIG_ENV) or None
         if "subfinder" in discovery_names and providers and not Path(providers).is_file():
             return Outcome(2, messages=[f"error: subfinder config not found: {providers}"])
+        if (
+            "dnsx" in discovery_names
+            and spec.dns_wordlist
+            and not Path(spec.dns_wordlist).is_file()
+        ):
+            return Outcome(2, messages=[f"error: DNS wordlist not found: {spec.dns_wordlist}"])
         if spec.discover_limit is not None and spec.discover_limit < 1:
             return Outcome(2, messages=["error: --discover-limit must be at least 1"])
         context = PluginContext(
             profile=profile,
             nuclei_templates=templates,
             subfinder_config=providers,
+            dns_wordlist=spec.dns_wordlist,
             credentials=credentials,
             cve_cache=cache,
         )

@@ -53,7 +53,7 @@ where = ["."]
 include = ["zues_scan*"]
 
 [tool.setuptools.package-data]
-zues_scan = ["data/*.json", "data/*.lock", "report/assets/*", "report/vendor/*", "server/static/*"]
+zues_scan = ["data/*.json", "data/*.lock", "data/*.txt", "report/assets/*", "report/vendor/*", "server/static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

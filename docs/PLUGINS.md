@@ -19,7 +19,7 @@ Bớt công cụ: gỡ gói (`pip uninstall`), hoặc đơn giản là không ch
 |---|---|---|---|
 | `scanner` | tìm host và dịch vụ trên các địa chỉ đã duyệt | `scan(target) -> ScanResult` | nmap |
 | `check` | kiểm tra những gì scanner tìm được | `check(plan, assets) -> ScanResult` | nuclei, ssh-packages |
-| `discovery` | tìm *tên* để quét (chưa quét gì) | `discover(domain) -> DiscoveryResult` | subfinder |
+| `discovery` | tìm *tên* để quét (chưa quét gì) | `discover(domain) -> DiscoveryResult` | subfinder, dnsx |
 
 Mọi plugin có thêm `name`, `is_available()` (công cụ có trên máy không), `version()` (ghi vào
 mỗi run; không bao giờ raise) và thuộc tính lớp **`activity`**.
@@ -29,7 +29,7 @@ mỗi run; không bao giờ raise) và thuộc tính lớp **`activity`**.
 | `activity` | Nghĩa | Ví dụ |
 |---|---|---|
 | `passive` | chỉ hỏi bên thứ ba, không gì tới mục tiêu | subfinder |
-| `scan` | tìm cái đang có: quét cổng, nhận diện dịch vụ, đăng nhập chỉ đọc | nmap, ssh-packages |
+| `scan` | tìm cái đang có: quét cổng, nhận diện dịch vụ, đăng nhập chỉ đọc, hỏi DNS của mục tiêu | nmap, ssh-packages, dnsx |
 | `active` | thử lỗi: request được chế tạo, kiểm tra khai thác | nuclei, exposed-git |
 
 File scope đặt **mức trần** bằng `@activity` (mặc định `scan`). Plugin vượt trần bị từ chối
@@ -104,7 +104,7 @@ output gốc, lỗi là `ScanError`, tên tìm được nằm dưới đúng tê
 |---|---|---|
 | Scanner | `--scanner NAME` (lặp lại được; mặc định `nmap`) | `scanners = ["nmap"]` |
 | Check | `--check NAME`; `--nuclei` = `--check nuclei` | `checks = ["nuclei", "exposed-git"]` |
-| Discovery | `--discoverer NAME`; `--discover` = subfinder | `discoverers = ["subfinder"]` |
+| Discovery | `--discoverer NAME`; `--discover` = subfinder | `discoverers = ["subfinder", "dnsx"]` |
 
 ## Giới hạn
 

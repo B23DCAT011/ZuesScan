@@ -9,6 +9,7 @@ target by its `name`; it never brings its own address, scope file or options.
     cve_cache = "/data/zues-cve.db"    # optional: NVD data for the CVE stage
     nuclei_templates = "/opt/nuclei-templates"   # optional (the image sets it already)
     subfinder_config = "/config/subfinder.yaml"  # optional: API keys of subfinder's sources
+    dns_wordlist = "/config/words.txt"   # optional: dnsx's wordlist (default: ZuesScan's)
     redis_url = "redis://redis:6379/0"
     queue = "zues"
 
@@ -89,6 +90,7 @@ class ServiceConfig:
     cve_cache: str | None = None
     nuclei_templates: str | None = None
     subfinder_config: str | None = None
+    dns_wordlist: str | None = None
     tokens: tuple[Token, ...] = ()
     targets: dict[str, Target] = field(default_factory=dict)
     notify: Notify = Notify()
@@ -128,7 +130,15 @@ def load_config(path: str | Path) -> ServiceConfig:
     service = data.get("service") or {}
     _only(
         service,
-        {"db", "cve_cache", "redis_url", "queue", "nuclei_templates", "subfinder_config"},
+        {
+            "db",
+            "cve_cache",
+            "redis_url",
+            "queue",
+            "nuclei_templates",
+            "subfinder_config",
+            "dns_wordlist",
+        },
         "[service]",
     )
     if "db" not in service:
@@ -157,6 +167,7 @@ def load_config(path: str | Path) -> ServiceConfig:
         cve_cache=service.get("cve_cache"),
         nuclei_templates=service.get("nuclei_templates"),
         subfinder_config=service.get("subfinder_config"),
+        dns_wordlist=service.get("dns_wordlist"),
         tokens=tokens,
         targets=targets,
         notify=Notify(webhook=webhook, min_priority=notify.get("min_priority", "P2")),

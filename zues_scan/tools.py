@@ -1,4 +1,4 @@
-"""The external tools ZuesScan can install itself: nuclei, subfinder, nuclei-templates.
+"""The external tools ZuesScan can install itself: nuclei, subfinder, dnsx, nuclei-templates.
 
     zues tools list | install [TOOL...] | verify | path
     python -m zues_scan.tools update            # newest releases -> zues_scan/data/tools.lock
@@ -41,7 +41,7 @@ from pathlib import Path
 
 LOCK = Path(__file__).with_name("data") / "tools.lock"
 REPO = "projectdiscovery"
-BINARIES = ("nuclei", "subfinder")
+BINARIES = ("nuclei", "subfinder", "dnsx")
 TEMPLATES = "nuclei-templates"
 TOOLS = (*BINARIES, TEMPLATES)
 # Release file naming of ProjectDiscovery, per platform this module supports.
@@ -329,6 +329,17 @@ def checksums(text: str) -> dict[str, str]:
     return sums
 
 
+def release_checksums(tool: str, version: str, base: str, get: Fetch) -> dict[str, str]:
+    """The checksums file of a release: `<tool>_<version>_checksums.txt` for most tools,
+    `<tool>-checksums.txt` for some (naabu)."""
+    for name in (f"{tool}_{version}_checksums.txt", f"{tool}-checksums.txt"):
+        try:
+            return checksums(get(f"{base}/{name}").decode())
+        except OSError:
+            continue
+    raise ToolError(f"{tool} {version}: no checksums file in the release")
+
+
 def latest(tool: str, get: Fetch | None = None) -> str:
     get = get or fetch
     release = json.loads(get(f"https://api.github.com/repos/{REPO}/{tool}/releases/latest"))
@@ -341,7 +352,7 @@ def lock_lines(get: Fetch | None = None) -> list[str]:
     for tool in BINARIES:
         version = latest(tool, get)
         base = f"https://github.com/{REPO}/{tool}/releases/download/v{version}"
-        sums = checksums(get(f"{base}/{tool}_{version}_checksums.txt").decode())
+        sums = release_checksums(tool, version, base, get)
         for where, suffix in PLATFORMS.items():
             name = f"{tool}_{version}_{suffix}.zip"
             if name not in sums:

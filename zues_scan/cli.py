@@ -22,7 +22,6 @@ import logging
 import os
 import re
 import secrets
-import shutil
 import sys
 from collections import Counter
 from pathlib import Path
@@ -200,6 +199,7 @@ def _spec(args: argparse.Namespace) -> ScanSpec:
         nuclei_templates=args.nuclei_templates,
         discover=args.discover,
         subfinder_config=args.subfinder_config,
+        dns_wordlist=args.dns_wordlist,
         discover_limit=args.discover_limit,
         ipv4_only=args.ipv4_only,
         operator=args.operator,
@@ -478,7 +478,9 @@ def _cmd_plugins(args: argparse.Namespace) -> int:
     registry = plugin_registry.load()
     rows = []
     for spec in registry.plugins.values():
-        path = shutil.which(spec.binary) if spec.binary else None
+        # Where plugins really look: ZuesScan's own tools first, then PATH (and the
+        # usual Windows nmap folder). shutil.which missed `zues tools install`'s copies.
+        path = tools.which(spec.binary) if spec.binary else None
         rows.append(
             {
                 "name": spec.name,
@@ -1150,6 +1152,12 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="FILE",
         help="subfinder provider config with API keys (default: "
         "$ZUES_SUBFINDER_CONFIG, else ~/.config/subfinder/provider-config.yaml)",
+    )
+    tuning.add_argument(
+        "--dns-wordlist",
+        metavar="FILE",
+        help="words to try as <word>.<domain> with --discoverer dnsx, one per line "
+        "(default: ZuesScan's own list of a few hundred common names)",
     )
     tuning.add_argument(
         "--discover-limit",

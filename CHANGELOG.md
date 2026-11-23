@@ -6,6 +6,18 @@ section of a version as its release notes, so every tag needs one.
 
 ## [Unreleased]
 
+### Added
+- dnsx discovery plugin (`--discoverer dnsx`): subdomains guessed from a wordlist and
+  confirmed in DNS, for names public sources never saw (`vpn.`, `intranet.`). Activity
+  `scan` (it queries the domain's own DNS servers), rate capped by the profile's
+  `check_rate`, wildcard DNS recognised with two random names, the system's resolvers.
+  ZuesScan's own wordlist (~370 common names) or `--dns-wordlist` / `dns_wordlist`.
+  Installed by `zues tools install` and in the Docker image (pinned in tools.lock).
+
+### Fixed
+- `zues plugins` showed tools installed by `zues tools install` as not ready: it looked on
+  PATH only, while the plugins themselves look in ZuesScan's tools directory first.
+
 ## [0.2.0] - 2026-11-23
 
 The first release meant to be installed by others: a service, a web dashboard, a hardened
