@@ -49,7 +49,7 @@ cột mốc M1 (giao diện đầu tiên) chỉ bắt đầu sau F9.
 | D2 | Giao diện đầu tiên | **Báo cáo HTML tĩnh** (M1), một file, mở offline | Thấy kết quả sớm, chưa phải dựng server và đăng nhập |
 | D3 | Thư viện vẽ đồ thị | **Cytoscape.js** | *Compound node* (host nằm trong dải mạng) khớp đúng mô hình; dùng lại được ở web app |
 | D4 | Web framework (GĐ 3) | **FastAPI** | Python có type hint như lõi; tự sinh tài liệu API |
-| D5 | Frontend web app | **Quyết sau M1** (htmx hay React) | M1 sẽ cho thấy cần tương tác tới mức nào |
+| D5 | Frontend web app | **JavaScript thuần, không build** (chốt 2026-11-23, sau M1) | M1 cho thấy phần tương tác nặng nhất (bản đồ) đã có sẵn trong báo cáo HTML; dashboard chỉ cần bảng + form. Không npm / bundler = không chuỗi cung ứng phụ thuộc, CSP chặt được (`script-src 'self'`); htmx hay React đều thêm thư viện mà không thêm gì cần thiết |
 | D6 | Hàng đợi (GĐ 3) | **Redis + RQ** | Đơn giản, đủ cho vài worker |
 | D7 | Traceroute | **Có**, plugin nmap bật `--traceroute` theo profile | Cần cho các hop trên bản đồ; đổi lại quét lâu hơn một chút |
 | D8 | Lộ trình | **Chèn M1 sau F9** | Xem `TASKS.md` |

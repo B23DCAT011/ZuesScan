@@ -311,3 +311,55 @@ reconkit scheduler --config service.toml --once                      # một vò
 - Lỗi cấu hình (khoá lạ, thiếu file scope, `every` quá ngắn, lưu token thay vì mã băm…) làm
   dịch vụ **không khởi động**, thay vì chạy sai. Redis không kết nối được thì báo một dòng (mật
   khẩu trong `redis_url` được che `***`), không in traceback.
+
+## Web API & dashboard
+
+```bash
+reconkit web --config service.toml              # http://127.0.0.1:8000 — chỉ máy này
+reconkit web --config service.toml --host 0.0.0.0 --port 8000   # sau reverse proxy có TLS
+```
+
+Mở trình duyệt, dán token (`reconkit token`) vào ô đăng nhập. Dashboard (JavaScript thuần,
+không thư viện ngoài, không bước build) có:
+
+- **Overview**: số finding đang mở theo P1–P4, số *fix giả* / *xuất hiện lại*; các target trong
+  `service.toml` với nút **Scan now** (chỉ vai trò `operator`); hàng đợi quét tự làm mới.
+- **Runs**: mỗi run mở **bản đồ bề mặt tấn công** của M1 nguyên vẹn (cùng trang với
+  `reconkit report --html`, giữ CSP riêng của nó), tải JSON hoặc SARIF.
+- **Findings**: theo mức ưu tiên, lọc theo trạng thái; trang chi tiết có lịch sử vòng đời và
+  form quyết định (báo đã sửa / chấp nhận rủi ro có lý do + ngày xem lại / mở lại) — ghi vào
+  audit trail dưới tên của token.
+- **Audit**: kiểm chuỗi băm của audit trail và các sự kiện mới nhất.
+
+API dùng được bằng script (`Authorization: Bearer <token>`):
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/v1/findings
+curl -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+     -d '{"target": "office-lan"}' http://127.0.0.1:8000/api/v1/scans       # operator
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/v1/runs/3/sarif -o run3.sarif
+```
+
+| Endpoint | Vai trò | |
+|---|---|---|
+| `GET /api/v1/me`, `targets`, `jobs`, `jobs/{id}`, `runs`, `runs/{id}`, `findings`, `findings/{id}`, `hosts`, `audit` | viewer | đọc |
+| `GET /api/v1/runs/{id}/report.html`, `/sarif` | viewer | báo cáo HTML (bản đồ) / SARIF 2.1.0 |
+| `POST /api/v1/scans` `{"target": "<tên>"}` | operator | xếp hàng quét một target **đã khai** |
+| `POST /api/v1/findings/{id}/decision` `{"action": "claim_fixed" \| "accept" \| "reopen", "note", "until"}` | operator | quyết định |
+| `POST` / `DELETE /api/v1/session` | — | đăng nhập / đăng xuất của trình duyệt |
+| `GET /healthz` | — | kiểm tra sống (config, DB, Redis) cho Docker |
+
+Bảo mật:
+
+- Token chỉ lưu dạng SHA-256 trong `service.toml`, so sánh thời gian hằng. Sửa file là có hiệu
+  lực ở request kế tiếp (gỡ token = thu hồi ngay); file sửa hỏng thì API **từ chối mọi request**
+  cho tới khi sửa xong, không chạy tiếp bằng cấu hình cũ.
+- Trình duyệt giữ token trong cookie **HttpOnly** (script trong trang không đọc được),
+  **SameSite=Strict**, `Secure` khi chạy HTTPS. Mọi request thay đổi dữ liệu đi bằng cookie còn
+  phải có header `X-ReconKit: 1` — trang web khác không gửi được header này (chống CSRF).
+- Yêu cầu quét chỉ mang **tên** target; thêm bất kỳ trường nào khác (địa chỉ, scope…) là bị từ
+  chối (422).
+- Dữ liệu quét được coi là không tin cậy: dashboard chỉ đưa dữ liệu vào trang dưới dạng chữ
+  (`textContent`), CSP chỉ cho chạy `app.js` của chính server và chỉ gọi về chính server; mọi
+  response có `nosniff`, `X-Frame-Options: DENY`, `no-referrer`, `no-store`.
+- Không có `/docs` (Swagger UI tải script từ CDN); schema ở `/api/v1/openapi.json`.
