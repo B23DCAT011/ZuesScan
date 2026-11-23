@@ -92,6 +92,7 @@ def test_the_built_in_plugins() -> None:
         "nmap": ("scanner", "scan"),
         "naabu": ("scanner", "scan"),
         "nuclei": ("check", "active"),
+        "httpx": ("check", "scan"),
         "ssh-packages": ("check", "scan"),
         "subfinder": ("discovery", "passive"),
         "dnsx": ("discovery", "scan"),

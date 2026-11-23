@@ -137,6 +137,7 @@ def _service(s: Service) -> dict[str, Any]:
         "version": s.version,
         "cpe": s.cpe,
         "banner": s.banner,
+        "web": s.web.to_dict() if s.web else None,
     }
 
 

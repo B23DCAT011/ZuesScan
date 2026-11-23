@@ -26,6 +26,7 @@ from typing import Any, Literal
 
 from zues_scan.cve.cache import CveCache
 from zues_scan.plugins.dnsx import DnsxPlugin
+from zues_scan.plugins.httpx import HttpxPlugin
 from zues_scan.plugins.naabu import NaabuPlugin
 from zues_scan.plugins.nmap import NmapPlugin
 from zues_scan.plugins.nuclei import NucleiPlugin
@@ -85,6 +86,10 @@ def _nmap(ctx: PluginContext) -> Any:
     return NmapPlugin(profile=ctx.profile)
 
 
+def _httpx(ctx: PluginContext) -> Any:
+    return HttpxPlugin(profile=ctx.profile)
+
+
 def _naabu(ctx: PluginContext) -> Any:
     return NaabuPlugin(profile=ctx.profile, nmap=lambda *a, **kw: NmapPlugin(*a, **kw))
 
@@ -137,6 +142,14 @@ BUILTINS: tuple[PluginSpec, ...] = (
         _nuclei,
         binary="nuclei",
         needs=("nuclei templates",),
+    ),
+    PluginSpec(
+        "httpx",
+        "check",
+        HttpxPlugin.activity,
+        "web services: status, title, server, technologies (versions go to the CVE stage)",
+        _httpx,
+        binary="httpx",
     ),
     PluginSpec(
         "ssh-packages",

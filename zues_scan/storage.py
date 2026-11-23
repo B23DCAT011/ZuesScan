@@ -36,13 +36,14 @@ from zues_scan.schema import (
     ScanTarget,
     Service,
     Severity,
+    WebPage,
 )
 
 log = logging.getLogger(__name__)
 
 # The schema version this code reads and writes. Bump it together with a new entry
 # in `_MIGRATIONS`; never edit a migration that has already shipped.
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 
 class StorageError(Exception):
@@ -440,6 +441,10 @@ _V11 = (
 # hosts), as a JSON list.
 _V12 = ("ALTER TABLE asset ADD COLUMN names TEXT NOT NULL DEFAULT '[]'",)
 
+# Version 13: what a web check (httpx) saw on a service — URL, status, title, server,
+# technologies — as a JSON object (NULL: not a web service, or not looked at).
+_V13 = ("ALTER TABLE service ADD COLUMN web TEXT",)
+
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: _V1,
     2: _V2,
@@ -453,6 +458,7 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
     10: _V10,
     11: _V11,
     12: _V12,
+    13: _V13,
 }
 
 
@@ -889,8 +895,8 @@ class Storage:
         for s in services:
             cur = self._conn.execute(
                 "INSERT INTO service "
-                "(asset_id, port, protocol, state, name, product, version, cpe, banner) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(asset_id, port, protocol, state, name, product, version, cpe, banner, web) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     asset_id,
                     s.port,
@@ -901,6 +907,7 @@ class Storage:
                     s.version,
                     s.cpe,
                     s.banner,
+                    json.dumps(s.web.to_dict()) if s.web else None,
                 ),
             )
             ids[(s.port, s.protocol)] = int(cur.lastrowid or 0)
@@ -1053,7 +1060,7 @@ class Storage:
         ).fetchall():
             asset = Asset(host=a["host"], ip=a["ip"], names=list(json.loads(a["names"] or "[]")))
             for s in self._conn.execute(
-                "SELECT id, port, protocol, state, name, product, version, cpe, banner "
+                "SELECT id, port, protocol, state, name, product, version, cpe, banner, web "
                 "FROM service WHERE asset_id = ? ORDER BY id",
                 (a["id"],),
             ):
@@ -1153,8 +1160,8 @@ class Storage:
     def services_for_run(self, run_id: int) -> list[Service]:
         """The services recorded for a run, across all its hosts, by port."""
         rows = self._conn.execute(
-            "SELECT s.port, s.protocol, s.state, s.name, s.product, s.version, s.cpe, s.banner "
-            "FROM service s JOIN asset a ON a.id = s.asset_id "
+            "SELECT s.port, s.protocol, s.state, s.name, s.product, s.version, s.cpe, s.banner, "
+            "s.web FROM service s JOIN asset a ON a.id = s.asset_id "
             "WHERE a.run_id = ? ORDER BY s.port, s.id",
             (run_id,),
         ).fetchall()
@@ -1176,6 +1183,7 @@ def _service(row: sqlite3.Row) -> Service:
         version=row["version"],
         cpe=row["cpe"],
         banner=row["banner"],
+        web=WebPage.from_dict(json.loads(row["web"])) if row["web"] else None,
     )
 
 

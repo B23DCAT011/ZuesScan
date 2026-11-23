@@ -18,7 +18,7 @@ Bớt công cụ: gỡ gói (`pip uninstall`), hoặc đơn giản là không ch
 | Loại | Làm gì | Hợp đồng (`zues_scan.plugins.base`) | Dựng sẵn |
 |---|---|---|---|
 | `scanner` | tìm host và dịch vụ trên các địa chỉ đã duyệt | `scan(target) -> ScanResult` | nmap, naabu |
-| `check` | kiểm tra những gì scanner tìm được | `check(plan, assets) -> ScanResult` | nuclei, ssh-packages |
+| `check` | kiểm tra những gì scanner tìm được | `check(plan, assets) -> ScanResult` | httpx, nuclei, ssh-packages |
 | `discovery` | tìm *tên* để quét (chưa quét gì) | `discover(domain) -> DiscoveryResult` | subfinder, dnsx |
 
 Mọi plugin có thêm `name`, `is_available()` (công cụ có trên máy không), `version()` (ghi vào
@@ -29,7 +29,7 @@ mỗi run; không bao giờ raise) và thuộc tính lớp **`activity`**.
 | `activity` | Nghĩa | Ví dụ |
 |---|---|---|
 | `passive` | chỉ hỏi bên thứ ba, không gì tới mục tiêu | subfinder |
-| `scan` | tìm cái đang có: quét cổng, nhận diện dịch vụ, đăng nhập chỉ đọc, hỏi DNS của mục tiêu | nmap, naabu, ssh-packages, dnsx |
+| `scan` | tìm cái đang có: quét cổng, nhận diện dịch vụ, đăng nhập chỉ đọc, hỏi DNS của mục tiêu | nmap, naabu, httpx, ssh-packages, dnsx |
 | `active` | thử lỗi: request được chế tạo, kiểm tra khai thác | nuclei, exposed-git |
 
 File scope đặt **mức trần** bằng `@activity` (mặc định `scan`). Plugin vượt trần bị từ chối
@@ -52,6 +52,11 @@ Plugin khai thấp hơn `PluginSpec` của chính nó thì registry từ chối 
 
 Orchestrator vẫn kiểm lại (host ngoài scope bị bỏ, check không được thêm host mới), nhưng plugin
 đúng hợp đồng thì không phụ thuộc vào lớp phòng thủ đó.
+
+Một check trả về finding trên các host được giao; ngoài ra nó có thể trả `Service(port, web=WebPage(...))`
+(như httpx): thông tin web được gắn vào **dịch vụ mà lần quét đã tìm thấy** trên cùng cổng — một
+cổng check tự nhận mà scanner không thấy thì bị bỏ qua. Công nghệ có phiên bản trong `WebPage`
+được bước CVE đối chiếu (`zues_scan.cve.match.components`).
 
 ## Đóng gói
 

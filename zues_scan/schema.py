@@ -20,6 +20,7 @@ import ipaddress
 import json
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 
 
 class Severity(StrEnum):
@@ -93,6 +94,42 @@ class RawOutput:
 
 
 @dataclass(frozen=True, slots=True)
+class WebPage:
+    """What an HTTP probe (httpx) saw at the root of a web service.
+
+    Everything here comes from the scanned machine: shown escaped, never trusted.
+    """
+
+    url: str  # e.g. "https://10.0.0.5:8443"
+    status: int | None = None  # HTTP status of the first answer (redirects not followed)
+    title: str | None = None
+    server: str | None = None  # the Server header
+    # Technologies recognised (Wappalyzer names), "Name" or "Name:version",
+    # e.g. "Apache HTTP Server:2.4.49", "PHP:7.4.3". Versions feed the CVE stage.
+    technologies: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "url": self.url,
+            "status": self.status,
+            "title": self.title,
+            "server": self.server,
+            "technologies": list(self.technologies),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> WebPage:
+        status = data.get("status")
+        return cls(
+            url=str(data["url"]),
+            status=int(status) if status is not None else None,
+            title=data.get("title"),
+            server=data.get("server"),
+            technologies=tuple(str(t) for t in data.get("technologies") or ()),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class Service:
     """An open port on an asset and the software fingerprinted behind it."""
 
@@ -104,6 +141,7 @@ class Service:
     version: str | None = None  # e.g. "7.4"
     cpe: str | None = None  # e.g. "cpe:/a:openbsd:openssh:7.4"
     banner: str | None = None
+    web: WebPage | None = None  # set by an HTTP check (httpx) on a web service
 
 
 # Which recipe a fingerprint was made with. Fingerprints are only comparable within

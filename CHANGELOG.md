@@ -7,6 +7,13 @@ section of a version as its release notes, so every tag needs one.
 ## [Unreleased]
 
 ### Added
+- httpx check plugin (`--check httpx`): what each web service is — URL, status, title,
+  Server header, technologies (Wappalyzer) — fetched with a plain GET of `/`, by address,
+  redirects not followed, rate from `check_rate`. Kept on the service (`Service.web`,
+  database schema 13), shown by `zues scan`, the HTML map, the API and MCP. Technologies
+  with a version and a known CPE name (`TECH_NAMES`) go to the CVE stage as software on
+  that port; the same CVE inferred by nmap and httpx is one finding, both observations in
+  its evidence. The lab targets run httpx with nuclei, and CI checks it.
 - naabu scanner plugin (`--scanner naabu`): nmap finds the live hosts (`-sn`; naabu cannot
   without root), naabu finds their open ports with a connect scan at a fixed rate
   (`max_rate`, default 1000/s; no raw sockets), nmap identifies the services on those ports
