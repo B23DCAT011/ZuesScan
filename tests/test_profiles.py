@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from reconkit.profiles import (
+from zues_scan.profiles import (
     BUILTIN,
     DEFAULT_PROFILE,
     ProfileError,
@@ -130,7 +130,7 @@ def test_settings_are_recorded_without_the_description() -> None:
 
 
 def _config(tmp_path: Path, text: str) -> Path:
-    path = tmp_path / "reconkit.toml"
+    path = tmp_path / "zues.toml"
     path.write_text(text, encoding="utf-8")
     return path
 

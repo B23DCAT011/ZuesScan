@@ -9,12 +9,12 @@ from pathlib import Path
 import pytest
 from conftest import FakePlugin, lab_asset, lab_resolver
 
-from reconkit import cli
-from reconkit.audit import GENESIS, AuditKind
-from reconkit.orchestrator import Orchestrator, ScanRun
-from reconkit.schema import ScanTarget, Service
-from reconkit.scope import Scope, ScopeError
-from reconkit.storage import Storage
+from zues_scan import cli
+from zues_scan.audit import GENESIS, AuditKind
+from zues_scan.orchestrator import Orchestrator, ScanRun
+from zues_scan.schema import ScanTarget, Service
+from zues_scan.scope import Scope, ScopeError
+from zues_scan.storage import Storage
 
 ICT = timezone(timedelta(hours=7))
 SCOPE_TEXT = (
@@ -239,9 +239,9 @@ def test_empty_chain() -> None:
 
 @pytest.fixture
 def _lab(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("reconkit.scope.resolve_addresses", lab_resolver)
+    monkeypatch.setattr("zues_scan.scope.resolve_addresses", lab_resolver)
     monkeypatch.setattr(
-        "reconkit.plugins.registry.NmapPlugin", lambda **_: FakePlugin([lab_asset()])
+        "zues_scan.plugins.registry.NmapPlugin", lambda **_: FakePlugin([lab_asset()])
     )
 
 

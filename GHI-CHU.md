@@ -1,4 +1,4 @@
-# Ghi chú học tập — ReconKit
+# Ghi chú học tập — ZuesScan
 
 File này lưu những gì đã tìm hiểu được cho dự án. Cứ bổ sung dần khi học thêm.
 

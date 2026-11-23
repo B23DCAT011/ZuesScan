@@ -2,7 +2,7 @@
 
 import re
 
-from reconkit.schema import FINGERPRINT_SCHEME, Asset, Finding, Service, Severity
+from zues_scan.schema import FINGERPRINT_SCHEME, Asset, Finding, Service, Severity
 
 SSH = Service(port=22, name="ssh", product="OpenSSH", version="7.4")
 

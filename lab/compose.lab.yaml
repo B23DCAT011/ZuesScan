@@ -1,4 +1,4 @@
-# ReconKit lab: deliberately vulnerable services on two ISOLATED networks, scanned by the
+# ZuesScan lab: deliberately vulnerable services on two ISOLATED networks, scanned by the
 # worker of compose.yaml. Start it with lab/up.sh (or see the commands in README "Lab").
 #
 #   lab-dmz       10.66.1.0/24   worker, Apache 2.4.49 (.20), OpenSSH 7.5 (.22), router (.254)
@@ -34,7 +34,7 @@ services:
   # enough to add the route to the internal network through the router, then exits.
   worker-route:
     build: lab/router
-    image: reconkit-lab-router:local
+    image: zues-lab-router:local
     network_mode: "service:worker"
     cap_drop: [ALL]
     cap_add: [NET_ADMIN]
@@ -44,7 +44,7 @@ services:
 
   router:
     build: lab/router
-    image: reconkit-lab-router:local
+    image: zues-lab-router:local
     cap_drop: [ALL]
     cap_add: [NET_ADMIN, NET_RAW]
     init: true                    # stops at once on `docker compose down`
@@ -59,14 +59,14 @@ services:
     # Apache httpd 2.4.49: CVE-2021-41773 (path traversal, on CISA's KEV list),
     # configured to be exploitable (lab/apache/Dockerfile): nuclei confirms it.
     build: lab/apache
-    image: reconkit-lab-apache:local
+    image: zues-lab-apache:local
     networks:
       lab-dmz: { ipv4_address: 10.66.1.20 }
     restart: unless-stopped
 
   ssh:
     build: lab/ssh
-    image: reconkit-lab-ssh:local
+    image: zues-lab-ssh:local
     networks:
       lab-dmz: { ipv4_address: 10.66.1.22 }
     restart: unless-stopped

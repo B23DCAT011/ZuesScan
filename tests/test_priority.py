@@ -8,12 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from reconkit.cve import LocalCveSource
-from reconkit.cve.cache import CveCache, refresh_epss, refresh_kev, sync
-from reconkit.cve.feeds import EPSS_URL, KEV_URL, FeedError, parse_epss, parse_kev
-from reconkit.cve.nvd import NvdClient
-from reconkit.priority import Priority, priority, reason, sort_key
-from reconkit.schema import Finding, Service, Severity
+from zues_scan.cve import LocalCveSource
+from zues_scan.cve.cache import CveCache, refresh_epss, refresh_kev, sync
+from zues_scan.cve.feeds import EPSS_URL, KEV_URL, FeedError, parse_epss, parse_kev
+from zues_scan.cve.nvd import NvdClient
+from zues_scan.priority import Priority, priority, reason, sort_key
+from zues_scan.schema import Finding, Service, Severity
 
 DATA = Path(__file__).parent / "data"
 KEV = (DATA / "kev_sample.json").read_bytes()
@@ -119,7 +119,7 @@ def test_findings_from_the_cache_carry_kev_and_epss(tmp_path: Path) -> None:
         assert refresh_epss(cache, _feeds, now=lambda: NOW) == ("2026-11-21T12:00:24Z", 3)
         assert cache.feeds()["kev"] == ("2026-11-22T00:00:00+00:00", "2026.11.20", 2)
 
-        from reconkit.cve.cache import NvdCveSource
+        from zues_scan.cve.cache import NvdCveSource
 
         source = NvdCveSource(cache)
         (nginx,) = source.find(Service(port=80, product="nginx", version="1.18.0"), "h")

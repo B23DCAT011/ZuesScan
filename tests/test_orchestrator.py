@@ -3,11 +3,11 @@
 import pytest
 from conftest import FakePlugin, fake_resolver, lab_asset, lab_resolver, lab_scope
 
-from reconkit.cve import CveSource, LocalCveSource
-from reconkit.orchestrator import NoPluginAvailableError, Orchestrator, RunStatus
-from reconkit.plugins.base import ScanError, ScannerPlugin, ScanResult
-from reconkit.schema import Asset, Finding, Hop, RawOutput, ScanTarget, Service
-from reconkit.scope import ResolutionError, Resolver, Scope, ScopeError
+from zues_scan.cve import CveSource, LocalCveSource
+from zues_scan.orchestrator import NoPluginAvailableError, Orchestrator, RunStatus
+from zues_scan.plugins.base import ScanError, ScannerPlugin, ScanResult
+from zues_scan.schema import Asset, Finding, Hop, RawOutput, ScanTarget, Service
+from zues_scan.scope import ResolutionError, Resolver, Scope, ScopeError
 
 OPENSSH_74 = Service(port=22, name="ssh", product="OpenSSH", version="7.4")
 
@@ -349,7 +349,7 @@ def test_failed_run_keeps_what_the_scanner_printed() -> None:
 
 
 def test_run_and_failed_run_record_the_profile() -> None:
-    from reconkit.profiles import BUILTIN
+    from zues_scan.profiles import BUILTIN
 
     orch = Orchestrator(
         [FakePlugin([lab_asset()])], lab_scope(), resolver=lab_resolver, profile=BUILTIN["quick"]

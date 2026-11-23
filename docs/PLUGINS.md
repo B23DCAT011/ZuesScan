@@ -1,13 +1,13 @@
-# Viết plugin cho ReconKit
+# Viết plugin cho ZuesScan
 
-ReconKit là bộ điều phối: nó không tự quét, mà gọi **plugin** — mỗi plugin bọc một công cụ
+ZuesScan là bộ điều phối: nó không tự quét, mà gọi **plugin** — mỗi plugin bọc một công cụ
 (nmap, nuclei, subfinder…) hoặc một bài kiểm viết bằng Python. Thêm công cụ mới **không cần sửa
-ReconKit**: viết plugin thành một gói Python riêng, cài vào cùng môi trường, và ReconKit tự thấy.
+ZuesScan**: viết plugin thành một gói Python riêng, cài vào cùng môi trường, và ZuesScan tự thấy.
 
 ```bash
-pip install reconkit-exposed-git          # hoặc: pip install ./examples/reconkit-exposed-git
-reconkit plugins                          # exposed-git  check  active  yes  reconkit-exposed-git ...
-reconkit scan 10.0.0.0/24 --scope scope.txt --check exposed-git
+pip install zues-exposed-git          # hoặc: pip install ./examples/zues-exposed-git
+zues plugins                          # exposed-git  check  active  yes  zues-exposed-git ...
+zues scan 10.0.0.0/24 --scope scope.txt --check exposed-git
 ```
 
 Bớt công cụ: gỡ gói (`pip uninstall`), hoặc đơn giản là không chọn nó. Plugin dựng sẵn không gỡ
@@ -15,7 +15,7 @@ Bớt công cụ: gỡ gói (`pip uninstall`), hoặc đơn giản là không ch
 
 ## Ba loại plugin
 
-| Loại | Làm gì | Hợp đồng (`reconkit.plugins.base`) | Dựng sẵn |
+| Loại | Làm gì | Hợp đồng (`zues_scan.plugins.base`) | Dựng sẵn |
 |---|---|---|---|
 | `scanner` | tìm host và dịch vụ trên các địa chỉ đã duyệt | `scan(target) -> ScanResult` | nmap |
 | `check` | kiểm tra những gì scanner tìm được | `check(plan, assets) -> ScanResult` | nuclei, ssh-packages |
@@ -58,15 +58,15 @@ Orchestrator vẫn kiểm lại (host ngoài scope bị bỏ, check không đư�
 ```toml
 # pyproject.toml
 [project]
-name = "reconkit-exposed-git"
+name = "zues-exposed-git"
 
-[project.entry-points."reconkit.plugins"]
-exposed-git = "reconkit_exposed_git:PLUGIN"
+[project.entry-points."zues_scan.plugins"]
+exposed-git = "zues_exposed_git:PLUGIN"
 ```
 
 ```python
-from reconkit.plugins.registry import PluginContext, PluginSpec
-from reconkit.scope import Activity
+from zues_scan.plugins.registry import PluginContext, PluginSpec
+from zues_scan.scope import Activity
 
 PLUGIN = PluginSpec(
     name="exposed-git",
@@ -79,14 +79,14 @@ PLUGIN = PluginSpec(
 ```
 
 Gói hỏng (lỗi import, không phải `PluginSpec`, trùng tên plugin dựng sẵn) bị bỏ qua và báo
-trong `reconkit plugins` / `reconkit doctor` — không bao giờ làm hỏng các plugin khác.
+trong `zues plugins` / `zues doctor` — không bao giờ làm hỏng các plugin khác.
 
-Ví dụ đầy đủ, chạy được: [`examples/reconkit-exposed-git`](../examples/reconkit-exposed-git).
+Ví dụ đầy đủ, chạy được: [`examples/zues-exposed-git`](../examples/zues-exposed-git).
 
 ## Kiểm tra hợp đồng trong test của plugin
 
 ```python
-from reconkit.plugins import contract
+from zues_scan.plugins import contract
 
 
 def test_keeps_the_contract():
@@ -108,5 +108,5 @@ output gốc, lỗi là `ScanError`, tên tìm được nằm dưới đúng tê
 
 ## Giới hạn
 
-Plugin chạy **trong cùng tiến trình** với ReconKit và có mọi quyền của nó; `activity` là lời khai
+Plugin chạy **trong cùng tiến trình** với ZuesScan và có mọi quyền của nó; `activity` là lời khai
 của plugin. Chỉ cài plugin từ nguồn tin cậy — xem G25 trong [`KNOWN-GAPS.md`](KNOWN-GAPS.md).

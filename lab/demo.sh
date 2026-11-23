@@ -10,9 +10,9 @@
 set -eu
 cd "$(dirname "$0")/.."
 export MSYS_NO_PATHCONV=1
-compose() { docker compose -p reconkit-lab -f compose.yaml -f lab/compose.lab.yaml "$@"; }
-rk() { compose exec -T worker reconkit "$@"; }
-DB=/data/reconkit.db
+compose() { docker compose -p zues-lab -f compose.yaml -f lab/compose.lab.yaml "$@"; }
+rk() { compose exec -T worker zues "$@"; }
+DB=/data/zues.db
 
 runs() { rk runs --db "$DB" 2>/dev/null | grep -c ' completed ' || true; }
 wait_runs() {

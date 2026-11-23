@@ -12,11 +12,11 @@ from typing import Any
 
 import pytest
 
-from reconkit.orchestrator import RunStatus, ScanRun
-from reconkit.report import render_html, report_model
-from reconkit.report.graph import build_graph, network_of
-from reconkit.report.html import json_for_html
-from reconkit.schema import Asset, Finding, Hop, Service, Severity
+from zues_scan.orchestrator import RunStatus, ScanRun
+from zues_scan.report import render_html, report_model
+from zues_scan.report.graph import build_graph, network_of
+from zues_scan.report.html import json_for_html
+from zues_scan.schema import Asset, Finding, Hop, Service, Severity
 
 CYTOSCAPE_SHA256 = "081591ab735b2b6a3b31a3c60f8f3a3e2fee8c92939e0c7820ad1208571b6cd8"
 
@@ -69,9 +69,9 @@ def _nodes(graph: dict[str, list[dict[str, Any]]]) -> dict[str, dict[str, Any]]:
 
 
 def test_vendored_cytoscape_is_the_pinned_file() -> None:
-    data = resources.files("reconkit.report").joinpath("vendor/cytoscape.min.js").read_bytes()
+    data = resources.files("zues_scan.report").joinpath("vendor/cytoscape.min.js").read_bytes()
     assert hashlib.sha256(data).hexdigest() == CYTOSCAPE_SHA256
-    readme = resources.files("reconkit.report").joinpath("vendor/README.md").read_text("utf-8")
+    readme = resources.files("zues_scan.report").joinpath("vendor/README.md").read_text("utf-8")
     assert CYTOSCAPE_SHA256 in readme
 
 
@@ -175,7 +175,7 @@ def test_hosts_are_grouped_by_prefix(ip: str | None, network: str | None) -> Non
 
 def test_model_summarises_the_run() -> None:
     model = report_model(_run(), 7)
-    assert model["format"] == "reconkit-report"
+    assert model["format"] == "zues-report"
     assert model["run"]["id"] == 7
     assert model["run"]["scanners"] == [{"name": "nmap", "version": "7.992"}]
     assert model["run"]["profile"] is None
@@ -294,11 +294,11 @@ def test_title_is_escaped() -> None:
     run = _run([])
     run.target = "<b>x</b>"
     page, _ = _page(run)
-    assert "<title>ReconKit — run #1 — &lt;b&gt;x&lt;/b&gt;</title>" in page
+    assert "<title>ZuesScan — run #1 — &lt;b&gt;x&lt;/b&gt;</title>" in page
 
 
 def test_page_script_never_writes_markup() -> None:
-    script = resources.files("reconkit.report").joinpath("assets/report.js").read_text("utf-8")
+    script = resources.files("zues_scan.report").joinpath("assets/report.js").read_text("utf-8")
     code = re.sub(r"/\*.*?\*/", "", script, flags=re.S)  # the header comment names them
     for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval("):
         assert sink not in code
@@ -323,7 +323,7 @@ def test_many_findings_on_one_port_are_summed_up_on_the_map() -> None:
 
 
 def test_sarif_follows_the_2_1_0_structure() -> None:
-    from reconkit.report.sarif import to_sarif
+    from zues_scan.report.sarif import to_sarif
 
     assets = _assets()
     assets[0].findings[1].cvss_score = 7.7
@@ -334,7 +334,7 @@ def test_sarif_follows_the_2_1_0_structure() -> None:
     assert sarif["version"] == "2.1.0" and sarif["$schema"].endswith("sarif-2.1.0.json")
     (run,) = sarif["runs"]
     driver = run["tool"]["driver"]
-    assert driver["name"] == "ReconKit"
+    assert driver["name"] == "ZuesScan"
     rules = driver["rules"]
     assert [r["id"] for r in rules] == ["CVE-2018-15473", "CVE-2021-23017", "CVE-0000-0001"]
     results = run["results"]
@@ -344,7 +344,7 @@ def test_sarif_follows_the_2_1_0_structure() -> None:
         assert result["ruleId"] == rule["id"]  # index and id agree
         assert result["level"] in ("error", "warning", "note")
         assert result["message"]["text"]
-        assert result["partialFingerprints"]["reconkit/v2"].startswith("v2:")
+        assert result["partialFingerprints"]["zues_scan/v2"].startswith("v2:")
         assert None not in result["properties"].values()
     nginx = results[1]
     assert nginx["level"] == "error"  # high
@@ -362,11 +362,11 @@ def test_sarif_follows_the_2_1_0_structure() -> None:
     loose = results[2]  # no service: located at the host itself
     assert loose["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "tcp://10.0.0.5"
     assert run["invocations"][0]["executionSuccessful"] is True
-    assert run["automationDetails"]["id"] == "reconkit/10.0.0.0/24/run-4"
+    assert run["automationDetails"]["id"] == "zues_scan/10.0.0.0/24/run-4"
 
 
 def test_sarif_of_ipv6_and_of_a_failed_run() -> None:
-    from reconkit.report.sarif import to_sarif
+    from zues_scan.report.sarif import to_sarif
 
     f = _finding(SSH, "CVE-2018-15473", Severity.MEDIUM, "2001:db8::5")
     asset = Asset(host="2001:db8::5", ip="2001:db8::5", services=[SSH], findings=[f])

@@ -22,10 +22,10 @@ from conftest import FakePlugin, lab_asset, lab_resolver  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from rq import SimpleWorker  # noqa: E402
 
-from reconkit.schema import Service  # noqa: E402
-from reconkit.server.config import ConfigError  # noqa: E402
-from reconkit.server.web import COOKIE, DASHBOARD_CSP, create_app  # noqa: E402
-from reconkit.storage import Storage  # noqa: E402
+from zues_scan.schema import Service  # noqa: E402
+from zues_scan.server.config import ConfigError  # noqa: E402
+from zues_scan.server.web import COOKIE, DASHBOARD_CSP, create_app  # noqa: E402
+from zues_scan.storage import Storage  # noqa: E402
 
 ALICE = "alice-operator-token-0123456789abcdefghijkl"
 BOB = "bob-viewer-token-0123456789abcdefghijklmnop"
@@ -38,7 +38,7 @@ def sha(token: str) -> str:
 
 def config_text(d: str, tokens: str) -> str:
     return (
-        f'[service]\ndb = "{d}/reconkit.db"\nqueue = "web"\n\n{tokens}'
+        f'[service]\ndb = "{d}/zues.db"\nqueue = "web"\n\n{tokens}'
         f'[[targets]]\nname = "lab"\ntarget = "scanme.lab"\nscope = "{d}/scope.txt"\n'
         'profile = "quick"\nevery = "1h"\nengagement = "PT-7"\n\n'
         f'[[targets]]\nname = "dmz"\ntarget = "10.0.0.7"\nscope = "{d}/scope.txt"\n'
@@ -54,10 +54,10 @@ TOKENS = (
 
 @pytest.fixture(autouse=True)
 def _lab(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("reconkit.scope.resolve_ipv4", lab_resolver)
-    monkeypatch.setattr("reconkit.scope.resolve_addresses", lab_resolver)
+    monkeypatch.setattr("zues_scan.scope.resolve_ipv4", lab_resolver)
+    monkeypatch.setattr("zues_scan.scope.resolve_addresses", lab_resolver)
     fake = FakePlugin([lab_asset(VSFTPD)])
-    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", lambda **_: fake)
+    monkeypatch.setattr("zues_scan.plugins.registry.NmapPlugin", lambda **_: fake)
 
 
 class App:
@@ -70,7 +70,7 @@ class App:
         self.config.write_text(config_text(tmp_path.as_posix(), TOKENS), encoding="utf-8")
         self.redis = fakeredis.FakeRedis()
         self.app = create_app(str(self.config), redis=self.redis)
-        self.db = tmp_path / "reconkit.db"
+        self.db = tmp_path / "zues.db"
 
     def client(self, token: str | None = None) -> TestClient:
         headers = {"Authorization": f"Bearer {token}"} if token else {}
@@ -189,7 +189,7 @@ def test_the_browser_session_is_an_httponly_strict_cookie(svc: App) -> None:
 
 
 def test_the_cookie_over_https_is_secure(svc: App) -> None:
-    browser = TestClient(svc.app, base_url="https://reconkit.example")
+    browser = TestClient(svc.app, base_url="https://zues_scan.example")
     cookie = browser.post("/api/v1/session", json={"token": BOB}).headers["set-cookie"]
     assert "Secure" in cookie
 
@@ -199,10 +199,10 @@ def test_a_change_made_with_the_cookie_needs_the_csrf_header(svc: App) -> None:
     browser.post("/api/v1/session", json={"token": ALICE})
 
     forged = browser.post("/api/v1/scans", json={"target": "lab"})  # what another site could send
-    assert forged.status_code == 403 and "X-ReconKit" in forged.json()["detail"]
+    assert forged.status_code == 403 and "X-ZuesScan" in forged.json()["detail"]
     assert svc.redis.keys("rq:job:*") == []
 
-    ours = browser.post("/api/v1/scans", json={"target": "lab"}, headers={"X-ReconKit": "1"})
+    ours = browser.post("/api/v1/scans", json={"target": "lab"}, headers={"X-ZuesScan": "1"})
     assert ours.status_code == 202
 
 
@@ -253,7 +253,7 @@ def test_runs_are_read_from_the_database(svc: App) -> None:
     [run] = viewer.get("/api/v1/runs").json()
     assert (run["id"], run["status"], run["findings"]) == (1, "completed", 1)
     model = viewer.get("/api/v1/runs/1").json()
-    assert model["format"] == "reconkit-report" and model["run"]["operator"] == "alice"
+    assert model["format"] == "zues-report" and model["run"]["operator"] == "alice"
     assert model["hosts"][0]["findings"][0]["cve"] == "CVE-2011-2523"
 
 

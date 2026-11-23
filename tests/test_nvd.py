@@ -17,9 +17,9 @@ from typing import Any
 
 import pytest
 
-from reconkit.cve.cache import CacheError, CveCache, NvdCveSource, sync
-from reconkit.cve.nvd import NvdClient, NvdError, _Retryable, http_fetch, parse_cve, title_from
-from reconkit.schema import Confidence, Service, Severity
+from zues_scan.cve.cache import CacheError, CveCache, NvdCveSource, sync
+from zues_scan.cve.nvd import NvdClient, NvdError, _Retryable, http_fetch, parse_cve, title_from
+from zues_scan.schema import Confidence, Service, Severity
 
 PAGE = json.loads((Path(__file__).parent / "data" / "nvd_page.json").read_text(encoding="utf-8"))
 NGINX, OPENSSH, REJECTED = (v["cve"] for v in PAGE["vulnerabilities"])
@@ -145,7 +145,7 @@ def test_pages_through_everything_waiting_between_requests() -> None:
     assert [r[0]["startIndex"] for r in fake.requests] == ["0", "2"]
     assert slept == [6.0]  # no key: NVD allows 5 requests per 30 s
     assert "apiKey" not in fake.requests[0][1]
-    assert fake.requests[0][1]["User-Agent"].startswith("reconkit/")
+    assert fake.requests[0][1]["User-Agent"].startswith("zues-scan/")
 
 
 def test_api_key_is_sent_as_a_header_and_speeds_things_up() -> None:
@@ -228,11 +228,11 @@ def _cache(tmp_path: Path) -> CveCache:
 
 
 def test_missing_cache_says_how_to_fill_it(tmp_path: Path) -> None:
-    with pytest.raises(CacheError, match="reconkit cve sync"):
+    with pytest.raises(CacheError, match="zues cve sync"):
         CveCache(tmp_path / "nope.db")
 
 
-def test_cache_from_a_newer_reconkit_is_refused(tmp_path: Path) -> None:
+def test_cache_from_a_newer_zues_is_refused(tmp_path: Path) -> None:
     with _cache(tmp_path) as cache:
         cache._conn.execute("PRAGMA user_version = 99")
     with pytest.raises(CacheError, match="newer"):

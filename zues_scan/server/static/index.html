@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<title>ZuesScan</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<div id="login" class="login" hidden>
+  <form id="login-form" class="card" autocomplete="off">
+    <div class="brand">ZuesScan</div>
+    <h1>Sign in</h1>
+    <label for="token">API token</label>
+    <input id="token" name="token" type="password" autocomplete="current-password" required>
+    <button type="submit" class="primary">Sign in</button>
+    <p id="login-error" class="error" hidden></p>
+    <p class="muted small">An administrator makes a token with <code>zues token</code> and
+      adds its hash to <code>service.toml</code>. The browser keeps it in a cookie that page
+      scripts cannot read.</p>
+  </form>
+</div>
+
+<div id="app" hidden>
+  <header class="bar">
+    <div class="brand">ZuesScan <span class="muted">dashboard</span></div>
+    <nav id="nav" aria-label="Sections">
+      <a href="#/overview" data-view="overview">Overview</a>
+      <a href="#/runs" data-view="runs">Runs</a>
+      <a href="#/findings" data-view="findings">Findings</a>
+      <a href="#/audit" data-view="audit">Audit</a>
+    </nav>
+    <div class="who"><span id="who"></span>
+      <button id="logout" type="button" class="link">Sign out</button></div>
+  </header>
+  <div id="flash" class="flash" role="status" hidden></div>
+  <main id="view" aria-live="polite"></main>
+  <footer class="muted small">Use only on systems you own or are authorised in writing to
+    test. Every scan and every decision is recorded in the audit trail.</footer>
+</div>
+</body>
+</html>

@@ -1,4 +1,4 @@
-"""`reconkit doctor`: what a machine can scan with, and the exact fix for what it cannot."""
+"""`zues doctor`: what a machine can scan with, and the exact fix for what it cannot."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from reconkit import cli, doctor
-from reconkit.cve.cache import CveCache
-from reconkit.doctor import (
+from zues_scan import cli, doctor
+from zues_scan.cve.cache import CveCache
+from zues_scan.doctor import (
     ERROR,
     INFO,
     MISSING,
@@ -69,7 +69,7 @@ def test_windows_gets_winget_with_npcap() -> None:
 
 
 def test_projectdiscovery_tools_need_no_package_manager() -> None:
-    assert install_hint("nuclei", DEBIAN).startswith("reconkit tools install nuclei")
+    assert install_hint("nuclei", DEBIAN).startswith("zues tools install nuclei")
 
 
 # --- nmap ---------------------------------------------------------------------------------------
@@ -114,7 +114,7 @@ def test_raw_socket_rights_on_linux() -> None:
 
 def test_raw_socket_rights_elsewhere(tmp_path: Path) -> None:
     mac = check_nmap_rights("/opt/homebrew/bin/nmap", System("Darwin", euid=501), None)
-    assert mac.status == WARN and mac.hint == "run ReconKit with sudo"
+    assert mac.status == WARN and mac.hint == "run ZuesScan with sudo"
     no_npcap = check_nmap_rights(
         "nmap.exe", System("Windows", env={"SystemRoot": str(tmp_path)}), None
     )
@@ -170,7 +170,7 @@ def test_cve_data(tmp_path: Path) -> None:
     fresh = check_cve_cache(str(path), NOW)
     assert fresh.status == OK and "synced 2 day(s) ago" in fresh.detail
     stale = check_cve_cache(str(path), NOW + timedelta(days=10))
-    assert stale.status == WARN and stale.hint == f"reconkit cve sync --cache {path}"
+    assert stale.status == WARN and stale.hint == f"zues cve sync --cache {path}"
 
 
 # --- the command --------------------------------------------------------------------------------
@@ -182,11 +182,11 @@ def test_not_ready_without_nmap(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(shutil, "which", lambda name: None)
     monkeypatch.setattr(doctor, "_windows_nmap", lambda system: None)
-    monkeypatch.setattr("reconkit.tools._windows_install", lambda name: None)
+    monkeypatch.setattr("zues_scan.tools._windows_install", lambda name: None)
 
     assert cli.main(["doctor"]) == 1
     out = capsys.readouterr().out
-    assert out.startswith("ReconKit ")
+    assert out.startswith("ZuesScan ")
     assert "not ready: nmap must be fixed before any scan" in out
 
     assert cli.main(["doctor", "--json"]) == 1
@@ -205,7 +205,7 @@ def test_a_service_config_is_checked(tmp_path: Path, capsys: pytest.CaptureFixtu
 
 def test_a_working_service_is_ready(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fakeredis = pytest.importorskip("fakeredis")
-    monkeypatch.setattr("reconkit.server.queue.connect", lambda config: fakeredis.FakeRedis())
+    monkeypatch.setattr("zues_scan.server.queue.connect", lambda config: fakeredis.FakeRedis())
     (tmp_path / "scope.txt").write_text("10.0.0.0/24\n", encoding="utf-8")
     config = tmp_path / "service.toml"
     config.write_text(

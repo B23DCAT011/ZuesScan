@@ -5,4 +5,4 @@
 *.toml text eol=lf
 
 # Third-party code copied in as-is (see its README): not ours, not in language stats
-reconkit/report/vendor/** linguist-vendored
+zues_scan/report/vendor/** linguist-vendored

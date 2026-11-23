@@ -10,13 +10,13 @@ from typing import Any
 import pytest
 from conftest import FakePlugin, lab_resolver, lab_scope
 
-from reconkit import cli
-from reconkit.cve import LocalCveSource
-from reconkit.orchestrator import Orchestrator, RunStatus
-from reconkit.plugins.base import CheckPlugin, ScanError, ScanResult
-from reconkit.plugins.nuclei import NucleiPlugin, web_url
-from reconkit.profiles import BUILTIN, override
-from reconkit.schema import Asset, Confidence, ScanTarget, Service, Severity
+from zues_scan import cli
+from zues_scan.cve import LocalCveSource
+from zues_scan.orchestrator import Orchestrator, RunStatus
+from zues_scan.plugins.base import CheckPlugin, ScanError, ScanResult
+from zues_scan.plugins.nuclei import NucleiPlugin, web_url
+from zues_scan.profiles import BUILTIN, override
+from zues_scan.schema import Asset, Confidence, ScanTarget, Service, Severity
 
 SAMPLE = (Path(__file__).parent / "data" / "nuclei_sample.jsonl").read_text(encoding="utf-8")
 APACHE = Service(port=8080, name="http", product="Apache httpd", version="2.4.49")
@@ -231,9 +231,9 @@ def test_missing_check_tool_makes_the_run_partial() -> None:
 def test_cli_nuclei_flag(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr("reconkit.scope.resolve_addresses", lab_resolver)
+    monkeypatch.setattr("zues_scan.scope.resolve_addresses", lab_resolver)
     monkeypatch.setattr(
-        "reconkit.plugins.registry.NmapPlugin",
+        "zues_scan.plugins.registry.NmapPlugin",
         lambda **_: FakePlugin([Asset(host="10.0.0.5", ip="10.0.0.5", services=[APACHE])]),
     )
     made: list[object] = []
@@ -242,7 +242,7 @@ def test_cli_nuclei_flag(
         made.append(profile)
         return FakeCheck()
 
-    monkeypatch.setattr("reconkit.plugins.registry.NucleiPlugin", make)
+    monkeypatch.setattr("zues_scan.plugins.registry.NucleiPlugin", make)
     scope = tmp_path / "scope.txt"
     scope.write_text("@activity active\n10.0.0.0/24\n", encoding="utf-8")
     argv = ["scan", "10.0.0.5", "--scope", str(scope), "--db", str(tmp_path / "d"), "--no-cve"]

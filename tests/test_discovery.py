@@ -9,13 +9,13 @@ from pathlib import Path
 import pytest
 from conftest import FakePlugin, fake_resolver
 
-from reconkit import cli
-from reconkit.orchestrator import NoPluginAvailableError, Orchestrator
-from reconkit.plugins.base import DiscoveryPlugin, DiscoveryResult, ScanError
-from reconkit.plugins.subfinder import SubfinderPlugin
-from reconkit.schema import Asset, RawOutput, Service
-from reconkit.scope import Scope, ScopeError
-from reconkit.storage import Storage
+from zues_scan import cli
+from zues_scan.orchestrator import NoPluginAvailableError, Orchestrator
+from zues_scan.plugins.base import DiscoveryPlugin, DiscoveryResult, ScanError
+from zues_scan.plugins.subfinder import SubfinderPlugin
+from zues_scan.schema import Asset, RawOutput, Service
+from zues_scan.scope import Scope, ScopeError
+from zues_scan.storage import Storage
 
 DNS = fake_resolver(
     {
@@ -211,7 +211,7 @@ def test_hosts_are_named_after_the_names_pointing_at_them() -> None:
 
 
 def test_names_are_stored(tmp_path: Path) -> None:
-    from reconkit.orchestrator import ScanRun
+    from zues_scan.orchestrator import ScanRun
 
     run = ScanRun("example.com", "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:01+00:00")
     run.assets = [
@@ -225,12 +225,12 @@ def test_names_are_stored(tmp_path: Path) -> None:
 def test_cli_discover(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr("reconkit.scope.resolve_addresses", DNS)
+    monkeypatch.setattr("zues_scan.scope.resolve_addresses", DNS)
     monkeypatch.setattr(
-        "reconkit.plugins.registry.SubfinderPlugin", lambda **_: FakeDiscovery(["api.example.com"])
+        "zues_scan.plugins.registry.SubfinderPlugin", lambda **_: FakeDiscovery(["api.example.com"])
     )
     asset = Asset(host="10.0.0.5", ip="10.0.0.5", services=[Service(port=443, name="https")])
-    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", lambda **_: FakePlugin([asset]))
+    monkeypatch.setattr("zues_scan.plugins.registry.NmapPlugin", lambda **_: FakePlugin([asset]))
     scope = tmp_path / "scope.txt"
     scope.write_text("example.com\n*.example.com\n10.0.0.0/24\n", encoding="utf-8")
     argv = ["scan", "example.com", "--discover", "--scope", str(scope), "--db", str(tmp_path / "d")]

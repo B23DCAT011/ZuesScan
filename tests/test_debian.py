@@ -13,20 +13,20 @@ from typing import Any
 import pytest
 from conftest import FakePlugin, lab_resolver, lab_scope
 
-from reconkit import cli, debian
-from reconkit.cve import LocalCveSource
-from reconkit.cve.cache import CveCache, refresh_debian
-from reconkit.debian import compare_versions, iter_tracker, parse_remote, verdict
-from reconkit.orchestrator import Orchestrator
-from reconkit.plugins.base import CheckPlugin
-from reconkit.plugins.ssh_packages import (
+from zues_scan import cli, debian
+from zues_scan.cve import LocalCveSource
+from zues_scan.cve.cache import CveCache, refresh_debian
+from zues_scan.debian import compare_versions, iter_tracker, parse_remote, verdict
+from zues_scan.orchestrator import Orchestrator
+from zues_scan.plugins.base import CheckPlugin
+from zues_scan.plugins.ssh_packages import (
     CredentialError,
     SshCredential,
     SshPackagesPlugin,
     load_credentials,
 )
-from reconkit.schema import Asset, Confidence, ScanTarget, Service
-from reconkit.scope import Activity
+from zues_scan.schema import Asset, Confidence, ScanTarget, Service
+from zues_scan.scope import Activity
 
 OS_RELEASE = (
     'PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"\nNAME="Debian GNU/Linux"\n'
@@ -240,7 +240,7 @@ def test_other_systems_and_missing_data_are_noted(tmp_path: Path, cache: CveCach
     ubuntu = REMOTE.replace("ID=debian", "ID=ubuntu")
     assert "only Debian is assessed" in plugin.assess("10.0.0.5", ubuntu).notes[0]
     trixie = REMOTE.replace("bookworm", "trixie")
-    assert "run reconkit cve sync --debian trixie" in plugin.assess("10.0.0.5", trixie).notes[0]
+    assert "run zues cve sync --debian trixie" in plugin.assess("10.0.0.5", trixie).notes[0]
 
 
 def _fake_ssh(monkeypatch: pytest.MonkeyPatch, code: int, out: str) -> list[list[str]]:
@@ -301,7 +301,7 @@ class PackageCheck:
         return "9.5"
 
     def check(self, plan: ScanTarget, assets: list[Asset]) -> Any:
-        from reconkit.plugins.base import ScanResult
+        from zues_scan.plugins.base import ScanResult
 
         return ScanResult(cleared={"10.0.0.5": {"CVE-2018-15473"}})
 
@@ -339,8 +339,8 @@ def test_cli_credentials_need_the_cache(tmp_path: Path, capsys: pytest.CaptureFi
 def test_cli_sync_debian(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from reconkit.cve import cache as cache_module
-    from reconkit.cve.nvd import NvdClient
+    from zues_scan.cve import cache as cache_module
+    from zues_scan.cve.nvd import NvdClient
 
     monkeypatch.setattr(
         cli,

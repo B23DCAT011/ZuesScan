@@ -4,7 +4,7 @@
 # command execution. Lab use only, on an isolated network.
 #
 # The difference matters: on the default image, nuclei's template does NOT confirm the
-# CVE (ReconKit keeps the version match as "firm"); on this one it does ("confirmed").
+# CVE (ZuesScan keeps the version match as "firm"); on this one it does ("confirmed").
 FROM httpd:2.4.49@sha256:dcba0d12e2362fb0c50ec524ae8aa1cca4a4ba7216617a57e7bbca20767e79cc
 RUN conf=/usr/local/apache2/conf/httpd.conf \
  && sed -i \

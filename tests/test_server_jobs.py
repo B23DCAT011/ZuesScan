@@ -15,11 +15,11 @@ from typing import Any
 import pytest
 from conftest import FakePlugin, lab_asset, lab_resolver
 
-from reconkit.schema import Service
-from reconkit.server import notify
-from reconkit.server.config import ConfigError, load_config
-from reconkit.server.jobs import scan_target, spec_for
-from reconkit.storage import Storage
+from zues_scan.schema import Service
+from zues_scan.server import notify
+from zues_scan.server.config import ConfigError, load_config
+from zues_scan.server.jobs import scan_target, spec_for
+from zues_scan.storage import Storage
 
 VSFTPD = Service(port=21, name="ftp", product="vsftpd", version="2.3.4")  # CVE-2011-2523: P2
 OPENSSH = Service(port=22, name="ssh", product="OpenSSH", version="7.4")  # CVE-2018-15473: P4
@@ -27,8 +27,8 @@ OPENSSH = Service(port=22, name="ssh", product="OpenSSH", version="7.4")  # CVE-
 
 @pytest.fixture(autouse=True)
 def _lab_dns(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("reconkit.scope.resolve_ipv4", lab_resolver)
-    monkeypatch.setattr("reconkit.scope.resolve_addresses", lab_resolver)
+    monkeypatch.setattr("zues_scan.scope.resolve_ipv4", lab_resolver)
+    monkeypatch.setattr("zues_scan.scope.resolve_addresses", lab_resolver)
 
 
 @pytest.fixture
@@ -39,7 +39,7 @@ def posted(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]]]:
     def record(url: str, body: bytes) -> None:
         calls.append((url, json.loads(body)))
 
-    monkeypatch.setattr("reconkit.server.notify.http_post", record)
+    monkeypatch.setattr("zues_scan.server.notify.http_post", record)
     return calls
 
 
@@ -53,7 +53,7 @@ def service_config(
         notify_table += 'webhook = "https://hooks.example.com/T0"\n'
     path = tmp_path / "service.toml"
     path.write_text(
-        f'[service]\ndb = "{d}/reconkit.db"\n\n'
+        f'[service]\ndb = "{d}/zues.db"\n\n'
         f'[[targets]]\nname = "lab"\ntarget = "{target}"\nscope = "{d}/scope.txt"\n'
         'profile = "quick"\nengagement = "PT-1"\n\n' + notify_table,
         encoding="utf-8",
@@ -63,7 +63,7 @@ def service_config(
 
 def use_scanner(monkeypatch: pytest.MonkeyPatch, *services: Service) -> FakePlugin:
     fake = FakePlugin([lab_asset(*services)])
-    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", lambda **_: fake)
+    monkeypatch.setattr("zues_scan.plugins.registry.NmapPlugin", lambda **_: fake)
     return fake
 
 
@@ -87,7 +87,7 @@ def test_a_job_scans_records_and_alerts_on_new_urgent_findings(
     assert summary["code"] == 0 and summary["run_id"] == 1
     assert summary["status"] == "completed" and summary["target"] == "lab"
     assert summary["alerts"] == 1  # vsftpd (P2); OpenSSH is only P4
-    with Storage(tmp_path / "reconkit.db") as store:
+    with Storage(tmp_path / "zues.db") as store:
         run = store.load_run(1)
     assert run is not None
     assert (run.operator, run.engagement, run.profile) == ("alice", "PT-1", "quick")
@@ -95,7 +95,7 @@ def test_a_job_scans_records_and_alerts_on_new_urgent_findings(
     assert url == "https://hooks.example.com/T0"
     assert payload["target"] == "lab" and payload["run_id"] == 1
     assert payload["text"].splitlines() == [
-        "ReconKit: run #1 of lab needs attention",
+        "ZuesScan: run #1 of lab needs attention",
         "• NEW P2: vsftpd 2.3.4 backdoor command execution on scanme.lab (CVSS 9.8)",
     ]
     [item] = payload["items"]
@@ -121,7 +121,7 @@ def test_a_fake_fix_is_alerted_first(
     use_scanner(monkeypatch, VSFTPD, OPENSSH)
     config = service_config(tmp_path, min_priority="P4")
     scan_target(config, "lab", "alice")
-    with Storage(tmp_path / "reconkit.db") as store:
+    with Storage(tmp_path / "zues.db") as store:
         [vsftpd] = [f for f in store.inventory_findings() if f.cve == "CVE-2011-2523"]
         store.decide_finding(vsftpd.id, "claim_fixed", actor="bob", note="patched")
 
@@ -144,10 +144,10 @@ def test_a_lost_alert_does_not_fail_the_job(
     def down(url: str, body: bytes) -> None:
         raise urllib.error.URLError("connection refused")
 
-    monkeypatch.setattr("reconkit.server.notify.http_post", down)
+    monkeypatch.setattr("zues_scan.server.notify.http_post", down)
     use_scanner(monkeypatch, VSFTPD)
 
-    with caplog.at_level(logging.WARNING, logger="reconkit.server.notify"):
+    with caplog.at_level(logging.WARNING, logger="zues_scan.server.notify"):
         summary = scan_target(service_config(tmp_path), "lab", "alice")
 
     assert summary["code"] == 0 and summary["alerts"] == 1  # the scan is saved anyway
@@ -179,11 +179,11 @@ def test_a_refused_target_is_reported_not_scanned(
 def test_a_failed_scan_is_recorded_and_not_alerted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, posted: list[tuple[str, dict[str, Any]]]
 ) -> None:
-    from reconkit.plugins.base import ScanError
+    from zues_scan.plugins.base import ScanError
 
     error = ScanError("nmap exited with code 1", plugin="fake", stderr="boom")
     monkeypatch.setattr(
-        "reconkit.plugins.registry.NmapPlugin", lambda **_: FakePlugin([], error=error)
+        "zues_scan.plugins.registry.NmapPlugin", lambda **_: FakePlugin([], error=error)
     )
 
     summary = scan_target(service_config(tmp_path), "lab", "alice")

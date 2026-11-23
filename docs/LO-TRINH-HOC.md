@@ -1,7 +1,7 @@
-# Lộ trình học — ReconKit
+# Lộ trình học — ZuesScan
 
 Học song song với làm: mỗi bài gắn với một phần code. Mỗi bài có 3 phần — **thuật ngữ**,
-**thực tế người ta làm thế nào**, **ReconKit có theo không** — và kết luận được ghi thành
+**thực tế người ta làm thế nào**, **ZuesScan có theo không** — và kết luận được ghi thành
 việc cần làm trong [`TASKS.md`](../TASKS.md) / [`KNOWN-GAPS.md`](KNOWN-GAPS.md).
 
 Ghi chú thiết kế ban đầu: [`GHI-CHU.md`](../GHI-CHU.md).
@@ -14,7 +14,7 @@ Ghi chú thiết kế ban đầu: [`GHI-CHU.md`](../GHI-CHU.md).
 | 3 | Scope & pháp lý: Rules of Engagement, xin phép quét, luật VN | `scope.py` | ✅ 2026-11-11 |
 | 4 | Vòng đời finding: mới / còn mở / đã vá / tái xuất hiện | fingerprint, `feat/diff` | ✅ 2026-11-16 |
 | 5 | Kiến trúc: pipeline, plugin, repository, transaction, migration | orchestrator, storage | ✅ 2026-11-22 |
-| 6 | Công cụ thật (OpenVAS, Nessus, nuclei, DefectDojo) so với ReconKit | toàn dự án | ✅ 2026-11-22 |
+| 6 | Công cụ thật (OpenVAS, Nessus, nuclei, DefectDojo) so với ZuesScan | toàn dự án | ✅ 2026-11-22 |
 | 7 | Từ công cụ thành dịch vụ: hàng đợi, web an toàn, container, lab cô lập | `server/`, Docker, `lab/` | ✅ 2026-11-23 |
 | 8 | nuclei & subfinder ngoài đời thật: templates, chữ ký, OAST, wildcard DNS | `plugins/nuclei.py`, `plugins/subfinder.py` | ✅ 2026-11-23 |
 | 9 | Cho AI dùng công cụ bảo mật: MCP, xác nhận của con người, prompt injection | `mcp_server.py` | ✅ 2026-11-23 |
@@ -23,7 +23,7 @@ Ghi chú thiết kế ban đầu: [`GHI-CHU.md`](../GHI-CHU.md).
 
 ## Bài 1 — Recon: quét cổng & nhận diện dịch vụ
 
-- **Attack surface**: mọi chỗ kẻ tấn công chạm được. ReconKit = lập bản đồ attack surface và
+- **Attack surface**: mọi chỗ kẻ tấn công chạm được. ZuesScan = lập bản đồ attack surface và
   theo dõi nó thay đổi.
 - **Passive** (tra nguồn công khai, vd subfinder) vs **active** (gửi gói tin, vd nmap → bắt buộc
   có scope).
@@ -74,7 +74,7 @@ Ghi chú thiết kế ban đầu: [`GHI-CHU.md`](../GHI-CHU.md).
 - **Authorization (uỷ quyền)**: sự cho phép **bằng văn bản** của người **có quyền** với hệ
   thống. Đây là ranh giới duy nhất giữa pentest và tấn công — kỹ thuật thì giống hệt nhau.
 - **Scope**: danh sách cụ thể được phép đụng vào (IP, dải, domain) và **không** được đụng vào
-  (out-of-scope). Trong ReconKit: file `--scope`, dòng `!` là deny.
+  (out-of-scope). Trong ZuesScan: file `--scope`, dòng `!` là deny.
 - **Rules of Engagement (RoE)**: "luật chơi" của một đợt kiểm thử — scope, khung giờ được quét,
   kỹ thuật bị cấm (DoS, social engineering…), giới hạn tốc độ, đầu mối liên lạc khi có sự cố,
   cách xử lý dữ liệu nhạy cảm lỡ nhìn thấy.
@@ -116,9 +116,9 @@ Ghi chú thiết kế ban đầu: [`GHI-CHU.md`](../GHI-CHU.md).
   công nghệ thông tin). Ở nước khác: CFAA (Mỹ), Computer Misuse Act (Anh) — cùng nguyên tắc
   "không có phép = phạm luật".
 
-**ReconKit có theo không**
+**ZuesScan có theo không**
 
-| Thực tế yêu cầu | ReconKit hiện tại |
+| Thực tế yêu cầu | ZuesScan hiện tại |
 |---|---|
 | Không quét khi chưa khai báo phạm vi | ✅ `--scope` bắt buộc; ngoài allowlist → từ chối, exit 3 |
 | Có danh sách loại trừ, lỗi thì nghiêng về an toàn | ✅ deny `!`, dải chồng lấn deny bị từ chối, dòng sai → dừng (F2) |
@@ -128,7 +128,7 @@ Ghi chú thiết kế ban đầu: [`GHI-CHU.md`](../GHI-CHU.md).
 | Dấu vết kiểm toán: ai, lúc nào, theo giấy phép nào | ❌ `scan_run` chỉ có target + thời gian → **G21** |
 | Nhắc người dùng về trách nhiệm pháp lý | ⚠️ chỉ có một dòng cảnh báo trong README |
 
-Kết luận: file scope của ReconKit là **cái khoá kỹ thuật**, không phải **giấy phép**. Công cụ
+Kết luận: file scope của ZuesScan là **cái khoá kỹ thuật**, không phải **giấy phép**. Công cụ
 chỉ biết "người dùng khai là được phép"; trách nhiệm có giấy thật vẫn ở người chạy. Việc của
 công cụ là làm cho quét nhầm thật khó (F2, F6) và để lại bằng chứng đã làm đúng (G21).
 
@@ -174,9 +174,9 @@ công cụ là làm cho quét nhầm thật khó (F2, F6) và để lại bằng
 - Kết quả so hai lần quét (**diff**) mới là thứ người dùng đọc, không phải danh sách đầy đủ:
   "đêm qua có 3 lỗi mới, 5 lỗi đã vá, 1 fix giả".
 
-**ReconKit có theo không**
+**ZuesScan có theo không**
 
-| Thực tế yêu cầu | ReconKit hiện tại |
+| Thực tế yêu cầu | ZuesScan hiện tại |
 |---|---|
 | Định danh = ở đâu + lỗi gì, không gồm câu chữ | ✅ F8: IP + port + protocol + CVE / `rule_id` |
 | Version không nằm trong định danh | ✅ F8 |
@@ -184,13 +184,13 @@ công cụ là làm cho quét nhầm thật khó (F2, F6) và để lại bằng
 | Một lỗi do nhiều tool báo → một finding | ✅ F8: orchestrator gộp theo fingerprint |
 | Finding nối được về đúng cổng, đúng máy | ✅ F7: `finding.service_id` |
 | Biết lần quét có thật sự kiểm tra hay không | ✅ `feat/diff`: host trả lời + cổng chắc chắn được quét + cùng loại dữ liệu CVE; host im lặng → `not_responding` |
-| Trạng thái, first seen / last seen, diff | ✅ `feat/diff` (kho tài sản + `finding_event`, `reconkit diff`) |
+| Trạng thái, first seen / last seen, diff | ✅ `feat/diff` (kho tài sản + `finding_event`, `zues diff`) |
 | Định danh máy bền hơn IP | ❌ chỉ có IP → D1 |
 | Risk accepted / false positive có lý do và hạn | ⚠️ risk accepted (lý do + hạn, hết hạn tự mở lại) ✅; false positive: dùng accepted kèm lý do |
 | SLA, MTTR | ❌ → sau khi có first seen / last seen |
 
 Kết luận: fingerprint là **nền** của vòng đời, nhưng tự nó chưa phải vòng đời. Sau F8,
-ReconKit trả lời được "hai finding này có phải một lỗi không"; còn "lỗi này đang ở trạng thái
+ZuesScan trả lời được "hai finding này có phải một lỗi không"; còn "lỗi này đang ở trạng thái
 nào, mở bao lâu rồi" cần kho tài sản và lịch sử của D1. Sơ đồ trạng thái đã chốt nằm trong
 [`THIET-KE.md`](THIET-KE.md), mục "Vòng đời một lỗ hổng".
 
@@ -227,7 +227,7 @@ nào, mở bao lâu rồi" cần kho tài sản và lịch sử của D1. Sơ đ
   scanner qua giao thức OSP, và hàng chục nghìn *NVT* (plugin kiểm tra) viết riêng; Nessus có
   hơn 200.000 plugin; nuclei = engine + template YAML. Không ai sửa lõi để thêm một kiểm tra.
 - Hợp đồng plugin là thứ **khó đổi nhất**: đổi nó là sửa mọi plugin. Vì thế người ta đóng băng
-  nó sớm và thêm trường *tuỳ chọn* thay vì đổi nghĩa trường cũ (ReconKit: `ScanResult` thêm
+  nó sớm và thêm trường *tuỳ chọn* thay vì đổi nghĩa trường cũ (ZuesScan: `ScanResult` thêm
   `notes`, `cleared` mà không plugin cũ nào phải sửa).
 - Migration: Alembic (SQLAlchemy), Django migrations, Flyway, Liquibase — đều có **bảng phiên
   bản** trong DB, chạy tự động khi khởi động, và **sao lưu** trước khi chạy ở production.
@@ -237,13 +237,13 @@ nào, mở bao lâu rồi" cần kho tài sản và lịch sử của D1. Sơ đ
   Những thứ phải luôn khớp nhau (run, kho tài sản, nhật ký audit) nằm **cùng một transaction**.
 - Hệ thống thật tách **trạng thái hiện tại** (kho tài sản) và **lịch sử** (các run, các sự kiện).
   Một số đi xa hơn với *event sourcing*: chỉ lưu sự kiện, trạng thái là kết quả phát lại sự
-  kiện — ReconKit dùng đúng ý này cho `rebuild_inventory`.
+  kiện — ZuesScan dùng đúng ý này cho `rebuild_inventory`.
 - Test được nhờ injection: CI không có nmap, không có mạng, không có DNS thật; mọi thứ đó phải
   thay được bằng bản giả.
 
-**ReconKit có theo không**
+**ZuesScan có theo không**
 
-| Thực tế | ReconKit |
+| Thực tế | ZuesScan |
 |---|---|
 | Lõi + plugin, lõi không biết tool | ✅ `ScannerPlugin`, `DiscoveryPlugin`, `CheckPlugin`, `CveSource` là `Protocol`; orchestrator chỉ biết thứ tự các bước |
 | Pipeline nhiều bước, mỗi bước test riêng | ✅ scope → (discovery) → scanner → check → CVE → rút lại đoán sai → fingerprint → lưu (run + kho + audit) |
@@ -265,7 +265,7 @@ song, PostgreSQL) đều là bài toán **quy mô**, không phải bài toán **
 
 ---
 
-## Bài 6 — Công cụ thật so với ReconKit
+## Bài 6 — Công cụ thật so với ZuesScan
 
 **Thuật ngữ**
 
@@ -293,9 +293,9 @@ song, PostgreSQL) đều là bài toán **quy mô**, không phải bài toán **
 - Pháp lý / RoE: công cụ thương mại có **scan window**, giới hạn băng thông, danh sách loại trừ,
   nhật ký ai chạy gì — vì quét nhầm là sự cố thật.
 
-**ReconKit có theo không**
+**ZuesScan có theo không**
 
-| Khả năng | OpenVAS / Nessus | nuclei | DefectDojo | ReconKit |
+| Khả năng | OpenVAS / Nessus | nuclei | DefectDojo | ZuesScan |
 |---|---|---|---|---|
 | Quét cổng / dịch vụ | ✅ riêng | — | — | ✅ qua nmap (IPv4 + IPv6) |
 | Tìm subdomain | ⚠️ ít | — | — | ✅ qua subfinder, mỗi tên kiểm scope |
@@ -310,13 +310,13 @@ song, PostgreSQL) đều là bài toán **quy mô**, không phải bài toán **
 | Lập lịch, nhiều scanner phân tán | ✅ | — | — | ✅ Redis + RQ, nhiều worker, scheduler có khoá |
 | Giao diện web, phân quyền | ✅ | ❌ | ✅ | ⚠️ dashboard + API, 2 vai trò (chưa theo target) |
 
-Kết luận: ReconKit **không** thay được Nessus hay OpenVAS — nó không có thư viện kiểm tra
+Kết luận: ZuesScan **không** thay được Nessus hay OpenVAS — nó không có thư viện kiểm tra
 riêng, và cũng không nên tự viết. Vị trí đúng của nó là một **bộ điều phối** bọc các công cụ
 mở (nmap, subfinder, nuclei, NVD), mạnh ở những chỗ các công cụ đó yếu: **đúng phạm vi** (scope
 gate, giấy phép, khung giờ), **dữ liệu đúng qua thời gian** (fingerprint, vòng đời, chỉ kết
 luận "đã vá" khi thật sự kiểm tra lại), **bằng chứng và trách nhiệm** (output gốc có băm, chuỗi
 audit). Muốn dùng trong doanh nghiệp, bước tự nhiên là xuất SARIF sang DefectDojo và để
-ReconKit lo phần quét định kỳ có kiểm soát.
+ZuesScan lo phần quét định kỳ có kiểm soát.
 
 ---
 
@@ -358,20 +358,20 @@ ReconKit lo phần quét định kỳ có kiểm soát.
   ra kho ngoài có mã hoá, và **diễn tập khôi phục**.
 - Lab thực hành (HackTheBox, vulhub): mục tiêu có lỗ hổng luôn ở mạng **không ra Internet**.
 
-**ReconKit có theo không**
+**ZuesScan có theo không**
 
-| Điểm | ReconKit |
+| Điểm | ZuesScan |
 |---|---|
 | Tách web / scheduler / worker qua hàng đợi | ✅ Redis + RQ; worker chạy đúng đường quét của CLI (`scanning.execute`) |
 | Chỉ quét tài sản đã khai | ✅ job chỉ mang *tên* target; worker đọc lại `service.toml`; request có trường lạ → 422 |
 | Không xếp trùng | ✅ khoá mỗi vòng scheduler; "đến hạn" tính theo target **và** profile |
 | Token chỉ lưu băm, so sánh thời gian hằng | ✅ SHA-256 + `hmac.compare_digest` |
-| Cookie HttpOnly + SameSite + chống CSRF | ✅ header `X-ReconKit` bắt buộc khi đi bằng cookie |
+| Cookie HttpOnly + SameSite + chống CSRF | ✅ header `X-ZuesScan` bắt buộc khi đi bằng cookie |
 | CSP chặt, chỉ ghi dữ liệu dạng chữ | ✅ dashboard `script-src 'self'`; báo cáo chỉ script có băm |
 | Fail closed khi cấu hình hỏng | ✅ API từ chối mọi request tới khi sửa |
 | Container không root, ít capability | ✅ uid 10001, `cap_drop: ALL`, chỉ worker có `NET_RAW`, FS chỉ đọc |
 | Ghim digest + mã băm | ✅ `docker/*.lock`, `--require-hashes` |
-| Backup có kiểm tra | ✅ `reconkit backup` (online, integrity, audit, SHA-256, `--verify`) |
+| Backup có kiểm tra | ✅ `zues backup` (online, integrity, audit, SHA-256, `--verify`) |
 | Rate limit, phiên phía server, SSO, phân quyền theo target | ❌ G23 |
 | Ký image, SBOM, quét image | ❌ G20 |
 
@@ -418,7 +418,7 @@ ReconKit lo phần quét định kỳ có kiểm soát.
 - Kết quả subfinder luôn được **lọc** trước khi dùng: phân giải (dnsx/massdns, song song), bỏ
   wildcard, giới hạn số lượng, rồi mới tới httpx/nmap.
 
-**ReconKit có theo không** — và những gì chỉ lộ ra khi chạy thật:
+**ZuesScan có theo không** — và những gì chỉ lộ ra khi chạy thật:
 
 | Hiện tượng đo được (lab, nuclei 3.11.1, templates 10.5.2, subfinder 2.17.0) | Đã xử lý |
 |---|---|
@@ -458,9 +458,9 @@ hỏng** — ba thứ quyết định nó có dùng được trong vận hành h
 - Dữ liệu từ bên ngoài luôn được đánh dấu là dữ liệu; hệ thống quan trọng không dựa vào việc
   model "ngoan" để an toàn.
 
-**ReconKit có theo không**
+**ZuesScan có theo không**
 
-| Điểm | ReconKit |
+| Điểm | ZuesScan |
 |---|---|
 | Một mô hình quyền cho người và AI | ✅ MCP là client của web API: token, vai trò, audit như nhau |
 | Model không chọn được địa chỉ quét | ✅ chỉ tên target trong `service.toml`; `8.8.8.8` → từ chối |

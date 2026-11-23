@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from reconkit.orchestrator import RunStatus, ScanRun
-from reconkit.schema import Asset, Finding, Hop, RawOutput, Service, Severity
-from reconkit.storage import _V1, SCHEMA_VERSION, Storage, StorageError
+from zues_scan.orchestrator import RunStatus, ScanRun
+from zues_scan.schema import Asset, Finding, Hop, RawOutput, Service, Severity
+from zues_scan.storage import _V1, SCHEMA_VERSION, Storage, StorageError
 
 SSH = Service(port=22, name="ssh", product="OpenSSH", version="7.4")
 HTTP = Service(port=80, name="http", product="nginx", version="1.18.0")
@@ -276,7 +276,7 @@ def test_every_foreign_key_is_indexed(tmp_path: Path) -> None:
 
 
 def _make_v1_db(path: Path) -> None:
-    """A database as ReconKit wrote it before F7: one run, with a finding."""
+    """A database as ZuesScan wrote it before F7: one run, with a finding."""
     conn = sqlite3.connect(path)
     for statement in _V1:
         conn.execute(statement)
@@ -323,7 +323,7 @@ def test_v1_database_is_migrated_with_its_data(tmp_path: Path) -> None:
         assert run is not None
         assert run.target == "scanme.lab"
         assert run.status is RunStatus.COMPLETED  # v1 only stored successful scans
-        assert run.reconkit_version is None  # unknown, and not made up
+        assert run.zues_version is None  # unknown, and not made up
         (asset,) = run.assets
         assert (asset.host, asset.ip) == ("scanme.lab", "10.0.0.5")
         assert [s.cpe for s in asset.services] == ["cpe:/a:openbsd:openssh:7.4"]
@@ -377,11 +377,11 @@ def test_failed_migration_leaves_the_database_untouched(tmp_path: Path) -> None:
     assert n_findings == 2
 
 
-def test_database_from_a_newer_reconkit_is_refused(tmp_path: Path) -> None:
+def test_database_from_a_newer_zues_is_refused(tmp_path: Path) -> None:
     with _store(tmp_path) as store:
         store._conn.execute("INSERT INTO schema_version VALUES (?, 'later')", (SCHEMA_VERSION + 1,))
         store._conn.commit()
-    with pytest.raises(StorageError, match="upgrade ReconKit"):
+    with pytest.raises(StorageError, match="upgrade ZuesScan"):
         _store(tmp_path)
 
 
@@ -496,7 +496,7 @@ def test_route_is_deleted_with_its_run(tmp_path: Path) -> None:
         assert _count(store, "route_hop") == 0
 
 
-# --- list of runs (for `reconkit runs` / `report`) ------------------------------------
+# --- list of runs (for `zues runs` / `report`) ------------------------------------
 
 
 def test_list_runs_newest_first_with_counts(tmp_path: Path) -> None:
@@ -528,7 +528,7 @@ def test_profile_is_stored_with_the_run(tmp_path: Path) -> None:
 
 
 def test_finding_confidence_is_stored(tmp_path: Path) -> None:
-    from reconkit.schema import Confidence
+    from zues_scan.schema import Confidence
 
     run = _make_run()
     run.assets[0].findings[0].confidence = Confidence.TENTATIVE

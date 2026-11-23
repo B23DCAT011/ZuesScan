@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 from conftest import fake_resolver
 
-from reconkit.schema import ScanTarget
-from reconkit.scope import (
+from zues_scan.schema import ScanTarget
+from zues_scan.scope import (
     ResolutionError,
     Resolver,
     Scope,
@@ -259,7 +259,7 @@ def test_every_ipv6_address_of_a_name_must_be_in_scope_too() -> None:
 
 
 def test_ipv4_only_does_not_look_at_ipv6(monkeypatch: pytest.MonkeyPatch) -> None:
-    import reconkit.scope as scope_module
+    import zues_scan.scope as scope_module
 
     monkeypatch.setattr(scope_module, "resolve_ipv4", fake_resolver({"scanme.lab": ["10.0.0.5"]}))
     monkeypatch.setattr(scope_module, "resolve_addresses", DUAL)

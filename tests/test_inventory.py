@@ -7,13 +7,13 @@ from typing import Any
 
 import pytest
 
-from reconkit.diff import diff_runs
-from reconkit.inventory import Status, looked_at, port_scanned, when_absent, when_seen
-from reconkit.inventory_store import InventoryError
-from reconkit.orchestrator import RunStatus, ScanRun
-from reconkit.profiles import BUILTIN
-from reconkit.schema import Asset, Finding, ScanTarget, Service, Severity
-from reconkit.storage import Storage
+from zues_scan.diff import diff_runs
+from zues_scan.inventory import Status, looked_at, port_scanned, when_absent, when_seen
+from zues_scan.inventory_store import InventoryError
+from zues_scan.orchestrator import RunStatus, ScanRun
+from zues_scan.profiles import BUILTIN
+from zues_scan.schema import Asset, Finding, ScanTarget, Service, Severity
+from zues_scan.storage import Storage
 
 STANDARD = BUILTIN["standard"].settings()
 QUICK = BUILTIN["quick"].settings()
@@ -302,12 +302,12 @@ def lab(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Scan "scanme.lab" with whatever services the test puts in `lab["services"]`."""
     from conftest import FakePlugin, lab_asset, lab_resolver
 
-    from reconkit import cli
+    from zues_scan import cli
 
     state: dict[str, Any] = {"services": [SSH_OLD]}
-    monkeypatch.setattr("reconkit.scope.resolve_addresses", lab_resolver)
+    monkeypatch.setattr("zues_scan.scope.resolve_addresses", lab_resolver)
     monkeypatch.setattr(
-        "reconkit.plugins.registry.NmapPlugin",
+        "zues_scan.plugins.registry.NmapPlugin",
         lambda **_: FakePlugin([lab_asset(*state["services"])]),
     )
     scope = tmp_path / "scope.txt"
@@ -401,6 +401,6 @@ def test_report_shows_lifecycle_and_changes(
     out = tmp_path / "r.html"
     assert cli.main(["report", "--db", db, "--html", str(out)]) == 0
     page = out.read_text(encoding="utf-8")
-    data = json.loads(re.search(r'id="reconkit-data">(.*?)</script>', page, re.S).group(1))  # type: ignore[union-attr]
+    data = json.loads(re.search(r'id="zues-data">(.*?)</script>', page, re.S).group(1))  # type: ignore[union-attr]
     assert data["changes"][0]["event"] == "fake_fix"
     assert data["hosts"][0]["findings"][0]["status"] == "fake_fix"
