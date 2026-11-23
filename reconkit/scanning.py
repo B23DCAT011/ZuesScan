@@ -1,0 +1,213 @@
+"""One scan, from a request to a stored run — shared by the CLI and the worker.
+
+`ScanSpec` says what to scan and how (target, scope file, profile, CVE data, extra
+checks, who and under which engagement); `execute()` does all of it the one way
+ReconKit scans: load and check the inputs, open the database *before* probing
+anything, run the pipeline, and record the result — a run, a failed run, or a refusal
+in the audit trail. It returns an `Outcome` instead of printing, so the CLI prints it
+and the worker reports it.
+
+Exit codes (the CLI's): 0 done, 1 database / unexpected error, 2 bad input,
+3 refused by the scope guard, 4 the scan failed (recorded as a failed run).
+"""
+
+from __future__ import annotations
+
+import contextlib
+from dataclasses import dataclass, field
+from typing import Any
+
+from reconkit.audit import default_operator
+from reconkit.cve import CveDataError, CveSource, LocalCveSource
+from reconkit.cve.cache import CacheError, CveCache, NvdCveSource
+from reconkit.inventory_store import FindingEvent
+from reconkit.orchestrator import NoPluginAvailableError, Orchestrator, ScanRun, now
+from reconkit.plugins.base import CheckPlugin, ScanError
+from reconkit.plugins.nmap import NmapPlugin
+from reconkit.plugins.nuclei import NucleiPlugin
+from reconkit.plugins.ssh_packages import CredentialError, SshPackagesPlugin, load_credentials
+from reconkit.plugins.subfinder import SubfinderPlugin
+from reconkit.profiles import DEFAULT_PROFILE, ProfileError, ScanProfile, load_profiles, override
+from reconkit.scope import ResolutionError, Scope, ScopeError
+from reconkit.storage import SCHEMA_VERSION, Storage, StorageError
+
+
+@dataclass
+class ScanSpec:
+    """Everything one scan needs to know."""
+
+    target: str
+    scope: str  # path of the scope file
+    db: str = "reconkit.db"
+    profile: str = DEFAULT_PROFILE
+    config: str | None = None  # TOML file with more profiles
+    overrides: dict[str, Any] = field(default_factory=dict)  # single profile settings
+    no_cve: bool = False
+    cve_db: str | None = None  # a CVE data JSON instead of the bundled seed
+    cve_cache: str | None = None  # a local NVD cache
+    credentials: str | None = None  # SSH keys for the authenticated package check
+    nuclei: bool = False
+    discover: bool = False
+    ipv4_only: bool = False
+    operator: str | None = None
+    engagement: str | None = None
+
+
+@dataclass
+class Outcome:
+    code: int
+    run_id: int | None = None
+    run: ScanRun | None = None
+    # For the person (stderr in the CLI, the job result in the worker), in order.
+    messages: list[str] = field(default_factory=list)
+    changes: list[FindingEvent] = field(default_factory=list)
+
+
+def resolve_profile(spec: ScanSpec) -> ScanProfile:
+    profiles = load_profiles(spec.config)
+    if spec.profile not in profiles:
+        raise ProfileError(
+            f"unknown profile {spec.profile!r}; choose one of: {', '.join(profiles)}"
+        )
+    return override(profiles[spec.profile], spec.overrides)
+
+
+def execute(spec: ScanSpec) -> Outcome:
+    """Run one scan as described by `spec`, and record what happened."""
+    try:
+        profile = resolve_profile(spec)
+    except ProfileError as exc:
+        return Outcome(2, messages=[f"error: {exc}"])
+    try:
+        scope = Scope.from_file(spec.scope)
+    except FileNotFoundError:
+        return Outcome(2, messages=[f"error: scope file not found: {spec.scope}"])
+    except ScopeError as exc:
+        return Outcome(2, messages=[f"error: invalid scope file: {exc}"])
+
+    with contextlib.ExitStack() as stack:
+        cve_source: CveSource | None = None
+        checks: list[CheckPlugin] = []
+        try:
+            cache = stack.enter_context(CveCache(spec.cve_cache)) if spec.cve_cache else None
+            if cache is not None:
+                cve_source = NvdCveSource(cache)
+            elif not spec.no_cve:
+                # The bundled seed unless another data file is given.
+                cve_source = LocalCveSource(spec.cve_db) if spec.cve_db else LocalCveSource()
+            if spec.credentials:
+                if cache is None:
+                    raise CacheError(
+                        "--credentials needs --cve-cache with Debian tracker data "
+                        "(reconkit cve sync --debian <release>)"
+                    )
+                checks.append(SshPackagesPlugin(load_credentials(spec.credentials), cache))
+        except (CveDataError, CacheError, CredentialError) as exc:
+            return Outcome(2, messages=[f"error: {exc}"])
+        if spec.nuclei:
+            checks.append(NucleiPlugin(profile=profile))
+        orch = Orchestrator(
+            plugins=[NmapPlugin(profile=profile)],
+            scope=scope,
+            cve_source=cve_source,
+            profile=profile,
+            ipv4_only=spec.ipv4_only,
+            operator=spec.operator or default_operator(),
+            engagement=spec.engagement,
+            discovery=[SubfinderPlugin()] if spec.discover else None,
+            checks=checks,
+        )
+        # Open the database before scanning: if the results cannot be saved, find out
+        # now, not after probing the target for five minutes.
+        try:
+            store = Storage(spec.db)
+        except StorageError as exc:
+            return Outcome(1, messages=[f"error: {exc}"])
+        with store:
+            outcome = Outcome(0)
+            if store.backup_path:
+                outcome.messages.append(
+                    f"note: database upgraded to schema v{SCHEMA_VERSION}; "
+                    f"the previous version was kept at {store.backup_path}"
+                )
+            return _scan(spec, orch, store, outcome)
+
+
+def _scan(spec: ScanSpec, orch: Orchestrator, store: Storage, outcome: Outcome) -> Outcome:
+    say = outcome.messages.append
+    started = now()
+    try:
+        run = orch.run(spec.target)
+    except ScopeError as exc:
+        # Refused before anything was probed: no run, but the refusal is on record.
+        say(f"refused: {exc}")
+        store.record_refusal(
+            spec.target,
+            str(exc),
+            operator=orch.operator,
+            engagement=orch.engagement,
+            scope_sha256=orch.scope.sha256,
+            scope_text=orch.scope.text,
+        )
+        outcome.code = 3
+        return outcome
+    except (NoPluginAvailableError, ResolutionError) as exc:
+        say(f"scan failed: {exc}")
+        return _record_failure(spec, orch, store, started, exc, outcome)
+    except ScanError as exc:
+        say(f"scan failed [{exc.plugin}]: {exc}")
+        if exc.stderr:
+            say(indent(exc.stderr))
+        return _record_failure(spec, orch, store, started, exc, outcome)
+    except RuntimeError as exc:
+        say(f"error: {exc}")
+        outcome.code = 1
+        return outcome
+
+    for note in run.notes:
+        say(f"note: {note}")
+    if run.skipped_plugins:
+        say(f"warning: skipped unavailable scanners: {', '.join(run.skipped_plugins)}")
+    if run.out_of_scope:
+        dropped = ", ".join(run.out_of_scope)
+        say(f"warning: a scanner reported hosts outside the scope; not saved: {dropped}")
+    untraced = [a.host for a in run.assets if not a.route]
+    if orch.profile is not None and orch.profile.traceroute and untraced:
+        # Not an error: the scan itself is fine, only the map will lack these paths.
+        say(
+            f"note: no route recorded for {len(untraced)} of {len(run.assets)} host(s). "
+            "Traceroute needs raw-socket privileges (root on Linux, Npcap on Windows), "
+            "and a local target has no route."
+        )
+    outcome.run_id = store.save_run(run)
+    outcome.run = run
+    outcome.changes = store.changes_in_run(outcome.run_id)
+    return outcome
+
+
+def _record_failure(
+    spec: ScanSpec,
+    orch: Orchestrator,
+    store: Storage,
+    started: str,
+    exc: Exception,
+    outcome: Outcome,
+) -> Outcome:
+    """Store a failed scan as a `failed` run: no results, but the error is kept.
+
+    Saving it as an ordinary empty run would read as "nothing found"; saving nothing
+    would hide that the scan is broken.
+    """
+    run = orch.failed_run(spec.target, started, exc)
+    run_id = store.save_run(run)
+    outcome.messages.append(f"recorded as failed run #{run_id} in {spec.db} (no results saved)")
+    if run.raw_outputs:
+        outcome.messages.append(
+            f"the scanner's output was kept: reconkit raw {run_id} --db {spec.db}"
+        )
+    outcome.code, outcome.run_id, outcome.run = 4, run_id, run
+    return outcome
+
+
+def indent(text: str, prefix: str = "  | ") -> str:
+    return "\n".join(prefix + line for line in text.splitlines())

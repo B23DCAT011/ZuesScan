@@ -21,6 +21,7 @@ python -m venv .venv
 .venv/Scripts/activate        # Windows; macOS/Linux: source .venv/bin/activate
 pip install -e ".[dev]"
 pytest
+pip install -e ".[dev,server,server-test]"   # thêm test của dịch vụ chạy nền (Redis giả trong RAM)
 ```
 
 ## Dùng thử
@@ -243,3 +244,70 @@ nó chỉ được hiển thị dưới dạng chữ, và Content-Security-Polic
 | 2 | Đầu vào sai: không thấy file scope / file cấu hình, có dòng không hợp lệ, profile hoặc thông số quét sai |
 | 3 | Từ chối (và được ghi vào audit trail): target nằm ngoài scope, tên miền trỏ tới IP ngoài scope, target bị denylist phủ kín, giấy phép đã hết hạn hoặc ngoài khung giờ cho phép |
 | 4 | Quét thất bại, lưu thành run `failed` **không có kết quả**: thiếu nmap, nmap lỗi / quá thời gian, không phân giải được tên, không host nào trả lời |
+
+## Chạy nền: lịch quét, hàng đợi, worker
+
+Phần dịch vụ nằm trong gói tuỳ chọn (lõi quét vẫn không phụ thuộc thư viện ngoài):
+
+```bash
+pip install -e ".[server]"        # Redis + RQ (+ FastAPI cho web API ở bước sau)
+```
+
+Mọi thứ dịch vụ được làm đều khai trong **một file `service.toml`**, và đây là luật quan trọng
+nhất: **chỉ target có tên trong file này mới quét được** — dù do lịch quét hay do người yêu cầu.
+Một yêu cầu quét chỉ mang *tên* target; nó không mang địa chỉ, file scope hay tuỳ chọn nào, nên
+dịch vụ không thể bị biến thành "máy quét hộ" cho bất kỳ địa chỉ nào.
+
+```toml
+[service]
+db = "/data/reconkit.db"
+cve_cache = "/data/reconkit-cve.db"     # tuỳ chọn: dữ liệu NVD cho bước CVE
+redis_url = "redis://localhost:6379/0"
+queue = "reconkit"
+
+[[tokens]]                              # ai được dùng API (web, bước sau)
+name = "alice"
+sha256 = "…"                            # mã băm của token, KHÔNG BAO GIỜ lưu token
+role = "operator"                       # viewer: chỉ xem; operator: quét, ra quyết định
+
+[[targets]]
+name = "office-lan"
+target = "10.0.0.0/24"
+scope = "/config/scope-office.txt"      # vẫn qua scope guard như lệnh scan
+profile = "full"
+every = "24h"                           # tuỳ chọn: quét định kỳ (m / h / d, tối thiểu 5m)
+engagement = "PT-2026-014"
+
+[notify]
+webhook = "https://hooks.slack.com/services/…"   # tuỳ chọn, payload kiểu Slack {"text": …}
+min_priority = "P2"                              # báo finding mới từ mức này trở lên
+```
+
+```bash
+reconkit token --name alice --role operator     # in token MỘT lần + dòng [[tokens]] để dán vào file
+docker run -d -p 6379:6379 redis:7.4-alpine     # Redis cho hàng đợi
+reconkit worker --config service.toml           # chạy các lần quét trong hàng đợi (chạy nhiều worker được)
+reconkit scheduler --config service.toml        # mỗi phút xếp hàng các target đến hạn
+reconkit enqueue office-lan --config service.toml --operator alice   # quét ngay một target
+reconkit scheduler --config service.toml --once                      # một vòng rồi dừng (cron)
+```
+
+- **Worker** chạy đúng `scanning.execute` mà lệnh `scan` dùng: cùng scope guard, cùng audit
+  trail, cùng cách lưu run (kể cả run `failed`). Job chỉ chứa *tên* target; worker đọc lại
+  `service.toml` lúc chạy, nên target bị gỡ khỏi file sau khi đã xếp hàng sẽ **không** bị quét.
+  Mỗi job có giới hạn thời gian = timeout của profile + 10 phút; kết quả job giữ 7 ngày trong
+  Redis, job lỗi giữ 30 ngày — còn nguồn sự thật vẫn là database.
+- Trên Linux mỗi job chạy trong một tiến trình con riêng (fork); trên Windows không có `fork()`
+  và `SIGALRM`, nên worker chạy job ngay trong tiến trình của nó, giới hạn thời gian bằng luồng
+  hẹn giờ (xem G23).
+- **Scheduler**: một target đến hạn khi cả lần quét gần nhất (cùng target **và** cùng profile —
+  quét nhanh mỗi giờ không làm lần quét đầy đủ mỗi ngày tưởng là đã xong) lẫn lần xếp hàng gần
+  nhất (ghi trong Redis) đều cũ hơn `every`. Mỗi vòng giữ một khoá ngắn trong Redis, nên lỡ chạy
+  hai scheduler cũng không xếp trùng một lần quét; khởi động lại scheduler cũng vậy.
+- **Cảnh báo** (webhook) chỉ gửi khi bức tranh thay đổi: **fix giả** (đã báo sửa mà vẫn còn),
+  finding **xuất hiện lại**, và finding **mới** có mức ưu tiên từ `min_priority` trở lên. Payload
+  có `text` cho Slack và cả danh sách có cấu trúc (`items`) cho hệ thống khác. Không gửi được thì
+  chỉ ghi cảnh báo vào log — lần quét vẫn được lưu.
+- Lỗi cấu hình (khoá lạ, thiếu file scope, `every` quá ngắn, lưu token thay vì mã băm…) làm
+  dịch vụ **không khởi động**, thay vì chạy sai. Redis không kết nối được thì báo một dòng (mật
+  khẩu trong `redis_url` được che `***`), không in traceback.

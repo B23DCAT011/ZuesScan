@@ -69,6 +69,7 @@ class FindingEvent:
     note: str | None
     title: str = ""
     host: str = ""
+    fingerprint: str = ""
 
 
 def apply_run(conn: sqlite3.Connection, run_id: int, run: ScanRun) -> None:
@@ -385,7 +386,8 @@ def events(
         ("e.finding_id = ?", finding_id) if finding_id is not None else ("e.run_id = ?", run_id)
     )
     rows = conn.execute(
-        "SELECT e.*, f.title AS title, h.host AS host FROM finding_event e "
+        "SELECT e.*, f.title AS title, f.fingerprint AS fingerprint, h.host AS host "
+        "FROM finding_event e "
         "JOIN inv_finding f ON f.id = e.finding_id JOIN inv_host h ON h.id = f.host_id "
         f"WHERE {where} ORDER BY e.id",
         (args,),
@@ -402,6 +404,7 @@ def events(
             note=r["note"],
             title=r["title"],
             host=r["host"],
+            fingerprint=r["fingerprint"],
         )
         for r in rows
     ]

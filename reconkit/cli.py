@@ -15,12 +15,13 @@ decisions (fix claimed, risk accepted); `reconkit diff` compares two runs.
 from __future__ import annotations
 
 import argparse
-import contextlib
+import hashlib
 import ipaddress
 import json
 import logging
 import os
 import re
+import secrets
 import sys
 from collections import Counter
 from pathlib import Path
@@ -28,11 +29,9 @@ from typing import Any
 
 from reconkit import __version__, logs, priority
 from reconkit.audit import default_operator
-from reconkit.cve import CveDataError, CveSource, LocalCveSource
 from reconkit.cve.cache import (
     CacheError,
     CveCache,
-    NvdCveSource,
     refresh_debian,
     refresh_epss,
     refresh_kev,
@@ -43,18 +42,13 @@ from reconkit.cve.nvd import API_KEY_ENV, NvdClient, NvdError
 from reconkit.diff import diff_runs
 from reconkit.inventory import ACTIVE, Status
 from reconkit.inventory_store import FindingEvent, FindingRow, InventoryError
-from reconkit.orchestrator import NoPluginAvailableError, Orchestrator, RunStatus, ScanRun, now
-from reconkit.plugins.base import CheckPlugin, ScanError
-from reconkit.plugins.nmap import NmapPlugin
-from reconkit.plugins.nuclei import NucleiPlugin
-from reconkit.plugins.ssh_packages import CredentialError, SshPackagesPlugin, load_credentials
-from reconkit.plugins.subfinder import SubfinderPlugin
-from reconkit.profiles import DEFAULT_PROFILE, ProfileError, ScanProfile, load_profiles, override
+from reconkit.orchestrator import RunStatus, ScanRun
+from reconkit.profiles import DEFAULT_PROFILE, ProfileError, ScanProfile, load_profiles
 from reconkit.report import render_html, report_model
 from reconkit.report.sarif import to_sarif
+from reconkit.scanning import ScanSpec, execute, indent
 from reconkit.schema import Asset, Finding, Severity
-from reconkit.scope import ResolutionError, Scope, ScopeError
-from reconkit.storage import SCHEMA_VERSION, Storage, StorageError
+from reconkit.storage import Storage, StorageError
 
 log = logging.getLogger(__name__)
 
@@ -173,20 +167,15 @@ def _size(network: str) -> int:
     return ipaddress.ip_network(network, strict=False).num_addresses
 
 
-def _indent(text: str, prefix: str = "  | ") -> str:
-    return "\n".join(prefix + line for line in text.splitlines())
-
-
-def _profile(args: argparse.Namespace) -> ScanProfile:
-    """The profile chosen with --profile (and --config), with the flags applied on top."""
-    profiles = load_profiles(args.config)
-    if args.profile not in profiles:
-        raise ProfileError(
-            f"unknown profile {args.profile!r}; choose one of: {', '.join(profiles)}"
-        )
-    return override(
-        profiles[args.profile],
-        {
+def _spec(args: argparse.Namespace) -> ScanSpec:
+    """The scan the command line asks for."""
+    return ScanSpec(
+        target=args.target,
+        scope=args.scope,
+        db=args.db,
+        profile=args.profile,
+        config=args.config,
+        overrides={
             "ports": args.ports,
             "top_ports": args.top_ports,
             "timing": args.timing,
@@ -196,151 +185,26 @@ def _profile(args: argparse.Namespace) -> ScanProfile:
             "traceroute": args.traceroute,
             "assume_up": True if args.assume_up else None,
         },
+        no_cve=args.no_cve,
+        cve_db=args.cve_db,
+        cve_cache=args.cve_cache,
+        credentials=args.credentials,
+        nuclei=args.nuclei,
+        discover=args.discover,
+        ipv4_only=args.ipv4_only,
+        operator=args.operator,
+        engagement=args.engagement,
     )
 
 
 def _cmd_scan(args: argparse.Namespace) -> int:
-    try:
-        profile = _profile(args)
-    except ProfileError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
-    try:
-        scope = Scope.from_file(args.scope)
-    except FileNotFoundError:
-        print(f"error: scope file not found: {args.scope}", file=sys.stderr)
-        return 2
-    except ScopeError as exc:
-        print(f"error: invalid scope file: {exc}", file=sys.stderr)
-        return 2
-
-    with contextlib.ExitStack() as stack:
-        cve_source: CveSource | None = None
-        checks: list[CheckPlugin] = []
-        try:
-            cache = stack.enter_context(CveCache(args.cve_cache)) if args.cve_cache else None
-            if cache is not None:
-                cve_source = NvdCveSource(cache)
-            elif not args.no_cve:
-                # The bundled seed unless another data file is given.
-                cve_source = LocalCveSource(args.cve_db) if args.cve_db else LocalCveSource()
-            if args.credentials:
-                if cache is None:
-                    raise CacheError(
-                        "--credentials needs --cve-cache with Debian tracker data "
-                        "(reconkit cve sync --debian <release>)"
-                    )
-                checks.append(SshPackagesPlugin(load_credentials(args.credentials), cache))
-        except (CveDataError, CacheError, CredentialError) as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 2
-        if args.nuclei:
-            checks.append(NucleiPlugin(profile=profile))
-        orch = Orchestrator(
-            plugins=[NmapPlugin(profile=profile)],
-            scope=scope,
-            cve_source=cve_source,
-            profile=profile,
-            ipv4_only=args.ipv4_only,
-            operator=args.operator or default_operator(),
-            engagement=args.engagement,
-            discovery=[SubfinderPlugin()] if args.discover else None,
-            checks=checks,
-        )
-        return _open_db_and_scan(args, orch)
-
-
-def _open_db_and_scan(args: argparse.Namespace, orch: Orchestrator) -> int:
-    # Open the database before scanning: if the results cannot be saved, find out
-    # now, not after probing the target for five minutes.
-    try:
-        store = Storage(args.db)
-    except StorageError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    with store:
-        if store.backup_path:
-            print(
-                f"note: database upgraded to schema v{SCHEMA_VERSION}; "
-                f"the previous version was kept at {store.backup_path}",
-                file=sys.stderr,
-            )
-        return _scan(args, orch, store)
-
-
-def _scan(args: argparse.Namespace, orch: Orchestrator, store: Storage) -> int:
-    started = now()
-    try:
-        run = orch.run(args.target)
-    except ScopeError as exc:
-        # Refused before anything was probed: no run, but the refusal is on record.
-        print(f"refused: {exc}", file=sys.stderr)
-        store.record_refusal(
-            args.target,
-            str(exc),
-            operator=orch.operator,
-            engagement=orch.engagement,
-            scope_sha256=orch.scope.sha256,
-            scope_text=orch.scope.text,
-        )
-        return 3
-    except (NoPluginAvailableError, ResolutionError) as exc:
-        print(f"scan failed: {exc}", file=sys.stderr)
-        return _record_failure(args, orch, store, started, exc)
-    except ScanError as exc:
-        print(f"scan failed [{exc.plugin}]: {exc}", file=sys.stderr)
-        if exc.stderr:
-            print(_indent(exc.stderr), file=sys.stderr)
-        return _record_failure(args, orch, store, started, exc)
-    except RuntimeError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-
-    for note in run.notes:
-        print(f"note: {note}", file=sys.stderr)
-    if run.skipped_plugins:
-        skipped = ", ".join(run.skipped_plugins)
-        print(f"warning: skipped unavailable scanners: {skipped}", file=sys.stderr)
-    if run.out_of_scope:
-        dropped = ", ".join(run.out_of_scope)
-        print(
-            f"warning: a scanner reported hosts outside the scope; not saved: {dropped}",
-            file=sys.stderr,
-        )
-
-    untraced = [a.host for a in run.assets if not a.route]
-    if orch.profile is not None and orch.profile.traceroute and untraced:
-        # Not an error: the scan itself is fine, only the map will lack these paths.
-        print(
-            f"note: no route recorded for {len(untraced)} of {len(run.assets)} host(s). "
-            "Traceroute needs raw-socket privileges (root on Linux, Npcap on Windows), "
-            "and a local target has no route.",
-            file=sys.stderr,
-        )
-
-    run_id = store.save_run(run)
-    _print_summary(run, run_id, args.db)
-    _print_changes(store.changes_in_run(run_id))
-    return 0
-
-
-def _record_failure(
-    args: argparse.Namespace, orch: Orchestrator, store: Storage, started: str, exc: Exception
-) -> int:
-    """Store a failed scan as a `failed` run: no results, but the error is kept.
-
-    Saving it as an ordinary empty run would read as "nothing found"; saving nothing
-    would hide that the scan is broken.
-    """
-    run = orch.failed_run(args.target, started, exc)
-    run_id = store.save_run(run)
-    print(f"recorded as failed run #{run_id} in {args.db} (no results saved)", file=sys.stderr)
-    if run.raw_outputs:
-        print(
-            f"the scanner's output was kept: reconkit raw {run_id} --db {args.db}",
-            file=sys.stderr,
-        )
-    return 4
+    outcome = execute(_spec(args))
+    for message in outcome.messages:
+        print(message, file=sys.stderr)
+    if outcome.code == 0 and outcome.run is not None and outcome.run_id is not None:
+        _print_summary(outcome.run, outcome.run_id, args.db)
+        _print_changes(outcome.changes)
+    return outcome.code
 
 
 DEFAULT_CVE_CACHE = "reconkit-cve.db"
@@ -746,6 +610,92 @@ def _latest_pair(store: Storage, after: int | None) -> tuple[int, int] | None:
     return None if earlier is None else (earlier.id, newest.id)
 
 
+def _server(args: argparse.Namespace) -> Any:
+    """The service modules, or None (and a message) without `reconkit[server]`."""
+    try:
+        from reconkit.server import config, queue, scheduler
+    except ImportError as exc:
+        print(
+            f"error: this command needs the server extra: pip install 'reconkit[server]' ({exc})",
+            file=sys.stderr,
+        )
+        return None
+    try:
+        return config.load_config(args.config), queue, scheduler
+    except config.ConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return None
+
+
+def _cmd_token(args: argparse.Namespace) -> int:
+    """Make an API token; print it once, and the line that goes in service.toml."""
+    token = secrets.token_urlsafe(32)
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    print(f"token for {args.name} (shown once, keep it secret): {token}")
+    print("\nadd to service.toml:\n")
+    print(f'[[tokens]]\nname = "{args.name}"\nsha256 = "{digest}"\nrole = "{args.role}"')
+    return 0
+
+
+def _cmd_enqueue(args: argparse.Namespace) -> int:
+    loaded = _server(args)
+    if loaded is None:
+        return 2
+    config, queue, _ = loaded
+    try:
+        job = queue.enqueue_scan(
+            queue.queue(config), config, args.target, args.operator or default_operator()
+        )
+    except queue.UNREACHABLE as exc:
+        print(
+            f"error: cannot reach Redis at {queue.safe_url(config.redis_url)}: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    except Exception as exc:  # noqa: BLE001 - an unknown target, a bad profile file, ...
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"scan of {args.target} enqueued as job {job.id}")
+    return 0
+
+
+def _cmd_worker(args: argparse.Namespace) -> int:
+    loaded = _server(args)
+    if loaded is None:
+        return 2
+    config, queue, _ = loaded
+    where = queue.safe_url(config.redis_url)
+    try:
+        worker = queue.make_worker(queue.queue(config))
+        print(f"worker listening on {where}, queue {config.queue!r}", file=sys.stderr)
+        worker.work(burst=args.burst)
+    except queue.UNREACHABLE as exc:
+        print(f"error: cannot reach Redis at {where}: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _cmd_scheduler(args: argparse.Namespace) -> int:
+    loaded = _server(args)
+    if loaded is None:
+        return 2
+    config, queue, scheduler = loaded
+    q = queue.queue(config)
+    if args.once:
+        try:
+            names = scheduler.tick(config, q)
+        except queue.UNREACHABLE as exc:
+            where = queue.safe_url(config.redis_url)
+            print(f"error: cannot reach Redis at {where}: {exc}", file=sys.stderr)
+            return 1
+        print(f"enqueued: {', '.join(names) or 'nothing due'}")
+        return 0
+    scheduled = [t.name for t in config.targets.values() if t.every]
+    print(f"scheduler started for: {', '.join(scheduled) or 'no target'}", file=sys.stderr)
+    scheduler.run_forever(config, q)
+    return 0
+
+
 def _db_exists(path: str) -> bool:
     """Reading commands never create a database: say so if there is none."""
     if Path(path).is_file():
@@ -876,7 +826,7 @@ def _cmd_raw(args: argparse.Namespace) -> int:
     print(f"command: {' '.join(output.command)}", file=sys.stderr)
     print(f"sha256:  {output.sha256}  ({output.size} bytes, verified)", file=sys.stderr)
     if output.stderr:
-        print(f"stderr:\n{_indent(output.stderr)}", file=sys.stderr)
+        print(f"stderr:\n{indent(output.stderr)}", file=sys.stderr)
     data = output.content.encode("utf-8")
     if args.out:
         Path(args.out).write_bytes(data)
@@ -1050,6 +1000,27 @@ def build_parser() -> argparse.ArgumentParser:
     delete.add_argument("--yes", action="store_true", help="confirm: the run cannot be restored")
     delete.add_argument("--operator", help="who deletes it (default: user@host)")
     delete.set_defaults(func=_cmd_delete)
+
+    token = sub.add_parser("token", help="make an API token for the service (service.toml)")
+    token.add_argument("--name", required=True, help="who it is for (recorded as operator)")
+    token.add_argument("--role", choices=["viewer", "operator"], default="viewer")
+    token.set_defaults(func=_cmd_token)
+
+    enqueue = sub.add_parser("enqueue", help="queue a scan of a configured target (service)")
+    enqueue.add_argument("target", help="the target's name in service.toml")
+    enqueue.add_argument("--config", required=True, help="service.toml")
+    enqueue.add_argument("--operator", help="who asks for it (default: user@host)")
+    enqueue.set_defaults(func=_cmd_enqueue)
+
+    worker = sub.add_parser("worker", help="run queued scans (service; needs Redis)")
+    worker.add_argument("--config", required=True, help="service.toml")
+    worker.add_argument("--burst", action="store_true", help="stop when the queue is empty")
+    worker.set_defaults(func=_cmd_worker)
+
+    scheduler = sub.add_parser("scheduler", help="queue the targets' scheduled scans")
+    scheduler.add_argument("--config", required=True, help="service.toml")
+    scheduler.add_argument("--once", action="store_true", help="one round, then stop")
+    scheduler.set_defaults(func=_cmd_scheduler)
 
     inventory = sub.add_parser("inventory", help="every host and port seen, across runs")
     inventory.add_argument("--db", default="reconkit.db", help="SQLite database path")
