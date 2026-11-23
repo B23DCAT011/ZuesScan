@@ -1038,6 +1038,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Recon orchestrator & vulnerability management (academic project).",
         parents=[logging_options],
     )
+    parser.add_argument("--version", action="version", version=f"reconkit {__version__}")
     sub = _Subparsers(parser.add_subparsers(dest="command", required=True), logging_options)
 
     scan = sub.add_parser("scan", help="scan a single target in scope")

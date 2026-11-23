@@ -151,8 +151,11 @@ Mục tiêu: mang ReconKit sang máy khác mà cài nhanh, thêm / bớt công c
       `reconkit/tools.py` + `reconkit/data/tools.lock` thay `docker/tools.*` (image dựng bằng
       chính chúng). Plugin tìm công cụ: bản ReconKit cài → PATH → chỗ bộ cài nmap của Windows.
       Đã thử thật trên Windows (cài, verify, doctor dùng được) và Linux (image).
-- [ ] `chore/release` — version theo tag, phát hành gói Python và image (nhiều kiến trúc, ký,
-      SBOM, quét image).
+- [x] `chore/release` — `__version__` là nguồn duy nhất (0.2.0), `reconkit --version`,
+      `CHANGELOG.md`; workflow Release theo tag: kiểm tag/version/changelog, wheel + sdist (cài thử),
+      image amd64 + arm64 có SBOM + provenance, ký cosign keyless, quét Trivy, GitHub Release; chạy
+      tay = chạy thử không phát hành; action ghim SHA; `RECONKIT_IMAGE` cho compose. Chưa đẩy tag
+      đầu tiên (việc phát hành do người duy trì quyết); PyPI chờ chọn tên.
 - [ ] `feat/mcp` — `reconkit mcp`: AI dùng ReconKit qua MCP, chỉ trên target đã khai báo, quyết
       định nhạy cảm cần người xác nhận, dữ liệu quét luôn là dữ liệu.
 

@@ -437,7 +437,10 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     `python -m reconkit.tools update`; cũng dùng cho `reconkit tools install`); CI
     kiểm phiên bản trong image khớp lock. Lưu ý: file checksums lấy cùng nơi với file nhị phân
     (tin lần đầu); ProjectDiscovery chưa ký release bằng cosign/GPG để kiểm độc lập.
-  - Còn lại: chưa **quét lỗ hổng chính image** (Trivy/Grype trong CI)
+  - ✅ **`chore/release`**: workflow phát hành quét image bằng Trivy, xuất SBOM + provenance, ký
+    cosign keyless, image amd64 + arm64 — chạy khi có tag đầu tiên. Trivy chỉ báo cáo (không chặn
+    phát hành) vì image mang binary Go của bên thứ ba.
+  - Còn lại (trước `chore/release`): chưa **quét lỗ hổng chính image** (Trivy/Grype trong CI)
     và chưa **ký image** (cosign) / xuất SBOM; digest image gốc phải tự cập nhật (Dependabot /
     Renovate); backup chưa tự chạy theo lịch và chưa mã hoá — thực tế: job định kỳ + đẩy bản mã
     hoá (age/GPG) ra kho ngoài (S3 có object lock).
