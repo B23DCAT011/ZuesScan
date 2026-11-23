@@ -7,12 +7,29 @@ Bộ điều phối recon & quản lý lỗ hổng chạy nền (đồ án an to
 ## Tài liệu thiết kế (SDD v0.1)
 https://claude.ai/artifact/69X8tKYCnShu8rYwzaNiV8
 
-## Trạng thái
-- [x] Tài liệu thiết kế
-- [x] Chốt ngôn ngữ: **Python** (zero-dependency core — chỉ dùng thư viện chuẩn)
-- [x] Lát cắt dọc: schema + scope + plugin nmap + orchestrator + storage + CLI
+## ReconKit làm gì
 
-Lộ trình chi tiết: [`TASKS.md`](TASKS.md).
+Quét định kỳ những gì **được phép** quét, nhớ mọi thứ đã thấy, và chỉ ra điều cần làm:
+
+- **Cổng scope** trước mọi gói tin: allowlist / denylist, giấy phép có hạn (`@expires`), khung
+  giờ (`@window`); tên miền phải phân giải ra địa chỉ trong scope.
+- **Quét** bằng công cụ mở: nmap (dịch vụ, traceroute, IPv4 + IPv6), subfinder, nuclei, kiểm tra
+  gói qua SSH (Debian). **CVE** từ NVD, xếp **ưu tiên** KEV → EPSS → CVSS (P1–P4).
+- **Vòng đời finding** qua các lần quét: mới / còn mở / báo đã sửa / **đã xác minh vá** /
+  **fix giả** / tái xuất hiện / chấp nhận rủi ro có hạn.
+- **Bằng chứng & trách nhiệm**: output gốc của scanner giữ lại có SHA-256; audit trail là chuỗi
+  băm (ai quét gì, theo giấy phép nào, ai quyết định gì).
+- **Báo cáo**: bản đồ bề mặt tấn công HTML (mở offline), JSON, SARIF 2.1.0.
+- **Dịch vụ**: lịch quét, hàng đợi Redis + worker, web API + dashboard có phân quyền, cảnh báo
+  webhook, Docker Compose làm cứng, backup có kiểm tra, và một **lab có lỗ hổng** để thử.
+
+| Dashboard | Bản đồ: máy quét → router → dải mạng → host → dịch vụ → CVE |
+|---|---|
+| ![Findings: fix giả, đã vá, chấp nhận rủi ro](docs/img/dashboard-findings.png) | ![Bản đồ có hop router thật](docs/img/map-router-hop.png) |
+
+Chạy thử toàn bộ trong 2 lệnh (cần Docker): `sh lab/up.sh` rồi `sh lab/demo.sh` — xem mục
+[Lab](#lab-có-lỗ-hổng). Lộ trình: [`TASKS.md`](TASKS.md) · Thiết kế:
+[`docs/THIET-KE.md`](docs/THIET-KE.md) · Giới hạn: [`docs/KNOWN-GAPS.md`](docs/KNOWN-GAPS.md).
 
 ## Cài đặt (dev)
 
@@ -331,6 +348,8 @@ không thư viện ngoài, không bước build) có:
   audit trail dưới tên của token.
 - **Audit**: kiểm chuỗi băm của audit trail và các sự kiện mới nhất.
 
+![Overview: P1-P4, target, hàng đợi quét](docs/img/dashboard-overview.png)
+
 API dùng được bằng script (`Authorization: Bearer <token>`):
 
 ```bash
@@ -426,3 +445,50 @@ volume với DB thì không chống được hỏng đĩa: luôn `docker compose
 
 Image **chưa có nuclei và subfinder** (target bật `nuclei` / `discover` sẽ báo bỏ qua scanner
 không có) — xem G20.
+
+## Lab có lỗ hổng
+
+Một mạng thử nghiệm có lỗ hổng **thật** (phiên bản cũ có CVE), chạy cạnh dịch vụ ReconKit:
+
+```bash
+sh lab/up.sh        # dựng dịch vụ + lab, in token operator MỘT lần → http://127.0.0.1:8000
+sh lab/demo.sh      # kịch bản vòng đời: báo sửa, sửa thật một chỗ, quét lại → "fixed" và "fake fix"
+sh lab/down.sh      # xoá sạch lab (cả database của nó)
+```
+
+```
+                 lab-dmz 10.66.1.0/24                          lab-internal 10.66.2.0/24
+ worker ──────┬── Apache 2.4.49  .20  (CVE-2021-41773, KEV → P1)
+ (.1-.14)     ├── OpenSSH 7.5    .22  (CVE-2018-15473 → P4)
+              └── router        .254 ═══ NAT ═══ .254 ──┬── nginx 1.20.0 .30 (CVE-2021-23017 → P3)
+```
+
+- Scheduler tự quét hai mạng ngay khi lên và mỗi 30 phút (profile `full`: mọi cổng +
+  traceroute). Quét `lab-internal` đi qua **router thật**: bản đồ có hop `10.66.1.254`.
+- `demo.sh`: báo đã sửa Apache và nginx, chấp nhận rủi ro OpenSSH (có lý do + ngày xem lại),
+  rồi chỉ nâng cấp **nginx** lên 1.27.5 và quét lại → nginx **fixed** (đã xác minh), Apache
+  **fake fix** (báo sửa mà vẫn còn) — kèm cảnh báo webhook nếu `[notify]` có URL.
+
+| Fix giả trên dashboard | Bản đồ DMZ |
+|---|---|
+| ![Lịch sử một fix giả](docs/img/dashboard-fake-fix.png) | ![DMZ: Apache P1, OpenSSH](docs/img/map-dmz.png) |
+
+**Cách ly** (đã kiểm: Apache và nginx không kết nối được ra Internet, không chạm được máy chủ
+Docker): hai mạng lab không có địa chỉ phía host (`inhibit_ipv4`) và không NAT ra ngoài, không
+publish cổng nào; chỉ worker và router tham gia. Không dùng `internal: true` vì khi đó Docker
+chặn mọi gói có đích ngoài subnet của mạng — router không chuyển tiếp được — mà host lại vẫn
+chạm được qua địa chỉ gateway của bridge. Worker vẫn chỉ giữ `NET_RAW`: route sang mạng
+internal do một sidecar dùng chung network namespace thêm vào rồi thoát. Scope của lab loại trừ
+địa chỉ của chính các worker và địa chỉ gateway.
+
+> Lab chỉ để học và demo: các container cố ý chạy phần mềm có lỗ hổng. Đừng gắn chúng vào mạng
+> khác, đừng publish cổng của chúng.
+
+## Giới hạn đã biết
+
+ReconKit là bộ điều phối các công cụ mở, **không** thay được scanner thương mại (không có thư
+viện kiểm tra riêng; phát hiện chủ yếu theo phiên bản, trừ nuclei và quét có đăng nhập). Mọi
+điểm yếu đã biết, kèm hướng nâng cấp theo cách làm thật, nằm ở
+[`docs/KNOWN-GAPS.md`](docs/KNOWN-GAPS.md) — nổi bật: quét có đăng nhập mới có Debian; image
+Docker chưa có nuclei / subfinder; web chưa giới hạn đăng nhập sai và chưa phân quyền theo
+target; cảnh báo webhook không gửi lại khi lỗi; SQLite là giới hạn khi nhiều worker / người dùng.

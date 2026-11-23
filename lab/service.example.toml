@@ -1,0 +1,27 @@
+# The lab's service configuration. lab/up.sh copies it to lab/service.toml (git-ignored)
+# and adds an operator token there. Mounted read-only at /config by compose.lab.yaml.
+
+[service]
+db = "/data/reconkit.db"
+redis_url = "redis://redis:6379/0"
+queue = "reconkit"
+
+[[targets]]
+name = "lab-dmz"
+target = "10.66.1.0/24"
+scope = "/config/lab-scope.txt"
+profile = "full"                         # all ports + traceroute
+every = "30m"
+engagement = "LAB-DEMO"
+
+[[targets]]
+name = "lab-internal"                    # behind the router: one more hop on the map
+target = "10.66.2.0/24"
+scope = "/config/lab-scope.txt"
+profile = "full"
+every = "30m"
+engagement = "LAB-DEMO"
+
+[notify]
+# webhook = "https://hooks.slack.com/services/..."
+min_priority = "P2"

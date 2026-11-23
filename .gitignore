@@ -40,3 +40,6 @@ Thumbs.db
 # Docker deployment: the real config holds token hashes, webhook URLs and scopes
 deploy/service.toml
 backups/
+
+# The lab: its config gets an operator token
+lab/service.toml
