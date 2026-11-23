@@ -49,7 +49,7 @@ Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây we
       `full` sẽ bật sẵn), lưu các hop của từng host (bảng `route_hop`, schema DB v5) → vẽ đường
       đi máy quét → router → dải mạng. Hop chỉ được *nhìn thấy*, không bị quét: probe luôn gửi
       tới host trong scope. Đã kiểm với nmap thật trên 127.0.0.1 (không có route, CLI giải
-      thích); hop thật sẽ được kiểm trên lab Docker có router (Giai đoạn 3).
+      thích); ✅ hop thật đã kiểm trên lab Docker có router (`feat/lab`: 10.66.1.254).
 - [x] `feat/report-html` — `reconkit report [--run <id>] --html <file>`: một file HTML duy nhất,
       nhúng sẵn dữ liệu (JSON) + Cytoscape.js 3.34.4 (vendored, ghim SHA-256), mở offline. Bản
       đồ đọc từ trái sang phải: máy quét → router → dải mạng ⊃ host ⊃ service → finding; bấm
@@ -108,4 +108,6 @@ Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây we
       băm), `compose.yaml` (Redis + web + worker + scheduler, FS chỉ đọc, `cap_drop: ALL`),
       `reconkit backup` (sao lưu trực tuyến có kiểm tra, `--verify`, `--keep`); CI build và
       quét thử trong container. Còn lại: ảnh demo (cùng `feat/lab`), nuclei/subfinder trong image.
-- [ ] Lab mục tiêu (Metasploitable / container có lỗ hổng) trong network nội bộ.
+- [x] `feat/lab` — `lab/`: Apache 2.4.49, OpenSSH 7.5 (DMZ) và nginx 1.20.0 sau một router NAT
+      (mạng internal), hai mạng cách ly (không Internet, không chạm host); `up.sh` / `demo.sh` /
+      `down.sh`; kịch bản vòng đời cho ra "fixed" và "fake fix" thật. Ảnh demo trong README (G20).

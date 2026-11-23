@@ -15,6 +15,7 @@ Ghi chú thiết kế ban đầu: [`GHI-CHU.md`](../GHI-CHU.md).
 | 4 | Vòng đời finding: mới / còn mở / đã vá / tái xuất hiện | fingerprint, `feat/diff` | ✅ 2026-11-16 |
 | 5 | Kiến trúc: pipeline, plugin, repository, transaction, migration | orchestrator, storage | ✅ 2026-11-22 |
 | 6 | Công cụ thật (OpenVAS, Nessus, nuclei, DefectDojo) so với ReconKit | toàn dự án | ✅ 2026-11-22 |
+| 7 | Từ công cụ thành dịch vụ: hàng đợi, web an toàn, container, lab cô lập | `server/`, Docker, `lab/` | ✅ 2026-11-23 |
 
 ---
 
@@ -304,8 +305,8 @@ song, PostgreSQL) đều là bài toán **quy mô**, không phải bài toán **
 | Cổng scope trước mọi gói tin, kiểm lại kết quả | ⚠️ danh sách target | ❌ | — | ✅ phân giải một lần, mọi IP phải trong scope, `@expires`, `@window` |
 | Nhật ký audit chống sửa | ⚠️ log | ❌ | ⚠️ | ✅ chuỗi băm, `audit --verify` |
 | Báo cáo | ✅ PDF/HTML/CSV | JSON | ✅ | ✅ HTML (bản đồ offline), JSON, SARIF |
-| Lập lịch, nhiều scanner phân tán | ✅ | — | — | ⚠️ GĐ 3: hàng đợi + worker |
-| Giao diện web, phân quyền | ✅ | ❌ | ✅ | ⚠️ GĐ 3 |
+| Lập lịch, nhiều scanner phân tán | ✅ | — | — | ✅ Redis + RQ, nhiều worker, scheduler có khoá |
+| Giao diện web, phân quyền | ✅ | ❌ | ✅ | ⚠️ dashboard + API, 2 vai trò (chưa theo target) |
 
 Kết luận: ReconKit **không** thay được Nessus hay OpenVAS — nó không có thư viện kiểm tra
 riêng, và cũng không nên tự viết. Vị trí đúng của nó là một **bộ điều phối** bọc các công cụ
@@ -314,3 +315,73 @@ gate, giấy phép, khung giờ), **dữ liệu đúng qua thời gian** (finger
 luận "đã vá" khi thật sự kiểm tra lại), **bằng chứng và trách nhiệm** (output gốc có băm, chuỗi
 audit). Muốn dùng trong doanh nghiệp, bước tự nhiên là xuất SARIF sang DefectDojo và để
 ReconKit lo phần quét định kỳ có kiểm soát.
+
+---
+
+## Bài 7 — Từ công cụ thành dịch vụ: hàng đợi, web an toàn, container, lab cô lập
+
+**Thuật ngữ**
+
+- **Job queue / worker** (Redis + RQ, Celery, Sidekiq): ai cần quét thì *xếp hàng* một job,
+  các worker lấy ra chạy. Tách người yêu cầu khỏi việc nặng, chạy song song, sống sót qua
+  restart. **Scheduler** chỉ là thứ xếp hàng theo giờ.
+- **Idempotency / at-most-once**: cùng một việc không được chạy hai lần vì hai scheduler, hai
+  lần bấm nút → khoá (Redis `SET NX EX`), khoá theo vòng, ghi "lần xếp hàng cuối".
+- **Bearer token, session cookie, CSRF**: script gửi token trong header; trình duyệt giữ phiên
+  trong cookie **HttpOnly** (JS không đọc được → XSS không lấy được) và **SameSite**. Cookie tự
+  đi theo request từ trang khác → cần chống **CSRF** (header tự đặt mà trang khác không gửi được
+  nếu không có CORS).
+- **CSP** (Content-Security-Policy): trình duyệt chỉ chạy script / gọi mạng tới nơi được liệt kê
+  → dữ liệu độc (banner chứa `<script>`) không chạy được dù lỡ lọt vào trang.
+- **Least privilege trong container**: không chạy root, `cap_drop: ALL`, chỉ trả lại
+  capability cần (`NET_RAW` cho raw socket), `no-new-privileges`, root FS chỉ đọc. **File
+  capability** (`setcap`) cho một binary quyền cụ thể mà không cần root.
+- **Supply chain**: ghim image theo **digest**, gói theo **phiên bản + mã băm** (`--require-hashes`)
+  → bản build sau không lặng lẽ kéo về thứ khác.
+- **Fail closed**: cấu hình hỏng thì *từ chối*, không chạy tiếp bằng cấu hình cũ (token đã thu
+  hồi vẫn còn hiệu lực là lỗ hổng).
+
+**Thực tế người ta làm thế nào**
+
+- Dịch vụ quét thật (Nessus Manager, Greenbone) đều tách **giao diện / API** khỏi **scanner**
+  (worker, có khi đặt ở mạng khác), trao đổi qua hàng đợi; scanner là thành phần nhiều quyền
+  nhất nên bị khoá chặt nhất.
+- Người dùng chỉ được chọn **tài sản đã đăng ký**, không gõ địa chỉ tuỳ ý — nếu không, dịch vụ
+  thành "máy quét hộ" (SSRF / lạm dụng).
+- Web nội bộ: TLS ở reverse proxy, phiên phía server có hết hạn, rate limit đăng nhập, SSO
+  (OIDC) thay cho token tĩnh, phân quyền theo nhóm tài sản.
+- Container: image tối giản, không root, ký image (cosign), SBOM, quét image (Trivy) trong CI,
+  bot cập nhật digest (Renovate / Dependabot).
+- Backup: dùng cơ chế backup của database (không chép file đang ghi), **kiểm tra bản sao**, đẩy
+  ra kho ngoài có mã hoá, và **diễn tập khôi phục**.
+- Lab thực hành (HackTheBox, vulhub): mục tiêu có lỗ hổng luôn ở mạng **không ra Internet**.
+
+**ReconKit có theo không**
+
+| Điểm | ReconKit |
+|---|---|
+| Tách web / scheduler / worker qua hàng đợi | ✅ Redis + RQ; worker chạy đúng đường quét của CLI (`scanning.execute`) |
+| Chỉ quét tài sản đã khai | ✅ job chỉ mang *tên* target; worker đọc lại `service.toml`; request có trường lạ → 422 |
+| Không xếp trùng | ✅ khoá mỗi vòng scheduler; "đến hạn" tính theo target **và** profile |
+| Token chỉ lưu băm, so sánh thời gian hằng | ✅ SHA-256 + `hmac.compare_digest` |
+| Cookie HttpOnly + SameSite + chống CSRF | ✅ header `X-ReconKit` bắt buộc khi đi bằng cookie |
+| CSP chặt, chỉ ghi dữ liệu dạng chữ | ✅ dashboard `script-src 'self'`; báo cáo chỉ script có băm |
+| Fail closed khi cấu hình hỏng | ✅ API từ chối mọi request tới khi sửa |
+| Container không root, ít capability | ✅ uid 10001, `cap_drop: ALL`, chỉ worker có `NET_RAW`, FS chỉ đọc |
+| Ghim digest + mã băm | ✅ `docker/*.lock`, `--require-hashes` |
+| Backup có kiểm tra | ✅ `reconkit backup` (online, integrity, audit, SHA-256, `--verify`) |
+| Rate limit, phiên phía server, SSO, phân quyền theo target | ❌ G23 |
+| Ký image, SBOM, quét image | ❌ G20 |
+
+**Bài học từ lúc làm** (đều đã kiểm bằng chạy thật, không chỉ đọc tài liệu):
+
+- `internal: true` của Docker **chặn mọi gói có đích ngoài subnet** → không dựng được router
+  giữa hai mạng internal; còn host lại vẫn chạm được qua địa chỉ gateway. Cách đúng cho lab:
+  bridge không có địa chỉ phía host (`inhibit_ipv4`) + tắt NAT.
+- File capability **không có tác dụng** khi `no-new-privileges` bật, và làm `exec` **thất bại**
+  (EPERM) nếu capability không nằm trong bounding set của container → chỉ cấp `cap_net_raw`
+  (Docker cho sẵn), không thêm `NET_ADMIN` thừa.
+- Server Redis "giả" qua TCP (fakeredis) không đủ cho redis-py 8 (`CLIENT INFO`): test đơn vị
+  dùng fakeredis trong process, còn kiểm tra đầu-cuối phải dùng Redis thật.
+- Trên Windows không có `fork()` / `SIGALRM`: worker chạy job trong tiến trình, hẹn giờ bằng
+  luồng — ổn để phát triển, còn chạy thật thì worker nên ở Linux (container).
