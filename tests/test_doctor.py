@@ -69,7 +69,7 @@ def test_windows_gets_winget_with_npcap() -> None:
 
 
 def test_projectdiscovery_tools_need_no_package_manager() -> None:
-    assert "github.com/projectdiscovery/nuclei/releases" in install_hint("nuclei", DEBIAN)
+    assert install_hint("nuclei", DEBIAN).startswith("reconkit tools install nuclei")
 
 
 # --- nmap ---------------------------------------------------------------------------------------
@@ -182,6 +182,7 @@ def test_not_ready_without_nmap(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(shutil, "which", lambda name: None)
     monkeypatch.setattr(doctor, "_windows_nmap", lambda system: None)
+    monkeypatch.setattr("reconkit.tools._windows_install", lambda name: None)
 
     assert cli.main(["doctor"]) == 1
     out = capsys.readouterr().out

@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from reconkit import __version__
+from reconkit import __version__, tools
 
 OK, WARN, MISSING, ERROR, INFO = "ok", "warn", "missing", "error", "info"
 CAP_NET_RAW = 13  # bit number in a file's permitted capability set
@@ -96,11 +96,7 @@ _LINUX = {
 
 def tools_hint(tool: str) -> str:
     """How to get one of the ProjectDiscovery tools (single binaries, no admin needed)."""
-    repo = "nuclei-templates" if tool == "nuclei-templates" else tool
-    return (
-        f"download a release from https://github.com/projectdiscovery/{repo}/releases, "
-        "or use the Docker image"
-    )
+    return f"reconkit tools install {tool}   (pinned release, SHA-256 checked, no admin)"
 
 
 def install_hint(tool: str, system: System) -> str:
@@ -374,8 +370,8 @@ def gather(config: str | None = None, cve_cache: str = "reconkit-cve.db") -> lis
 
     system = System.current()
     checks: list[Check] = []
-    nmap = shutil.which("nmap")
-    checks.append(check_nmap(nmap, _version(["nmap", "--version"]) if nmap else None, system))
+    nmap = tools.which("nmap")
+    checks.append(check_nmap(nmap, _version([nmap, "--version"]) if nmap else None, system))
     capability = None
     if nmap and system.name == "Linux" and hasattr(os, "getxattr"):
         try:
@@ -384,7 +380,7 @@ def gather(config: str | None = None, cve_cache: str = "reconkit-cve.db") -> lis
             capability = None
     checks.append(check_nmap_rights(nmap, system, capability))
     pinned = default_templates()
-    nuclei = shutil.which("nuclei")
+    nuclei = tools.which("nuclei")
     checks.append(
         check_tool(
             "nuclei", nuclei, NucleiPlugin(templates=pinned).version() if nuclei else None, system
@@ -393,7 +389,7 @@ def gather(config: str | None = None, cve_cache: str = "reconkit-cve.db") -> lis
     checks.append(
         check_templates(pinned, templates_version(pinned) if pinned else None, Path.home())
     )
-    subfinder = shutil.which("subfinder")
+    subfinder = tools.which("subfinder")
     plugin = SubfinderPlugin()
     checks.append(
         check_tool("subfinder", subfinder, plugin.version() if subfinder else None, system)

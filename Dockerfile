@@ -8,7 +8,8 @@
 # Supply chain: the base image is pinned by digest, every Python package by version AND
 # hash (docker/*.lock, regenerated with docker/lock.sh), nmap comes from Debian's signed
 # repository, nuclei / subfinder / templates are release files pinned by SHA-256
-# (docker/tools.lock, regenerated with docker/tools.py update). Nothing else is fetched.
+# (reconkit/data/tools.lock, the same file `reconkit tools install` uses; regenerated with
+# python -m reconkit.tools update). Nothing else is fetched.
 ARG PYTHON_IMAGE=python:3.13-slim-trixie@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90
 
 # --- build ReconKit's wheel (pure Python) ----------------------------------------------------
@@ -23,9 +24,10 @@ RUN pip wheel --no-cache-dir --no-deps --no-build-isolation --wheel-dir /wheels 
 # --- nuclei, subfinder, nuclei-templates: release files, checked against the lock -----------
 FROM ${PYTHON_IMAGE} AS tools
 ARG TARGETARCH
-COPY docker/tools.py docker/tools.lock /src/
+# Run as a plain script: reconkit/tools.py needs only the standard library.
+COPY reconkit/tools.py reconkit/data/tools.lock /src/
 RUN python /src/tools.py install --lock /src/tools.lock --bin /out/bin \
-      --templates /out/nuclei-templates ${TARGETARCH:+--arch "$TARGETARCH"}
+      --templates /out/nuclei-templates --platform "linux-${TARGETARCH:-amd64}"
 
 # --- the image ----------------------------------------------------------------------------------
 FROM ${PYTHON_IMAGE}

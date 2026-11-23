@@ -124,7 +124,7 @@ thật (nuclei 3.11.1, templates 10.5.2, subfinder 2.17.0), sửa những gì ch
       KEV/CVSS. subfinder: provider config (`--subfinder-config`), home tạm; discovery:
       `--discover-limit`, phân giải song song, lọc wildcard DNS, ghi chú gộp.
 - [x] `chore/docker-tools` — nuclei, subfinder, templates trong image: ghim phiên bản + SHA-256
-      từ file checksums chính thức (`docker/tools.lock`), `python docker/tools.py update`, chỉ lấy
+      từ file checksums chính thức (nay: `reconkit/data/tools.lock`), cập nhật một lệnh, chỉ lấy
       đúng binary, giải nén an toàn; CI kiểm phiên bản trong image khớp lock. Image 182 → 401 MB.
 - [x] `feat/lab-nuclei` — Apache trong lab cấu hình khai thác được (như vulhub) để nuclei xác
       nhận CVE-2021-41773; target lab bật nuclei với profile `lab`; profile có `check_rate` riêng
@@ -145,8 +145,12 @@ Mục tiêu: mang ReconKit sang máy khác mà cài nhanh, thêm / bớt công c
       `activity`, scope đặt trần `@activity` (mặc định `scan` → nuclei cần `@activity active`);
       `reconkit plugins`; `reconkit.plugins.contract`; gói mẫu `examples/reconkit-exposed-git`;
       `docs/PLUGINS.md`; doctor kiểm cả plugin ngoài. Còn lại: G25.
-- [ ] `feat/tools-install` — `reconkit tools install|verify` cho nuclei / subfinder / templates:
-      ghim phiên bản + SHA-256, nhiều hệ điều hành, thư mục của người dùng, không cần admin.
+- [x] `feat/tools-install` — `reconkit tools list|install|verify|path`: nuclei, subfinder,
+      nuclei-templates ghim phiên bản + SHA-256 cho Linux / macOS (amd64, arm64) và Windows
+      amd64, cài vào thư mục của người dùng, không cần admin; ghi hash của thứ đã cài để `verify`.
+      `reconkit/tools.py` + `reconkit/data/tools.lock` thay `docker/tools.*` (image dựng bằng
+      chính chúng). Plugin tìm công cụ: bản ReconKit cài → PATH → chỗ bộ cài nmap của Windows.
+      Đã thử thật trên Windows (cài, verify, doctor dùng được) và Linux (image).
 - [ ] `chore/release` — version theo tag, phát hành gói Python và image (nhiều kiến trúc, ký,
       SBOM, quét image).
 - [ ] `feat/mcp` — `reconkit mcp`: AI dùng ReconKit qua MCP, chỉ trên target đã khai báo, quyết

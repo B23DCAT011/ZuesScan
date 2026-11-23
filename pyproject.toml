@@ -45,7 +45,7 @@ where = ["."]
 include = ["reconkit*"]
 
 [tool.setuptools.package-data]
-reconkit = ["data/*.json", "report/assets/*", "report/vendor/*", "server/static/*"]
+reconkit = ["data/*.json", "data/*.lock", "report/assets/*", "report/vendor/*", "server/static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
