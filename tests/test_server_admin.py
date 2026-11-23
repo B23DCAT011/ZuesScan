@@ -118,3 +118,12 @@ def test_a_session_needs_the_csrf_header_to_change_settings(svc: App) -> None:
         "/api/v1/admin/scopes/lab2", json={"text": SCOPE}, headers={"X-ZuesScan": "1"}
     )
     assert allowed.status_code == 200
+
+
+def test_the_dashboard_has_a_settings_page_for_admins(svc: App) -> None:
+    page = svc.client().get("/").text
+    assert 'data-view="settings" hidden' in page  # shown by app.js to admins only
+    script = svc.client().get("/static/app.js").text
+    assert "settings: settings" in script and '"/admin/config"' in script
+    # The name pattern compiles in browsers' "v" mode: "-" escaped in the class.
+    assert r'var NAME_PATTERN = "[a-z0-9][a-z0-9_\\-]*";' in script

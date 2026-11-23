@@ -111,7 +111,11 @@
   }
 
   function isOperator() {
-    return me && me.role === "operator";
+    return me && (me.role === "operator" || me.role === "admin"); // an admin is an operator too
+  }
+
+  function isAdmin() {
+    return me && me.role === "admin";
   }
 
   /* --- the API ------------------------------------------------------------------ */
@@ -165,6 +169,7 @@
     $("login").hidden = true;
     $("app").hidden = false;
     $("who").textContent = who.name + " (" + who.role + ")";
+    document.querySelector('#nav a[data-view="settings"]').hidden = !isAdmin();
     route();
   }
 
@@ -196,6 +201,7 @@
     findings: findings,
     finding: finding,
     audit: audit,
+    settings: settings,
   };
 
   function route() {
@@ -204,19 +210,23 @@
     var parts = (location.hash || "#/overview").slice(2).split("/");
     var name = parts[0] || "overview";
     if (name === "findings" && parts[1]) name = "finding";
-    if (!VIEWS[name]) name = "overview";
+    if (!VIEWS[name] || (name === "settings" && !isAdmin())) name = "overview";
     Array.prototype.forEach.call(document.querySelectorAll("#nav a"), function (a) {
       var active = a.getAttribute("data-view") === (name === "finding" ? "findings" : name);
       a.className = active ? "active" : "";
       if (active) a.setAttribute("aria-current", "page");
       else a.removeAttribute("aria-current");
     });
+    // Each visit draws into its own element: a slow answer for the page left behind then
+    // lands in a detached node, instead of over the page now shown.
     var view = $("view");
     clear(view);
-    view.appendChild(el("p", { class: "muted" }, "Loading…"));
-    VIEWS[name](view, parts.slice(1)).catch(function (err) {
-      clear(view);
-      view.appendChild(el("p", { class: "error" }, "Could not load: " + err.message));
+    var page = el("div");
+    view.appendChild(page);
+    page.appendChild(el("p", { class: "muted" }, "Loading…"));
+    VIEWS[name](page, parts.slice(1)).catch(function (err) {
+      clear(page);
+      page.appendChild(el("p", { class: "error" }, "Could not load: " + err.message));
     });
   }
 
@@ -510,6 +520,281 @@
     return el("div", null, el("h2", null, "Decide"), form);
   }
 
+  /* --- settings (admin): what to scan, how, and who may --------------------------- */
+
+  var NEW_SCOPE = [
+    "# One entry per line: an address, a range (CIDR), a name, or *.domain for the names under it.",
+    "# A line starting with ! is denied, even inside an allowed range.",
+    "@engagement ACME-2026-01            # the contract or ticket that authorises the scans",
+    "@expires 2026-12-31 +07:00          # no scan after this day",
+    "# @window Mon-Fri 08:00-18:00 +07:00  # only during these hours",
+    "# @activity active                  # needed for nuclei (active checks); default: scan",
+    "10.0.0.0/24",
+    "!10.0.0.1",
+    "",
+  ].join("\n");
+
+  // For the pattern attribute, which browsers compile with the "v" flag: "-" in a class
+  // must be escaped there (the attribute holds a backslash, hence two in this string).
+  var NAME_PATTERN = "[a-z0-9][a-z0-9_\\-]*";
+
+  var KINDS = [
+    ["scanners", "scanner", "Scanners", "find hosts and open ports (default: nmap)"],
+    ["checks", "check", "Checks", "test what the scanners found"],
+    ["discoverers", "discovery", "Discovery", "find names under a domain first (the target is then a domain)"],
+  ];
+
+  // A list of cells (text or nodes) as a table row, for table().
+  function row(cells) {
+    return el("tr", null, cells.map(function (c) { return el("td", null, c); }));
+  }
+
+  function settings(view, parts) {
+    return api("GET", "/admin/config").then(function (cfg) {
+      clear(view);
+      if (parts[0] === "scope") return scopeEditor(view, cfg, decodeURIComponent(parts[1] || ""));
+      if (parts[0] === "target") return targetEditor(view, cfg, decodeURIComponent(parts[1] || ""));
+      view.appendChild(el("h1", null, "Settings"));
+      view.appendChild(el("p", { class: "muted" },
+        "What to scan, how, and who may. Changes apply at once and each one is recorded in the " +
+        "audit trail. Entries from service.toml are shown but can only be changed in that file."));
+      if (cfg.problems.length) {
+        view.appendChild(el("div", { class: "panel error" }, el("strong", null, "Left out: "),
+          el("ul", null, cfg.problems.map(function (p) { return el("li", null, p); }))));
+      }
+      view.appendChild(settingsTargets(cfg));
+      view.appendChild(settingsScopes(cfg));
+      view.appendChild(settingsTokens(cfg));
+    });
+  }
+
+  function source(s) {
+    return s === "dashboard" ? el("span", { class: "state state-finished" }, "dashboard")
+      : el("span", { class: "state" }, "service.toml");
+  }
+
+  function settingsTargets(cfg) {
+    var ownScopes = cfg.scopes.filter(function (s) { return s.source === "dashboard"; });
+    var add = el("button", {
+      type: "button", class: "primary", disabled: ownScopes.length ? null : true,
+      on: { click: function () { location.hash = "#/settings/target/new"; } },
+    }, "Add target");
+    var rows = cfg.targets.map(function (t) {
+      var tools = [].concat(t.scanners, t.checks, t.discoverers).join(", ");
+      return [
+        el("strong", null, t.name),
+        el("span", { class: "mono" }, t.target),
+        t.scope || el("span", { class: "muted" }, "(file)"),
+        t.profile,
+        t.every || el("span", { class: "muted" }, "on demand"),
+        tools,
+        source(t.source),
+        t.source === "dashboard" ? el("a", { href: "#/settings/target/" + encodeURIComponent(t.name) }, "Edit") : "",
+      ];
+    });
+    return el("section", null,
+      el("div", { class: "toolbar" }, el("h2", null, "Targets"), add,
+        ownScopes.length ? null : el("span", { class: "muted small" }, "Add a scope first: a target needs one.")),
+      table(["Name", "Target", "Scope", "Profile", "Schedule", "Tools", "Source", ""], rows.map(row), "No target yet."));
+  }
+
+  function settingsScopes(cfg) {
+    var add = el("button", {
+      type: "button", class: "primary",
+      on: { click: function () { location.hash = "#/settings/scope/new"; } },
+    }, "Add scope");
+    var rows = cfg.scopes.map(function (s) {
+      var own = s.source === "dashboard";
+      return [
+        el("strong", { class: own ? null : "mono" }, s.name),
+        own ? (s.error ? el("span", { class: "error" }, s.error)
+          : el("span", { class: "mono small" }, s.allow.slice(0, 4).join(", ") + (s.allow.length > 4 ? " …" : "")))
+          : el("span", { class: "muted" }, "a file on the server"),
+        own ? s.activity : "",
+        own ? (s.expires ? when(s.expires) : el("span", { class: "muted" }, "never")) : "",
+        s.used_by.join(", ") || el("span", { class: "muted" }, "unused"),
+        source(s.source),
+        own ? el("a", { href: "#/settings/scope/" + encodeURIComponent(s.name) }, "Edit") : "",
+      ];
+    });
+    return el("section", null,
+      el("div", { class: "toolbar" }, el("h2", null, "Scopes (authorisations)"), add),
+      table(["Name", "Allows", "@activity", "Expires", "Used by", "Source", ""], rows.map(row), "No scope yet."));
+  }
+
+  function settingsTokens(cfg) {
+    var rows = cfg.tokens.map(function (t) {
+      var remove = t.source === "dashboard" && !t.you ? el("button", {
+        type: "button", class: "link",
+        on: { click: function () { removeToken(t.name); } },
+      }, "Revoke") : "";
+      return [el("strong", null, t.name), t.role, source(t.source), t.you ? "you" : "", remove];
+    });
+    var name = el("input", { id: "token-name", maxlength: "64", required: true, placeholder: "who it is for" });
+    var role = el("select", { id: "token-role" }, ["viewer", "operator", "admin"].map(function (r) {
+      return el("option", { value: r }, r);
+    }));
+    var shown = el("div", { class: "panel", hidden: true });
+    var button = el("button", { type: "submit", class: "primary" }, "Create token");
+    var form = el("form", { class: "toolbar" },
+      el("label", null, "Name ", name), el("label", null, "Role ", role), button);
+    form.addEventListener("submit", function (event) {
+      event.preventDefault();
+      button.disabled = true;
+      api("POST", "/admin/tokens", { name: name.value.trim(), role: role.value })
+        .then(function (made) {
+          clear(shown);
+          append(shown, [
+            el("strong", null, "Token for " + made.name + " (" + made.role + "): copy it now, it is shown only once."),
+            el("pre", { class: "mono" }, made.token),
+            el("button", { type: "button", on: { click: function () { route(); } } }, "Done"),
+          ]);
+          shown.hidden = false;
+          name.value = "";
+          button.disabled = false;
+        })
+        .catch(function (err) {
+          flash(err.message, true);
+          button.disabled = false;
+        });
+    });
+    return el("section", null, el("h2", null, "Tokens (who may sign in)"),
+      table(["Name", "Role", "Source", "", ""], rows.map(row), "No token."),
+      el("p", { class: "muted small" },
+        "viewer: reads; operator: also scans and records decisions; admin: also changes these settings."),
+      form, shown);
+  }
+
+  function removeToken(name) {
+    api("DELETE", "/admin/tokens/" + encodeURIComponent(name))
+      .then(function () { flash("Token " + name + " revoked."); route(); })
+      .catch(function (err) { flash(err.message, true); });
+  }
+
+  function saved(what, result) {
+    var text = what + " saved.";
+    if (result && result.warnings && result.warnings.length) {
+      flash(text + " Note: " + result.warnings.join(" "), true);
+    } else {
+      flash(text);
+    }
+    location.hash = "#/settings";
+  }
+
+  function removeButton(path, what) {
+    return el("button", {
+      type: "button",
+      on: { click: function () {
+        api("DELETE", path).then(function () { flash(what + " deleted."); location.hash = "#/settings"; })
+          .catch(function (err) { flash(err.message, true); });
+      } },
+    }, "Delete");
+  }
+
+  function scopeEditor(view, cfg, name) {
+    var isNew = name === "new";
+    var existing = cfg.scopes.filter(function (s) { return s.source === "dashboard" && s.name === name; })[0];
+    if (!isNew && !existing) throw new Error("no dashboard scope named " + name);
+    var nameInput = el("input", { id: "scope-name", maxlength: "64", required: true, pattern: NAME_PATTERN,
+      placeholder: "e.g. office-lan" });
+    var text = el("textarea", { id: "scope-text", class: "mono", rows: "16", spellcheck: "false" });
+    text.value = isNew ? NEW_SCOPE : existing.text;
+    var button = el("button", { type: "submit", class: "primary" }, "Save scope");
+    var form = el("form", { class: "decision panel" },
+      isNew ? el("label", null, "Name (lowercase letters, digits, - and _)", nameInput)
+        : el("p", null, "Scope ", el("strong", null, name), existing.used_by.length
+          ? " — used by " + existing.used_by.join(", ") : ""),
+      el("label", null, "Authorisation: what may be scanned, until when, how far", text),
+      el("p", { class: "muted small" },
+        "Directives: @engagement <reference>, @expires <YYYY-MM-DD> [+HH:MM], " +
+        "@window [Mon-Fri|daily] HH:MM-HH:MM [+HH:MM], @activity passive|scan|active. " +
+        "Only scan what you own or are authorised in writing to test."),
+      el("div", { class: "toolbar" }, button, isNew ? null : removeButton("/admin/scopes/" + encodeURIComponent(name), "Scope " + name),
+        el("a", { href: "#/settings" }, "Cancel")));
+    form.addEventListener("submit", function (event) {
+      event.preventDefault();
+      var target = isNew ? nameInput.value.trim() : name;
+      button.disabled = true;
+      api("PUT", "/admin/scopes/" + encodeURIComponent(target), { text: text.value })
+        .then(function (result) { saved("Scope " + target, result); })
+        .catch(function (err) { flash(err.message, true); button.disabled = false; });
+    });
+    view.appendChild(el("p", null, el("a", { href: "#/settings" }, "← Settings")));
+    view.appendChild(el("h1", null, isNew ? "New scope" : "Scope " + name));
+    view.appendChild(form);
+  }
+
+  function targetEditor(view, cfg, name) {
+    var isNew = name === "new";
+    var t = cfg.targets.filter(function (x) { return x.source === "dashboard" && x.name === name; })[0];
+    if (!isNew && !t) throw new Error("no dashboard target named " + name);
+    t = t || { target: "", scope: null, profile: "standard", every: null, engagement: null,
+      scanners: ["nmap"], checks: [], discoverers: [], discover_limit: null, ipv4_only: false };
+    var scopes = cfg.scopes.filter(function (s) { return s.source === "dashboard"; });
+    var nameInput = el("input", { id: "target-name", maxlength: "64", required: true, pattern: NAME_PATTERN,
+      placeholder: "e.g. office-lan" });
+    var address = el("input", { id: "target-address", maxlength: "253", required: true, value: t.target,
+      placeholder: "10.0.0.0/24, 203.0.113.7, app.example.com or example.com (discovery)" });
+    var scope = el("select", { id: "target-scope", required: true }, scopes.map(function (s) {
+      return el("option", { value: s.name, selected: s.name === t.scope ? true : null }, s.name + " (@activity " + s.activity + ")");
+    }));
+    var profile = el("select", { id: "target-profile" }, cfg.profiles.map(function (p) {
+      return el("option", { value: p.name, selected: p.name === t.profile ? true : null }, p.name + " — " + p.description);
+    }));
+    var every = el("input", { id: "target-every", maxlength: "16", value: t.every || "", placeholder: "e.g. 24h — empty: only when asked" });
+    var engagement = el("input", { id: "target-engagement", maxlength: "200", value: t.engagement || "" });
+    var limit = el("input", { id: "target-limit", type: "number", min: "1", max: "100000", value: t.discover_limit || "" });
+    var ipv4 = el("input", { id: "target-ipv4", type: "checkbox", checked: t.ipv4_only ? true : null });
+    var boxes = {};
+    var groups = KINDS.map(function (k) {
+      boxes[k[0]] = [];
+      var plugins = cfg.plugins.filter(function (p) { return p.kind === k[1]; });
+      return el("fieldset", { class: "panel" }, el("legend", null, k[2] + " — " + k[3]),
+        plugins.map(function (p) {
+          var box = el("input", { type: "checkbox", value: p.name, checked: t[k[0]].indexOf(p.name) >= 0 ? true : null });
+          boxes[k[0]].push(box);
+          return el("label", { class: "plugin" }, box, " ", el("strong", null, p.name), " ",
+            el("span", { class: "state" }, p.activity), " ", el("span", { class: "muted" }, p.summary),
+            p.ready ? null : el("span", { class: "error small" }, " — not installed on the server"));
+        }));
+    });
+    var button = el("button", { type: "submit", class: "primary" }, "Save target");
+    var form = el("form", { class: "decision panel settings-form" },
+      isNew ? el("label", null, "Name (lowercase letters, digits, - and _)", nameInput) : null,
+      el("label", null, "Target", address),
+      el("label", null, "Scope (the authorisation it is checked against)", scope),
+      el("label", null, "Profile", profile),
+      el("label", null, "Schedule", every),
+      el("label", null, "Engagement (recorded with every run)", engagement),
+      groups,
+      el("label", null, "Names considered at most, with discovery (default 1000)", limit),
+      el("label", { class: "plugin" }, ipv4, " IPv4 only (do not look up IPv6 addresses)"),
+      el("p", { class: "muted small" },
+        "Checked before it is saved: the target must be inside the scope, and no tool may go " +
+        "beyond the scope's @activity (nuclei needs @activity active)."),
+      el("div", { class: "toolbar" }, button, isNew ? null : removeButton("/admin/targets/" + encodeURIComponent(name), "Target " + name),
+        el("a", { href: "#/settings" }, "Cancel")));
+    form.addEventListener("submit", function (event) {
+      event.preventDefault();
+      var target = isNew ? nameInput.value.trim() : name;
+      var body = {
+        target: address.value.trim(), scope: scope.value, profile: profile.value,
+        every: every.value.trim() || null, engagement: engagement.value.trim() || null,
+        discover_limit: limit.value ? parseInt(limit.value, 10) : null, ipv4_only: ipv4.checked,
+      };
+      KINDS.forEach(function (k) {
+        body[k[0]] = boxes[k[0]].filter(function (b) { return b.checked; }).map(function (b) { return b.value; });
+      });
+      button.disabled = true;
+      api("PUT", "/admin/targets/" + encodeURIComponent(target), body)
+        .then(function (result) { saved("Target " + target, result); })
+        .catch(function (err) { flash(err.message, true); button.disabled = false; });
+    });
+    view.appendChild(el("p", null, el("a", { href: "#/settings" }, "← Settings")));
+    view.appendChild(el("h1", null, isNew ? "New target" : "Target " + name));
+    view.appendChild(form);
+  }
+
   /* --- audit -------------------------------------------------------------------- */
 
   function audit(view) {
@@ -546,6 +831,7 @@
           refused: "refused: " + (d.reason || ""),
           deleted: "deleted run #" + d.run_id,
           finding: "finding #" + d.finding_id + ": " + (d.action || "") + " (" + (d.from || "") + " → " + (d.to || "") + ")",
+          config: d.action || "config",
         }[e.kind] || e.kind;
         return el(
           "tr",

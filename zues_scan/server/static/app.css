@@ -180,3 +180,12 @@ dl.kv dd { margin: 0; overflow-wrap: anywhere; }
 .decision label { display: grid; gap: 4px; }
 ol.history { margin: 0; padding-left: 20px; }
 ol.history li { margin: 2px 0; }
+
+/* settings (admin) */
+.settings-form { max-width: 860px; }
+.settings-form fieldset { display: grid; gap: 6px; margin: 0; }
+.settings-form legend { font-weight: 600; padding: 0 4px; }
+label.plugin { display: block; }
+label.plugin input { margin-right: 6px; }
+pre.mono { white-space: pre-wrap; overflow-wrap: anywhere; user-select: all; }
+section .toolbar h2 { margin-right: 8px; }

@@ -376,6 +376,7 @@ def _cmd_audit(args: argparse.Namespace) -> int:
             "scan": f"run #{detail.get('run_id')} {detail.get('status')}",
             "refused": f"refused: {detail.get('reason', '')}",
             "deleted": f"deleted run #{detail.get('run_id')}",
+            "config": str(detail.get("action", "config")),
         }.get(event.kind, event.kind)
         scope = f" scope {event.scope_sha256[:12]}" if event.scope_sha256 else ""
         engagement = f" [{event.engagement}]" if event.engagement else ""
