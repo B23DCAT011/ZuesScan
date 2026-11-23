@@ -141,7 +141,12 @@ jobs:
         if: env.PUBLISH == 'true'
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
-        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+        run: |
+          # A registry reference is lowercase; the owner's name may not be (B23DCAT011).
+          # docker/metadata-action lowercases the tags it pushes; this must too (v0.2.0's
+          # first run failed here: cosign cannot parse an uppercase repository).
+          pushed="$(printf '%s' "$IMAGE" | tr '[:upper:]' '[:lower:]')"
+          cosign sign --yes "${pushed}@${DIGEST}"
 
   release:
     name: GitHub Release
@@ -167,12 +172,13 @@ jobs:
             found { print }
           ' CHANGELOG.md > notes.md
           test -s notes.md
+          pushed="$(printf '%s' "$IMAGE" | tr '[:upper:]' '[:lower:]')"  # as pushed
           {
             echo
-            echo "Image: \`${IMAGE}:${VERSION}\` (linux/amd64, linux/arm64), signed with cosign:"
+            echo "Image: \`${pushed}:${VERSION}\` (linux/amd64, linux/arm64), signed with cosign:"
             echo
             echo '```bash'
-            echo "cosign verify ${IMAGE}:${VERSION} \\"
+            echo "cosign verify ${pushed}:${VERSION} \\"
             echo "  --certificate-identity-regexp 'https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/v.*' \\"
             echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
             echo '```'
