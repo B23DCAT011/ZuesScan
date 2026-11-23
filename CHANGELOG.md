@@ -7,6 +7,13 @@ section of a version as its release notes, so every tag needs one.
 ## [Unreleased]
 
 ### Added
+- naabu scanner plugin (`--scanner naabu`): nmap finds the live hosts (`-sn`; naabu cannot
+  without root), naabu finds their open ports with a connect scan at a fixed rate
+  (`max_rate`, default 1000/s; no raw sockets), nmap identifies the services on those ports
+  only (names and versions for the CVE stage). Live hosts with nothing open are kept, as
+  with nmap; out of time or a failed service detection keeps the ports and marks the run
+  partial. Measured on the lab: same results as nmap, slower on a fast LAN (see README).
+  `NmapPlugin(ping_only=True)` and `ScanProfile.ping_args()` for host discovery only.
 - dnsx discovery plugin (`--discoverer dnsx`): subdomains guessed from a wordlist and
   confirmed in DNS, for names public sources never saw (`vpn.`, `intranet.`). Activity
   `scan` (it queries the domain's own DNS servers), rate capped by the profile's
@@ -15,6 +22,8 @@ section of a version as its release notes, so every tag needs one.
   Installed by `zues tools install` and in the Docker image (pinned in tools.lock).
 
 ### Fixed
+- A scanner that reported an incomplete result did not make the run partial (only checks
+  did).
 - `zues plugins` showed tools installed by `zues tools install` as not ready: it looked on
   PATH only, while the plugins themselves look in ZuesScan's tools directory first.
 

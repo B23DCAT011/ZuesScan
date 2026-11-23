@@ -15,7 +15,7 @@ Quét định kỳ những gì **được phép** quét, nhớ mọi thứ đã 
 
 - **Cổng scope** trước mọi gói tin: allowlist / denylist, giấy phép có hạn (`@expires`), khung
   giờ (`@window`); tên miền phải phân giải ra địa chỉ trong scope.
-- **Quét** bằng công cụ mở: nmap (dịch vụ, traceroute, IPv4 + IPv6), subfinder, dnsx, nuclei, kiểm tra
+- **Quét** bằng công cụ mở: nmap (dịch vụ, traceroute, IPv4 + IPv6), naabu, subfinder, dnsx, nuclei, kiểm tra
   gói qua SSH (Debian). **CVE** từ NVD, xếp **ưu tiên** KEV → EPSS → CVSS (P1–P4).
 - **Vòng đời finding** qua các lần quét: mới / còn mở / báo đã sửa / **đã xác minh vá** /
   **fix giả** / tái xuất hiện / chấp nhận rủi ro có hạn.
@@ -52,7 +52,7 @@ docker compose pull web worker scheduler && docker compose up -d --no-build
 pipx install git+https://github.com/B23DCAT011/reconkit       # hoặc: pip install --user ...
 zues doctor               # máy có gì, thiếu gì, và lệnh cài đúng cho hệ điều hành này
 sudo apt install nmap         # (ví dụ) gói hệ thống: ZuesScan chỉ in lệnh, không tự cài
-zues tools install        # nuclei, subfinder, dnsx, nuclei-templates: không cần admin
+zues tools install        # nuclei, subfinder, dnsx, naabu, nuclei-templates: không cần admin
 zues doctor               # "ready to scan"
 ```
 
@@ -61,7 +61,7 @@ Chia việc như vậy là có chủ ý:
 | Công cụ | Ai cài | Vì sao |
 |---|---|---|
 | nmap, ssh (và Npcap trên Windows) | **người dùng**, bằng trình quản lý gói của hệ thống (`zues doctor` in đúng lệnh) | cần quyền admin, cài driver / capability; một công cụ bảo mật không được tự leo quyền; Npcap bản miễn phí không được đóng gói phân phối kèm |
-| nuclei, subfinder, dnsx, nuclei-templates | **ZuesScan** (`zues tools install`) | một file chạy được, giấy phép MIT; cài vào thư mục của người dùng, không cần admin |
+| nuclei, subfinder, dnsx, naabu, nuclei-templates | **ZuesScan** (`zues tools install`) | một file chạy được, giấy phép MIT; cài vào thư mục của người dùng, không cần admin |
 
 `zues tools install` tải **đúng** bản đã ghim trong `zues_scan/data/tools.lock` cho nền tảng
 này (Linux / macOS amd64 + arm64, Windows amd64), từ chối file có SHA-256 khác, chỉ lấy đúng file
@@ -96,10 +96,27 @@ zues scan 10.0.0.0/24 --scope scope.txt --check nuclei --check exposed-git
 pip install ./examples/zues-exposed-git        # thêm một plugin = cài một gói Python
 ```
 
-nmap, nuclei, subfinder, kiểm tra gói qua SSH là plugin dựng sẵn; công cụ khác thêm bằng một gói
-Python khai báo entry point `zues_scan.plugins` — không sửa ZuesScan. Mỗi plugin khai **mức chủ
+nmap, naabu, nuclei, subfinder, dnsx, kiểm tra gói qua SSH là plugin dựng sẵn; công cụ khác thêm
+bằng một gói Python khai báo entry point `zues_scan.plugins` — không sửa ZuesScan. Mỗi plugin khai **mức chủ
 động** (`passive` / `scan` / `active`) và file scope quyết định được tới đâu (`@activity`).
 Hướng dẫn viết plugin, bộ kiểm tra hợp đồng và ví dụ: [`docs/PLUGINS.md`](docs/PLUGINS.md).
+
+**Scanner thứ hai: naabu** (`--scanner naabu`). Ba bước: nmap dò host sống (`-sn`), naabu quét
+cổng của các host đó bằng *connect scan* (không cần raw socket, Npcap hay root) với tốc độ cố
+định (`max_rate`, mặc định 1000/giây), rồi nmap nhận diện dịch vụ **chỉ trên các cổng mở** —
+nên vẫn có tên + phiên bản dịch vụ cho bước CVE. Dò host phải nhờ nmap vì naabu không làm được
+khi không có root; thiếu bước này, quét toàn cổng một dải /24 gần trống là 15,7 triệu kết nối
+(hàng giờ). Đo thật trên lab (DMZ /24, 3 host sống), kết quả trùng khớp với nmap:
+
+| profile | nmap | naabu (+ nmap `-sn` / `-sV`) |
+|---|---|---|
+| `quick` (top 100 cổng) | 8 s | 13 s |
+| `lab` (65.535 cổng) | 13 s | 40 s với `--max-rate 20000` (≈200 s ở 1000/giây) |
+
+Tức là trên mạng LAN nhanh, nmap (SYN scan tự điều tốc) vẫn nhanh hơn; naabu đáng dùng khi quét
+nhiều host qua đường trễ cao (Internet) với tập cổng nhỏ, hoặc khi cần tốc độ cố định, dễ đoán.
+naabu chỉ có `top 100`, `top 1000` và `full`: profile hỏi top N khác thì dùng danh sách gần nhất
+lớn hơn (có ghi chú trong run).
 
 ## Kiểm tra máy: `zues doctor`
 

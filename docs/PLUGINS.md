@@ -17,7 +17,7 @@ Bớt công cụ: gỡ gói (`pip uninstall`), hoặc đơn giản là không ch
 
 | Loại | Làm gì | Hợp đồng (`zues_scan.plugins.base`) | Dựng sẵn |
 |---|---|---|---|
-| `scanner` | tìm host và dịch vụ trên các địa chỉ đã duyệt | `scan(target) -> ScanResult` | nmap |
+| `scanner` | tìm host và dịch vụ trên các địa chỉ đã duyệt | `scan(target) -> ScanResult` | nmap, naabu |
 | `check` | kiểm tra những gì scanner tìm được | `check(plan, assets) -> ScanResult` | nuclei, ssh-packages |
 | `discovery` | tìm *tên* để quét (chưa quét gì) | `discover(domain) -> DiscoveryResult` | subfinder, dnsx |
 
@@ -29,7 +29,7 @@ mỗi run; không bao giờ raise) và thuộc tính lớp **`activity`**.
 | `activity` | Nghĩa | Ví dụ |
 |---|---|---|
 | `passive` | chỉ hỏi bên thứ ba, không gì tới mục tiêu | subfinder |
-| `scan` | tìm cái đang có: quét cổng, nhận diện dịch vụ, đăng nhập chỉ đọc, hỏi DNS của mục tiêu | nmap, ssh-packages, dnsx |
+| `scan` | tìm cái đang có: quét cổng, nhận diện dịch vụ, đăng nhập chỉ đọc, hỏi DNS của mục tiêu | nmap, naabu, ssh-packages, dnsx |
 | `active` | thử lỗi: request được chế tạo, kiểm tra khai thác | nuclei, exposed-git |
 
 File scope đặt **mức trần** bằng `@activity` (mặc định `scan`). Plugin vượt trần bị từ chối

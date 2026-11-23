@@ -171,6 +171,7 @@ class Orchestrator:
         #    What several plugins say about the same host is merged into one asset.
         assets: list[Asset] = []
         out_of_scope: list[str] = []
+        degraded = False  # a plugin failed or ran out of time: the run is partial
         if self.ipv4_only and (plan.hostname or plan.names):
             notes.append("IPv4 only: the name's IPv6 (AAAA) addresses were not looked up")
         for plugin in runnable:
@@ -185,6 +186,7 @@ class Orchestrator:
                 extra={"event": "plugin.done", "plugin": plugin.name},
             )
             notes.extend(f"{plugin.name}: {note}" for note in result.notes)
+            degraded = degraded or result.incomplete
             # Kept whole, including what it says about hosts dropped just below:
             # it is the record of what the tool really did.
             raw_outputs.extend(result.raw)
@@ -218,7 +220,6 @@ class Orchestrator:
         # 3b. Checks (nuclei): test what was found. Before the CVE stage, so that an
         #     observed issue is kept over the same CVE inferred from a version.
         cleared: dict[str, set[str]] = {}
-        degraded = False  # a check failed or ran out of time: the run is partial
         for check in self.checks:
             if not check.is_available():
                 skipped.append(check.name)

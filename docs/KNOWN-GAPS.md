@@ -426,6 +426,18 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     - Chưa dò đệ quy (tên dưới tên vừa tìm, vd `*.dev.example.com`) và chưa sinh biến thể
       (`dev1`, `dev-api`… từ tên đã biết).
 
+- [ ] **G28. naabu: giới hạn còn lại.** (từ `feat/naabu`)
+  - ✅ Đã có: nmap `-sn` → naabu connect scan trên host sống → nmap `-sV` chỉ trên cổng mở;
+    host sống không mở cổng vẫn được giữ; hết giờ / nhận diện dịch vụ hỏng → giữ cổng, run
+    `partial`. Thử thật trên lab: cùng kết quả với nmap.
+  - Còn lại:
+    - Chỉ connect scan: SYN scan của naabu cần libpcap + root (image không có libpcap; worker
+      chạy uid 10001). Trên LAN nhanh, nmap vẫn nhanh hơn (đo trong README).
+    - Không có nmap thì không dò host được: mọi cổng của mọi địa chỉ đều bị thử (có ghi chú).
+    - Chỉ TCP; top N cổng của profile được làm tròn lên danh sách 100 / 1000 / full của naabu.
+    - Chưa đo trên Internet (đường trễ cao, nhiều host) — nơi naabu đáng lẽ có lợi; cần một
+      mục tiêu có giấy phép để đo.
+
 ## Mức 3 — Hoàn thiện sản phẩm / portfolio
 
 - [x] **G17. Chưa có CI.** Sửa: GitHub Actions chạy pytest + ruff + mypy cho mọi PR. (F1, `chore/ci`)
