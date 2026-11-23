@@ -15,7 +15,7 @@ Quét định kỳ những gì **được phép** quét, nhớ mọi thứ đã 
 
 - **Cổng scope** trước mọi gói tin: allowlist / denylist, giấy phép có hạn (`@expires`), khung
   giờ (`@window`); tên miền phải phân giải ra địa chỉ trong scope.
-- **Quét** bằng công cụ mở: nmap (dịch vụ, traceroute, IPv4 + IPv6), subfinder, nuclei, kiểm tra
+- **Quét** bằng công cụ mở: nmap (dịch vụ, traceroute, IPv4 + IPv6), subfinder, dnsx, nuclei, kiểm tra
   gói qua SSH (Debian). **CVE** từ NVD, xếp **ưu tiên** KEV → EPSS → CVSS (P1–P4).
 - **Vòng đời finding** qua các lần quét: mới / còn mở / báo đã sửa / **đã xác minh vá** /
   **fix giả** / tái xuất hiện / chấp nhận rủi ro có hạn.
@@ -52,7 +52,7 @@ docker compose pull web worker scheduler && docker compose up -d --no-build
 pipx install git+https://github.com/B23DCAT011/reconkit       # hoặc: pip install --user ...
 zues doctor               # máy có gì, thiếu gì, và lệnh cài đúng cho hệ điều hành này
 sudo apt install nmap         # (ví dụ) gói hệ thống: ZuesScan chỉ in lệnh, không tự cài
-zues tools install        # nuclei + subfinder + nuclei-templates: không cần admin
+zues tools install        # nuclei, subfinder, dnsx, nuclei-templates: không cần admin
 zues doctor               # "ready to scan"
 ```
 
@@ -61,7 +61,7 @@ Chia việc như vậy là có chủ ý:
 | Công cụ | Ai cài | Vì sao |
 |---|---|---|
 | nmap, ssh (và Npcap trên Windows) | **người dùng**, bằng trình quản lý gói của hệ thống (`zues doctor` in đúng lệnh) | cần quyền admin, cài driver / capability; một công cụ bảo mật không được tự leo quyền; Npcap bản miễn phí không được đóng gói phân phối kèm |
-| nuclei, subfinder, nuclei-templates | **ZuesScan** (`zues tools install`) | một file chạy được, giấy phép MIT; cài vào thư mục của người dùng, không cần admin |
+| nuclei, subfinder, dnsx, nuclei-templates | **ZuesScan** (`zues tools install`) | một file chạy được, giấy phép MIT; cài vào thư mục của người dùng, không cần admin |
 
 `zues tools install` tải **đúng** bản đã ghim trong `zues_scan/data/tools.lock` cho nền tảng
 này (Linux / macOS amd64 + arm64, Windows amd64), từ chối file có SHA-256 khác, chỉ lấy đúng file
@@ -70,7 +70,7 @@ chạy trong mỗi zip, giải nén templates an toàn, rồi ghi SHA-256 của 
 ```bash
 zues tools list           # bản ghim, bản đã cài, và chương trình ZuesScan sẽ dùng
 zues tools verify         # có gì bị sửa từ lúc cài không
-zues tools path           # thư mục chứa nuclei / subfinder (thêm vào PATH nếu muốn gọi tay)
+zues tools path           # thư mục chứa nuclei / subfinder / dnsx (thêm vào PATH nếu muốn gọi tay)
 ```
 
 ZuesScan tìm công cụ theo thứ tự: bản nó đã cài → PATH → chỗ bộ cài nmap của Windows đặt (nên
@@ -250,6 +250,18 @@ Quy tắc của scope:
   API key cho các nguồn của subfinder nằm trong file provider config của subfinder:
   `--subfinder-config FILE` (hoặc `ZUES_SUBFINDER_CONFIG`, hoặc file sẵn có của bạn ở
   `~/.config/subfinder/`); không có key thì chỉ các nguồn miễn phí trả lời.
+- **Tên không có trong nguồn công khai: dnsx.** `--discoverer dnsx` (dùng riêng hoặc cùng
+  subfinder: `--discoverer subfinder --discoverer dnsx`) hỏi thẳng DNS `<từ>.<tên miền>` với
+  từng từ của một wordlist và giữ tên phân giải được — tìm ra `vpn.`, `intranet.`, máy staging
+  cũ… vốn không bao giờ có chứng chỉ công khai. Vì có gửi truy vấn tới DNS của mục tiêu nên
+  mức của nó là `scan` (không phải thụ động), tốc độ bị chặn bởi `check_rate` của profile
+  (mặc định 100 truy vấn/giây). Wordlist mặc định là danh sách riêng của ZuesScan (~370 tên
+  phổ biến, quét xong trong vài giây); danh sách lớn hơn: `--dns-wordlist FILE` (service:
+  `dns_wordlist`). Hai tên ngẫu nhiên được hỏi kèm để nhận ra **wildcard DNS**; tên chỉ trả về
+  đúng địa chỉ của wildcard bị bỏ ngay. Resolver là resolver của hệ thống (`/etc/resolv.conf`
+  — cùng resolver mà cổng scope dùng), nên tên nội bộ phân giải được trong mạng nội bộ.
+  Đã thử thật với một máy chủ DNS riêng (CoreDNS): tìm đủ 6 tên (kể cả tên chỉ có AAAA), và
+  với một vùng wildcard thì loại cả 374 tên "giả".
 - **IPv6 cũng vậy.** Tên được phân giải ra cả IPv4 và IPv6; địa chỉ IPv6 cũng phải có trong
   scope (vd `2001:db8::/64`), hoặc quét `--ipv4-only`. Không quét quét dải IPv6 lớn hơn /112.
 - **Deny thắng allow.** Quét một dải có chứa địa chỉ bị cấm thì địa chỉ đó được loại trừ
@@ -580,9 +592,9 @@ Khôi phục: `docker compose stop web worker scheduler` → `zues backup --veri
 chép file vào volume làm `/data/zues.db` → `docker compose start`. Bản sao lưu nằm cùng
 volume với DB thì không chống được hỏng đĩa: luôn `docker compose cp` ra nơi khác.
 
-### nuclei, subfinder và templates trong image
+### nuclei, subfinder, dnsx và templates trong image
 
-Image có sẵn nuclei, subfinder và một bộ nuclei-templates ghim (phiên bản trong
+Image có sẵn nuclei, subfinder, dnsx và một bộ nuclei-templates ghim (phiên bản trong
 `zues_scan/data/tools.lock`); `nuclei = true` / `discover = true` trên target dùng chúng, và mỗi run ghi
 lại `nuclei 3.11.1 (templates 10.5.2)`. Templates mới ra hằng ngày, nên cập nhật bằng cách dựng
 lại image — có kiểm soát như mọi phụ thuộc khác:

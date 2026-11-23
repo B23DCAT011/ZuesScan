@@ -160,4 +160,11 @@ Mục tiêu: mang ZuesScan sang máy khác mà cài nhanh, thêm / bớt công c
       `request_scan` / `claim_fixed` / `reopen_finding` cần người dùng xác nhận (elicitation qua
       `Resolve`, không phải tham số); không có tool chấp nhận rủi ro; chỉ target đã khai báo; dữ
       liệu quét làm sạch + đánh dấu không tin cậy. Thử thật qua stdio trên lab. Còn lại: G26.
+- [x] `chore/rename-zuesscan` — ReconKit → **ZuesScan** (gói `zues-scan`, import `zues_scan`, lệnh
+      `zues`, biến `ZUES_*`); dữ liệu cũ vẫn đọc được (cột `reconkit_version`, định dạng
+      `reconkit-cve`, `.reconkit-version`, bản sao lưu `reconkit-*.db`).
+- [x] `feat/dnsx` — plugin discovery dnsx: dò `<từ>.<tên miền>` bằng wordlist riêng (~370 tên)
+      hoặc `--dns-wordlist`, mức `scan`, tốc độ theo `check_rate`, lọc wildcard DNS, resolver của
+      hệ thống; ghim trong tools.lock, có trong image, doctor kiểm. Sửa `zues plugins` không
+      thấy công cụ do `zues tools install` cài. Thử thật với CoreDNS. Còn lại: G27.
 

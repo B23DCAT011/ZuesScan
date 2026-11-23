@@ -411,6 +411,21 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     - Làm sạch chuỗi chống được ký tự điều khiển và độ dài, **không** chống được nội dung thao
       túng viết bằng chữ thường; model vẫn phải coi đó là dữ liệu (đã nói trong mô tả tool).
 
+- [ ] **G27. dnsx: giới hạn còn lại.** (từ `feat/dnsx`)
+  - ✅ Đã có: dò tên bằng wordlist, mức `scan`, tốc độ theo `check_rate`, nhận ra wildcard DNS
+    bằng hai tên ngẫu nhiên, resolver của hệ thống; hết giờ thì giữ tên đã xác nhận. Đã thử
+    thật với CoreDNS riêng (vùng thường và vùng wildcard).
+  - Còn lại:
+    - **Windows:** không có `/etc/resolv.conf`, dnsx dùng resolver công khai của nó (1.1.1.1,
+      8.8.8.8…) → tên chỉ có trong DNS nội bộ không tìm được. Sửa: đọc DNS server của Windows
+      (`GetNetworkParams` / `Get-DnsClientServerAddress`) hoặc tham số `resolvers`.
+    - Resolver IPv6 trong resolv.conf bị bỏ qua (chưa thử cú pháp `-r` của dnsx với IPv6).
+    - Wildcard chỉ nhận ra khi mọi địa chỉ của tên nằm trong địa chỉ của hai tên ngẫu nhiên:
+      wildcard trả về địa chỉ xoay vòng từ một dải lớn (CDN) có thể lọt qua — cổng scope vẫn
+      kiểm lại từng tên trước khi quét.
+    - Chưa dò đệ quy (tên dưới tên vừa tìm, vd `*.dev.example.com`) và chưa sinh biến thể
+      (`dev1`, `dev-api`… từ tên đã biết).
+
 ## Mức 3 — Hoàn thiện sản phẩm / portfolio
 
 - [x] **G17. Chưa có CI.** Sửa: GitHub Actions chạy pytest + ruff + mypy cho mọi PR. (F1, `chore/ci`)
