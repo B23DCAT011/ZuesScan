@@ -189,7 +189,7 @@ def test_the_browser_session_is_an_httponly_strict_cookie(svc: App) -> None:
 
 
 def test_the_cookie_over_https_is_secure(svc: App) -> None:
-    browser = TestClient(svc.app, base_url="https://zues_scan.example")
+    browser = TestClient(svc.app, base_url="https://zues.example")
     cookie = browser.post("/api/v1/session", json={"token": BOB}).headers["set-cookie"]
     assert "Secure" in cookie
 

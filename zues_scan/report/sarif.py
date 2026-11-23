@@ -11,7 +11,7 @@ Mapping, per finding:
   (description, CWE, CVSS, a link to NVD for CVEs).
 * `level`: critical / high -> error, medium -> warning, low / info -> note.
 * `rank`: the CVSS score x 10 (0-100), SARIF's "how serious" scale.
-* `partialFingerprints["zues_scan/v2"]`: ZuesScan's fingerprint, so a consumer can
+* `partialFingerprints["zues/v2"]`: ZuesScan's fingerprint, so a consumer can
   recognise the same issue across runs exactly as ZuesScan does.
 * `properties`: priority, confidence, EPSS, KEV listing, lifecycle status.
 """
@@ -59,7 +59,7 @@ def to_sarif(model: dict[str, Any]) -> dict[str, Any]:
                         **({"exitCodeDescription": run["error"]} if run["error"] else {}),
                     }
                 ],
-                "automationDetails": {"id": f"zues_scan/{run['target']}/run-{run['id']}"},
+                "automationDetails": {"id": f"zues/{run['target']}/run-{run['id']}"},
                 "results": results,
                 "properties": _bag(
                     {
@@ -119,7 +119,7 @@ def _result(
                 ],
             }
         ],
-        "partialFingerprints": {"zues_scan/v2": f["fingerprint"]},
+        "partialFingerprints": {"zues/v2": f["fingerprint"]},
         "properties": {
             "priority": f.get("priority"),
             "priorityReason": f.get("priority_reason"),

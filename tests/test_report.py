@@ -344,7 +344,7 @@ def test_sarif_follows_the_2_1_0_structure() -> None:
         assert result["ruleId"] == rule["id"]  # index and id agree
         assert result["level"] in ("error", "warning", "note")
         assert result["message"]["text"]
-        assert result["partialFingerprints"]["zues_scan/v2"].startswith("v2:")
+        assert result["partialFingerprints"]["zues/v2"].startswith("v2:")
         assert None not in result["properties"].values()
     nginx = results[1]
     assert nginx["level"] == "error"  # high
@@ -362,7 +362,7 @@ def test_sarif_follows_the_2_1_0_structure() -> None:
     loose = results[2]  # no service: located at the host itself
     assert loose["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "tcp://10.0.0.5"
     assert run["invocations"][0]["executionSuccessful"] is True
-    assert run["automationDetails"]["id"] == "zues_scan/10.0.0.0/24/run-4"
+    assert run["automationDetails"]["id"] == "zues/10.0.0.0/24/run-4"
 
 
 def test_sarif_of_ipv6_and_of_a_failed_run() -> None:
