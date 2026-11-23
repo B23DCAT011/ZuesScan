@@ -33,6 +33,7 @@ def spec_for(config: ServiceConfig, target: Target, operator: str) -> ScanSpec:
         nuclei_templates=config.nuclei_templates,
         discover=target.discover,
         subfinder_config=config.subfinder_config,
+        dns_wordlist=config.dns_wordlist,
         discover_limit=target.discover_limit,
         ipv4_only=target.ipv4_only,
         operator=operator,

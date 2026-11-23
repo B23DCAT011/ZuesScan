@@ -25,6 +25,7 @@ from importlib import metadata
 from typing import Any, Literal
 
 from zues_scan.cve.cache import CveCache
+from zues_scan.plugins.dnsx import DnsxPlugin
 from zues_scan.plugins.nmap import NmapPlugin
 from zues_scan.plugins.nuclei import NucleiPlugin
 from zues_scan.plugins.ssh_packages import SshCredential, SshPackagesPlugin
@@ -50,6 +51,7 @@ class PluginContext:
     profile: ScanProfile = field(default_factory=lambda: BUILTIN_PROFILES[DEFAULT_PROFILE])
     nuclei_templates: str | None = None
     subfinder_config: str | None = None
+    dns_wordlist: str | None = None
     credentials: list[SshCredential] | None = None
     cve_cache: CveCache | None = None
 
@@ -88,6 +90,10 @@ def _nuclei(ctx: PluginContext) -> Any:
 
 def _subfinder(ctx: PluginContext) -> Any:
     return SubfinderPlugin(provider_config=ctx.subfinder_config)
+
+
+def _dnsx(ctx: PluginContext) -> Any:
+    return DnsxPlugin(wordlist=ctx.dns_wordlist, rate=ctx.profile.check_rate or 100)
 
 
 def _ssh_packages(ctx: PluginContext) -> Any:
@@ -135,6 +141,15 @@ BUILTINS: tuple[PluginSpec, ...] = (
         _subfinder,
         binary="subfinder",
         needs=("Internet",),
+    ),
+    PluginSpec(
+        "dnsx",
+        "discovery",
+        DnsxPlugin.activity,
+        "subdomains from a wordlist, confirmed in DNS",
+        _dnsx,
+        binary="dnsx",
+        needs=("a DNS resolver",),
     ),
 )
 

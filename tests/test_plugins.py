@@ -93,6 +93,7 @@ def test_the_built_in_plugins() -> None:
         "nuclei": ("check", "active"),
         "ssh-packages": ("check", "scan"),
         "subfinder": ("discovery", "passive"),
+        "dnsx": ("discovery", "scan"),
     }
     assert loaded.problems == []
 
