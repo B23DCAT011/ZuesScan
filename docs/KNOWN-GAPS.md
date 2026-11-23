@@ -438,6 +438,21 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     - Chưa đo trên Internet (đường trễ cao, nhiều host) — nơi naabu đáng lẽ có lợi; cần một
       mục tiêu có giấy phép để đo.
 
+- [ ] **G29. httpx: giới hạn còn lại.** (từ `feat/httpx`)
+  - ✅ Đã có: URL / trạng thái / tiêu đề / server / công nghệ trên mỗi dịch vụ web, lưu trong
+    database (schema 13), hiện ở CLI, bản đồ, API, MCP; công nghệ có phiên bản → bước CVE, gộp
+    với finding của nmap. Thử thật trên lab (Apache, nginx) và trong job lab của CI.
+  - Còn lại:
+    - **Virtual host:** chỉ hỏi theo IP; một máy chủ nhiều tên (vhost) chỉ được thấy trang mặc
+      định. Sửa: gửi `Host:` = tên đã được cổng scope duyệt, nhưng vẫn kết nối tới đúng IP đó.
+    - Chỉ trang gốc `/`, không theo redirect: ứng dụng ở `/app/` hay sau một redirect sang HTTPS
+      có thể không được nhận diện đầy đủ.
+    - `TECH_NAMES` là danh sách tay (~20 tên); công nghệ khác hiện ra nhưng không đối chiếu CVE.
+      Phiên bản Wappalyzer đoán từ trang (vd đường dẫn file JS) có thể sai — finding vẫn chỉ là
+      "firm", không phải "confirmed".
+    - Bảng điều khiển web chưa có trang kiểm kê web riêng (tìm theo công nghệ: "mọi máy chạy
+      PHP 7"); dữ liệu đã có trong API.
+
 ## Mức 3 — Hoàn thiện sản phẩm / portfolio
 
 - [x] **G17. Chưa có CI.** Sửa: GitHub Actions chạy pytest + ruff + mypy cho mọi PR. (F1, `chore/ci`)

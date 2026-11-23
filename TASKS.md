@@ -171,4 +171,8 @@ Mục tiêu: mang ZuesScan sang máy khác mà cài nhanh, thêm / bớt công c
       root) → nmap `-sV` chỉ trên cổng mở; ghim trong tools.lock, có trong image, doctor kiểm;
       scanner báo `incomplete` giờ làm run `partial`. Đo thật trên lab: cùng kết quả, chậm hơn nmap
       trên LAN (quick 13 s / 8 s; toàn cổng 40 s / 13 s) — ghi rõ trong README. Còn lại: G28.
+- [x] `feat/httpx` — check httpx: lớp web của mỗi dịch vụ (URL, trạng thái, tiêu đề, server, công
+      nghệ) lưu vào `Service.web` (schema 13), hiện ở CLI / bản đồ / API / MCP; công nghệ có phiên
+      bản → bước CVE, cùng CVE với nmap thành một finding. Lab chạy httpx + nuclei; CI kiểm.
+      Thử thật trên lab (Apache 2.4.49, nginx 1.20.0 "Welcome to nginx!"). Còn lại: G29.
 

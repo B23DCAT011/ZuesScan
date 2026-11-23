@@ -15,7 +15,7 @@ Quét định kỳ những gì **được phép** quét, nhớ mọi thứ đã 
 
 - **Cổng scope** trước mọi gói tin: allowlist / denylist, giấy phép có hạn (`@expires`), khung
   giờ (`@window`); tên miền phải phân giải ra địa chỉ trong scope.
-- **Quét** bằng công cụ mở: nmap (dịch vụ, traceroute, IPv4 + IPv6), naabu, subfinder, dnsx, nuclei, kiểm tra
+- **Quét** bằng công cụ mở: nmap (dịch vụ, traceroute, IPv4 + IPv6), naabu, httpx, subfinder, dnsx, nuclei, kiểm tra
   gói qua SSH (Debian). **CVE** từ NVD, xếp **ưu tiên** KEV → EPSS → CVSS (P1–P4).
 - **Vòng đời finding** qua các lần quét: mới / còn mở / báo đã sửa / **đã xác minh vá** /
   **fix giả** / tái xuất hiện / chấp nhận rủi ro có hạn.
@@ -52,7 +52,7 @@ docker compose pull web worker scheduler && docker compose up -d --no-build
 pipx install git+https://github.com/B23DCAT011/reconkit       # hoặc: pip install --user ...
 zues doctor               # máy có gì, thiếu gì, và lệnh cài đúng cho hệ điều hành này
 sudo apt install nmap         # (ví dụ) gói hệ thống: ZuesScan chỉ in lệnh, không tự cài
-zues tools install        # nuclei, subfinder, dnsx, naabu, nuclei-templates: không cần admin
+zues tools install        # nuclei, subfinder, dnsx, naabu, httpx, templates: không cần admin
 zues doctor               # "ready to scan"
 ```
 
@@ -61,7 +61,7 @@ Chia việc như vậy là có chủ ý:
 | Công cụ | Ai cài | Vì sao |
 |---|---|---|
 | nmap, ssh (và Npcap trên Windows) | **người dùng**, bằng trình quản lý gói của hệ thống (`zues doctor` in đúng lệnh) | cần quyền admin, cài driver / capability; một công cụ bảo mật không được tự leo quyền; Npcap bản miễn phí không được đóng gói phân phối kèm |
-| nuclei, subfinder, dnsx, naabu, nuclei-templates | **ZuesScan** (`zues tools install`) | một file chạy được, giấy phép MIT; cài vào thư mục của người dùng, không cần admin |
+| nuclei, subfinder, dnsx, naabu, httpx, nuclei-templates | **ZuesScan** (`zues tools install`) | một file chạy được, giấy phép MIT; cài vào thư mục của người dùng, không cần admin |
 
 `zues tools install` tải **đúng** bản đã ghim trong `zues_scan/data/tools.lock` cho nền tảng
 này (Linux / macOS amd64 + arm64, Windows amd64), từ chối file có SHA-256 khác, chỉ lấy đúng file
@@ -96,7 +96,7 @@ zues scan 10.0.0.0/24 --scope scope.txt --check nuclei --check exposed-git
 pip install ./examples/zues-exposed-git        # thêm một plugin = cài một gói Python
 ```
 
-nmap, naabu, nuclei, subfinder, dnsx, kiểm tra gói qua SSH là plugin dựng sẵn; công cụ khác thêm
+nmap, naabu, httpx, nuclei, subfinder, dnsx, kiểm tra gói qua SSH là plugin dựng sẵn; công cụ khác thêm
 bằng một gói Python khai báo entry point `zues_scan.plugins` — không sửa ZuesScan. Mỗi plugin khai **mức chủ
 động** (`passive` / `scan` / `active`) và file scope quyết định được tới đâu (`@activity`).
 Hướng dẫn viết plugin, bộ kiểm tra hợp đồng và ví dụ: [`docs/PLUGINS.md`](docs/PLUGINS.md).
@@ -158,6 +158,33 @@ zues scan scanme.lab --scope scope.txt --db zues.db
 zues scan 10.0.0.0/24 --scope scope.txt        # quét cả dải, tự loại trừ 10.0.0.1
 zues scan 10.0.0.0/24 --scope scope.txt --traceroute   # ghi cả đường đi tới từng host (profile full bật sẵn)
 ```
+
+### Lớp web: httpx
+
+```bash
+zues scan 10.0.0.0/24 --scope scope.txt --check httpx            # service.toml: checks = ["httpx"]
+```
+
+nmap gọi tên web server ("Apache httpd 2.4.49"); thứ chạy **phía sau** nó — PHP, WordPress,
+Grafana, jQuery — chỉ lộ ra trong câu trả lời HTTP. httpx lấy trang gốc của mọi dịch vụ web mà
+lần quét tìm được (tên dịch vụ có "http"; cổng chưa có tên thì các cổng web thường gặp), thử
+HTTPS rồi HTTP, **không theo redirect** (mức `scan`, như probe của nmap; tốc độ theo `check_rate`).
+Kết quả gắn vào dịch vụ: URL, mã trạng thái, tiêu đề, header `Server`, công nghệ (bộ nhận diện
+Wappalyzer) — hiện trong đầu ra `zues scan`, bản đồ HTML, API, MCP và được lưu trong database:
+
+```
+    80/tcp     http            nginx 1.20.0
+                               web: 200 "Welcome to nginx!"  [Nginx:1.20.0]
+```
+
+Công nghệ **có phiên bản** mà ZuesScan biết tên CPE (Apache, nginx, IIS, Tomcat, Jetty, PHP,
+WordPress, Drupal, Moodle, phpMyAdmin, Grafana, Jenkins, GitLab, jQuery, Bootstrap, OpenSSL…)
+được đưa vào bước CVE như phần mềm chạy trên cổng đó — tìm được lỗ hổng của PHP 7.4 dù nmap chỉ
+thấy nginx. Cùng một CVE do nmap và httpx cùng suy ra là **một** finding, bằng chứng ghi cả hai
+("the web check (httpx) recognised 'Nginx:1.20.0' in the HTTP answer"). Chỉ dùng địa chỉ IP, không
+dùng tên (httpx sẽ tự phân giải lại tên, có thể ra địa chỉ cổng scope chưa duyệt) — nên chưa phân
+biệt virtual host (G29). Tiêu đề, tên công nghệ đến từ máy bị quét: bỏ ký tự điều khiển, giới hạn
+độ dài, luôn hiển thị dạng text. Lab chạy httpx cùng nuclei trên cả hai target.
 
 ### Kiểm tra chủ động bằng nuclei
 
