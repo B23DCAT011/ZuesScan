@@ -430,7 +430,11 @@ Image và compose được làm cứng theo cách làm thật:
 
 - **Chuỗi cung ứng**: image gốc ghim theo digest; mọi gói Python ghim **phiên bản và mã băm**
   (`docker/requirements.lock`, `docker/build.lock`, sinh lại bằng `sh docker/lock.sh` ngay
-  trong image gốc); nmap lấy từ kho Debian có ký. Không tải gì từ nơi khác.
+  trong image gốc); nmap lấy từ kho Debian có ký; **nuclei, subfinder và nuclei-templates** là
+  file release ghim **phiên bản và SHA-256** lấy từ file checksums chính thức của từng bản
+  (`docker/tools.lock`) — sai một byte thì build dừng. Từ mỗi zip chỉ lấy đúng binary; templates
+  bỏ phần không phải template và ghi phiên bản (`/opt/nuclei-templates`, chỉ đọc, thuộc root).
+  Không tải gì từ nơi khác.
 - **Không chạy root**: user `reconkit` (uid 10001). nmap được `setcap cap_net_raw` — đúng một
   quyền để mở raw socket (SYN scan, traceroute) mà không cần root.
 - **Ít quyền nhất**: mọi container ReconKit có root filesystem **chỉ đọc**, `cap_drop: ALL`,
@@ -473,8 +477,22 @@ Khôi phục: `docker compose stop web worker scheduler` → `reconkit backup --
 chép file vào volume làm `/data/reconkit.db` → `docker compose start`. Bản sao lưu nằm cùng
 volume với DB thì không chống được hỏng đĩa: luôn `docker compose cp` ra nơi khác.
 
-Image **chưa có nuclei và subfinder** (target bật `nuclei` / `discover` sẽ báo bỏ qua scanner
-không có) — xem G20.
+### nuclei, subfinder và templates trong image
+
+Image có sẵn nuclei, subfinder và một bộ nuclei-templates ghim (phiên bản trong
+`docker/tools.lock`); `nuclei = true` / `discover = true` trên target dùng chúng, và mỗi run ghi
+lại `nuclei 3.11.1 (templates 10.5.2)`. Templates mới ra hằng ngày, nên cập nhật bằng cách dựng
+lại image — có kiểm soát như mọi phụ thuộc khác:
+
+```bash
+python docker/tools.py update        # bản mới nhất + SHA-256 từ file checksums của từng release
+git diff docker/tools.lock           # xem lại: hash đổi mà phiên bản không đổi = file đã bị thay
+docker compose build && docker compose up -d
+```
+
+API key cho các nguồn của subfinder: đặt file provider config của subfinder vào
+`deploy/subfinder.yaml` (git bỏ qua) và thêm `subfinder_config = "/config/subfinder.yaml"` vào
+`[service]`. Không có key thì chỉ các nguồn miễn phí trả lời.
 
 ## Lab có lỗ hổng
 
@@ -519,6 +537,6 @@ internal do một sidecar dùng chung network namespace thêm vào rồi thoát.
 ReconKit là bộ điều phối các công cụ mở, **không** thay được scanner thương mại (không có thư
 viện kiểm tra riêng; phát hiện chủ yếu theo phiên bản, trừ nuclei và quét có đăng nhập). Mọi
 điểm yếu đã biết, kèm hướng nâng cấp theo cách làm thật, nằm ở
-[`docs/KNOWN-GAPS.md`](docs/KNOWN-GAPS.md) — nổi bật: quét có đăng nhập mới có Debian; image
-Docker chưa có nuclei / subfinder; web chưa giới hạn đăng nhập sai và chưa phân quyền theo
+[`docs/KNOWN-GAPS.md`](docs/KNOWN-GAPS.md) — nổi bật: quét có đăng nhập mới có Debian; nuclei
+chưa có kênh OAST (interactsh) riêng; web chưa giới hạn đăng nhập sai và chưa phân quyền theo
 target; cảnh báo webhook không gửi lại khi lỗi; SQLite là giới hạn khi nhiều worker / người dùng.
