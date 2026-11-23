@@ -57,14 +57,17 @@ class SubfinderPlugin:
 
     def version(self) -> str | None:
         try:
-            proc = subprocess.run(
-                ["subfinder", "-version"],
-                capture_output=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=15,
-                check=False,
-            )
+            # In a fresh home too: even `-version` writes a default config on first use.
+            with tempfile.TemporaryDirectory(prefix="reconkit-subfinder-") as home:
+                proc = subprocess.run(
+                    ["subfinder", "-version"],
+                    capture_output=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=15,
+                    check=False,
+                    env={**os.environ, "HOME": home, "USERPROFILE": home},
+                )
         except (OSError, subprocess.SubprocessError):
             return None
         # It prints e.g. "[INF] Current Version: v2.6.6" (on stderr).

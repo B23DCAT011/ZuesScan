@@ -27,7 +27,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from reconkit import __version__, logs, priority
+from reconkit import __version__, doctor, logs, priority
 from reconkit import backup as backups
 from reconkit.audit import default_operator
 from reconkit.cve.cache import (
@@ -379,6 +379,18 @@ def _cmd_audit(args: argparse.Namespace) -> int:
     for problem in report.problems:
         print(f"PROBLEM: {problem}", file=sys.stderr)
     return 1
+
+
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    """What this machine can scan with, and what to install or fix."""
+    checks = doctor.gather(config=args.config, cve_cache=args.cve_cache)
+    if args.json:
+        print(json.dumps(doctor.as_json(checks), indent=2, ensure_ascii=False))
+    else:
+        print(doctor.header())
+        print()
+        print(doctor.render(checks))
+    return 1 if any(c.blocking for c in checks) else 0
 
 
 def _cmd_backup(args: argparse.Namespace) -> int:
@@ -1070,6 +1082,16 @@ def build_parser() -> argparse.ArgumentParser:
     delete.add_argument("--yes", action="store_true", help="confirm: the run cannot be restored")
     delete.add_argument("--operator", help="who deletes it (default: user@host)")
     delete.set_defaults(func=_cmd_delete)
+
+    doctor_cmd = sub.add_parser(
+        "doctor", help="check the tools, rights and data this machine scans with"
+    )
+    doctor_cmd.add_argument("--config", help="also check a service.toml, its database and Redis")
+    doctor_cmd.add_argument(
+        "--cve-cache", default=DEFAULT_CVE_CACHE, help="NVD cache to check (default: %(default)s)"
+    )
+    doctor_cmd.add_argument("--json", action="store_true", help="machine-readable output")
+    doctor_cmd.set_defaults(func=_cmd_doctor)
 
     backup = sub.add_parser(
         "backup", help="back up the database (safe while scans run), or check a backup"
