@@ -7,6 +7,11 @@ section of a version as its release notes, so every tag needs one.
 ## [Unreleased]
 
 ### Added
+- Dashboard **Settings** page (admins): targets, scopes and tokens in tables (service.toml's
+  marked read-only), a scope editor with a template and the directives' syntax, a target
+  form (scope, profile, schedule, plugins by kind with their activity and whether the
+  server has them), token creation shown once and revocation. Errors keep the form as it
+  was. The audit view and `zues audit` say what a `config` event did.
 - Settings in the dashboard's API, for a new `admin` role (an admin is an operator too):
   scopes (the text of a scope file), targets (address, scope, profile, schedule, scanners,
   checks, discoverers) and tokens, kept in the database (schema 14) next to service.toml,
@@ -38,6 +43,8 @@ section of a version as its release notes, so every tag needs one.
   Installed by `zues tools install` and in the Docker image (pinned in tools.lock).
 
 ### Fixed
+- Dashboard: an answer arriving late for the page just left (e.g. the overview, when Redis
+  is slow) was drawn over the page now shown; each visit now draws into its own element.
 - A scanner that reported an incomplete result did not make the run partial (only checks
   did).
 - `zues plugins` showed tools installed by `zues tools install` as not ready: it looked on

@@ -535,6 +535,8 @@ không thư viện ngoài, không bước build) có:
   form quyết định (báo đã sửa / chấp nhận rủi ro có lý do + ngày xem lại / mở lại) — ghi vào
   audit trail dưới tên của token.
 - **Audit**: kiểm chuỗi băm của audit trail và các sự kiện mới nhất.
+- **Settings** (chỉ `admin`): thêm / sửa scope, target, chọn tool, tạo / thu hồi token — mục
+  dưới đây.
 
 ![Overview: P1-P4, target, hàng đợi quét](docs/img/dashboard-overview.png)
 
@@ -559,6 +561,15 @@ trên máy chủ thì cảnh báo. Không xoá được scope đang được dù
 Target trên dashboard **không** trỏ được tới file trên máy chủ (credentials SSH, file profile):
 những thứ đó vẫn chỉ khai trong `service.toml`. Target / token trong `service.toml` hiện ra
 nhưng chỉ đọc; trùng tên thì file thắng (mục dashboard bị bỏ và báo lại).
+
+Trang **Settings**: bảng target / scope / token (mục của `service.toml` có nhãn riêng, chỉ
+đọc); form scope có sẵn mẫu và cú pháp các chỉ thị; form target chọn scope, profile, lịch quét
+và tool theo từng loại — mỗi tool ghi mức chủ động và báo nếu máy chủ chưa cài. Lỗi (vd target
+ngoài scope) hiện ngay, form giữ nguyên để sửa; token mới chỉ hiện **một lần**.
+
+![Settings: target, scope, token](docs/img/dashboard-settings.png)
+
+![Sửa target: scope, profile, lịch, tool theo loại](docs/img/dashboard-target.png)
 
 Mỗi thay đổi là một sự kiện `config` trong **audit trail có chuỗi băm**: ai, lúc nào, gì
 (scope lưu theo SHA-256 như scope của mỗi run). Đây là cái giá của sự tiện: ai có token admin

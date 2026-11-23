@@ -179,4 +179,9 @@ Mục tiêu: mang ZuesScan sang máy khác mà cài nhanh, thêm / bớt công c
       cạnh `service.toml` (chỉ đọc, thắng khi trùng tên); API `/api/v1/admin/*`; kiểm như lúc quét
       trước khi lưu; audit `config`; có hiệu lực ngay (cả từ tiến trình khác); `zues user add`.
       Còn lại: G30.
+- [x] `feat/settings-ui` — trang Settings của dashboard (admin): bảng target / scope / token, form
+      scope có mẫu, form target chọn tool theo loại (mức chủ động, đã cài chưa), token hiện một lần.
+      Thử thật bằng Chrome headless: thêm scope, target, target ngoài scope bị từ chối kèm lý do,
+      tạo token, trang Edit điền sẵn. Sửa: trang cũ trả lời muộn vẽ đè trang mới; `pattern` không
+      hợp lệ ở chế độ regex `v` của trình duyệt.
 
