@@ -188,4 +188,6 @@ Mục tiêu: mang ZuesScan sang máy khác mà cài nhanh, thêm / bớt công c
       target / scope / token từ dashboard; compose chạy ngay (`up -d` → `zues user add` →
       Settings); lab giữ file qua `ZUES_CONFIG`. Thử thật trên volume trống: admin → scope →
       target → Scan now → run được lưu.
+- [x] `chore/release-0.2.0` — phát hành v0.2.0 (chủ dự án đồng ý 2026-11-24): CHANGELOG gộp phần
+      Unreleased vào 0.2.0; tag `v0.2.0` chạy workflow Release.
 

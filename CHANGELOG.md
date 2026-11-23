@@ -6,6 +6,20 @@ section of a version as its release notes, so every tag needs one.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-24
+
+The first release meant to be installed by others: a service with a web dashboard where
+admins set scopes, targets, tools and tokens (no file to edit: three commands to install),
+a hardened image, real nuclei / subfinder / dnsx / naabu / httpx integration, plugins, AI
+agents over MCP, and a vulnerable lab to try it on.
+
+**Renamed: ReconKit is now ZuesScan.** Package `zues-scan` (import `zues_scan`), command
+`zues`, environment variables `ZUES_*` (were `RECONKIT_*`), image `ghcr.io/<owner>/zues-scan`,
+plugin entry point group `zues_scan.plugins`, default database `zues.db`. Data written before
+the rename keeps working: databases (the `reconkit_version` column keeps its name), CVE data
+files in the `reconkit-cve` format, templates with a `.reconkit-version` file, and
+`reconkit-*.db` backups (rotated too).
+
 ### Added
 - Install without editing a file: `--config` is optional for `web`, `worker`, `scheduler`,
   `enqueue` and `user` ($ZUES_CONFIG, else settings from ZUES_DB, ZUES_REDIS_URL,
@@ -47,29 +61,6 @@ section of a version as its release notes, so every tag needs one.
   `check_rate`, wildcard DNS recognised with two random names, the system's resolvers.
   ZuesScan's own wordlist (~370 common names) or `--dns-wordlist` / `dns_wordlist`.
   Installed by `zues tools install` and in the Docker image (pinned in tools.lock).
-
-### Fixed
-- Dashboard: an answer arriving late for the page just left (e.g. the overview, when Redis
-  is slow) was drawn over the page now shown; each visit now draws into its own element.
-- A scanner that reported an incomplete result did not make the run partial (only checks
-  did).
-- `zues plugins` showed tools installed by `zues tools install` as not ready: it looked on
-  PATH only, while the plugins themselves look in ZuesScan's tools directory first.
-
-## [0.2.0] - 2026-11-23
-
-The first release meant to be installed by others: a service, a web dashboard, a hardened
-image, real nuclei / subfinder integration, plugins, AI agents over MCP, and a vulnerable lab
-to try it on.
-
-**Renamed: ReconKit is now ZuesScan.** Package `zues-scan` (import `zues_scan`), command
-`zues`, environment variables `ZUES_*` (were `RECONKIT_*`), image `ghcr.io/<owner>/zues-scan`,
-plugin entry point group `zues_scan.plugins`, default database `zues.db`. Data written before
-the rename keeps working: databases (the `reconkit_version` column keeps its name), CVE data
-files in the `reconkit-cve` format, templates with a `.reconkit-version` file, and
-`reconkit-*.db` backups (rotated too).
-
-### Added
 - `zues mcp`: ZuesScan as tools for AI agents over the Model Context Protocol (stdio),
   as a client of the web API. Queueing a scan, claiming a fix and reopening a finding need
   the user's confirmation through the MCP client; risk acceptance is not offered to agents;
@@ -110,6 +101,12 @@ files in the `reconkit-cve` format, templates with a `.reconkit-version` file, a
   drops wildcard-DNS matches.
 
 ### Fixed
+- Dashboard: an answer arriving late for the page just left (e.g. the overview, when Redis
+  is slow) was drawn over the page now shown; each visit now draws into its own element.
+- A scanner that reported an incomplete result did not make the run partial (only checks
+  did).
+- `zues plugins` showed tools installed by `zues tools install` as not ready: it looked on
+  PATH only, while the plugins themselves look in ZuesScan's tools directory first.
 - The image had no SSH client (authenticated scans could not run in Docker).
 - `subfinder -version` wrote a config file into the data volume.
 - nmap installed on Windows but not yet on PATH is found.
