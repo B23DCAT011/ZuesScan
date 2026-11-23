@@ -30,6 +30,11 @@ server = [
 server-test = [
     "httpx>=0.27",
     "fakeredis>=2.20",
+    # fakeredis 2.40 breaks on redis-py 8.2.0 (released 2026-11-23): "'method_descriptor'
+    # object has no attribute '__closure__'". The service itself works with 8.2.0 (checked
+    # against a real Redis), so only the test environment is held back. Lift this once
+    # fakeredis supports it.
+    "redis<8.2",
 ]
 
 [project.scripts]
