@@ -393,6 +393,24 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     cấu hình dịch vụ; chạy plugin ở tiến trình / container riêng chỉ nhận đúng địa chỉ cần quét
     (như cách worker đã tách khỏi web).
 
+- [ ] **G26. AI agent qua MCP: giới hạn còn lại.** (từ `feat/mcp`)
+  - ✅ Đã có: `reconkit mcp` (stdio, client của web API), 12 tool; xếp hàng quét / ghi quyết định
+    cần người xác nhận (elicitation, không phải tham số của tool); không có tool chấp nhận rủi ro;
+    chỉ target đã cấu hình; dữ liệu quét được làm sạch và đánh dấu không tin cậy; audit dưới tên
+    token. Đã thử bằng client MCP thật qua stdio trên lab (từ chối → không quét; đồng ý → run
+    #5 ghi `operator = lab-admin`; `8.8.8.8` → từ chối, không hỏi ai).
+  - Còn lại:
+    - **Việc hỏi người dùng là của client.** Một client tự động trả lời "đồng ý" thì xác nhận
+      chỉ còn là hình thức; lớp bảo vệ thật vẫn là vai trò của token, danh sách target, scope và
+      audit. Thực tế: token agent chỉ `viewer` theo mặc định; tách quyền "xin quét" thành một
+      vai trò riêng; giới hạn số lần quét mỗi giờ cho token agent.
+    - Chỉ stdio: chưa có MCP qua HTTP (Streamable HTTP + OAuth) để agent ở máy khác dùng trực
+      tiếp dịch vụ. Hiện agent ở máy khác dùng `RECONKIT_URL` qua HTTPS (reverse proxy).
+    - Token nằm trong biến môi trường / file cấu hình của client MCP (không commit; nên dùng phạm
+      vi `local` / `user` của Claude Code, không phải `project`).
+    - Làm sạch chuỗi chống được ký tự điều khiển và độ dài, **không** chống được nội dung thao
+      túng viết bằng chữ thường; model vẫn phải coi đó là dữ liệu (đã nói trong mô tả tool).
+
 ## Mức 3 — Hoàn thiện sản phẩm / portfolio
 
 - [x] **G17. Chưa có CI.** Sửa: GitHub Actions chạy pytest + ruff + mypy cho mọi PR. (F1, `chore/ci`)

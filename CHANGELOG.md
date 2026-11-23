@@ -6,6 +6,13 @@ section of a version as its release notes, so every tag needs one.
 
 ## [Unreleased]
 
+### Added
+- `reconkit mcp`: ReconKit as tools for AI agents over the Model Context Protocol (stdio),
+  as a client of the web API. Queueing a scan, claiming a fix and reopening a finding need
+  the user's confirmation through the MCP client; risk acceptance is not offered to agents;
+  only configured targets can be scanned; scan data is cleaned and marked as untrusted.
+  Install with `reconkit[mcp]`.
+
 ## [0.2.0] - 2026-11-23
 
 The first release meant to be installed by others: a service, a web dashboard, a hardened

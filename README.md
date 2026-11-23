@@ -650,6 +650,57 @@ viện kiểm tra riêng; phát hiện chủ yếu theo phiên bản, trừ nucl
 chưa có kênh OAST (interactsh) riêng; web chưa giới hạn đăng nhập sai và chưa phân quyền theo
 target; cảnh báo webhook không gửi lại khi lỗi; SQLite là giới hạn khi nhiều worker / người dùng.
 
+## Cho AI dùng ReconKit (MCP)
+
+`reconkit mcp` đưa ReconKit thành **công cụ cho AI agent** qua Model Context Protocol (stdio):
+Claude Code, Claude Desktop hay một agent tự viết có thể đọc kết quả quét, phân tích finding, so
+các lần quét và **xin quét** — mà người dùng không phải tự gõ lệnh. Nó là client của dịch vụ
+ReconKit đang chạy (`reconkit web`), nên dùng đúng token, vai trò và audit trail như con người.
+
+```bash
+pip install 'reconkit[mcp]'                        # trên máy chạy agent
+reconkit token --name claude-agent --role operator # trên máy dịch vụ; dán khối [[tokens]] vào service.toml
+claude mcp add --env RECONKIT_URL=http://127.0.0.1:8000 --env RECONKIT_TOKEN=<token> \
+  --transport stdio reconkit -- reconkit mcp       # Claude Code (phạm vi local: token không vào repo)
+```
+
+Claude Desktop (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "reconkit": {
+      "command": "reconkit",
+      "args": ["mcp"],
+      "env": {"RECONKIT_URL": "http://127.0.0.1:8000", "RECONKIT_TOKEN": "<token>"}
+    }
+  }
+}
+```
+
+| Tool | Làm gì | Cần |
+|---|---|---|
+| `whoami`, `list_targets`, `list_jobs`, `get_job`, `list_runs`, `get_run`, `list_findings`, `get_finding`, `audit_status` | đọc | token viewer |
+| `request_scan` | xếp hàng quét một target **đã khai báo**, theo tên | token operator + **người dùng xác nhận** |
+| `claim_fixed`, `reopen_finding` | ghi quyết định về một finding | token operator + **người dùng xác nhận** |
+
+Quy tắc an toàn (đã kiểm bằng test và bằng một client MCP thật chạy `reconkit mcp` qua stdio
+trên lab):
+
+- **Người xác nhận từng hành động.** Trước khi xếp hàng quét / ghi quyết định, client hỏi người
+  dùng (MCP elicitation) — câu hỏi nêu rõ dải địa chỉ, profile và các check chủ động sẽ chạy.
+  Câu trả lời **không phải tham số của tool** nên model không tự điền được; client không hỏi được
+  người dùng thì không dùng được các tool này (bị chặn ở tầng giao thức).
+- **Chỉ target đã cấu hình, theo tên.** Yêu cầu quét `8.8.8.8` bị từ chối ngay, không ai bị hỏi.
+  Scope guard, `@activity`, khung giờ vẫn áp dụng như mọi lần quét.
+- **Không có "chấp nhận rủi ro".** Việc đó cần lý do, ngày xem lại và người chịu trách nhiệm:
+  làm trên dashboard hoặc CLI. Đây là chính sách phía server, không phụ thuộc vào client.
+- **Dữ liệu quét là dữ liệu.** Banner, tiêu đề, bằng chứng do máy bị quét tự khai — có thể là
+  prompt injection ("ignore previous instructions…"). Chúng được bỏ ký tự điều khiển / đảo chiều,
+  cắt ngắn, và kết quả nói rõ đó là dữ liệu không tin cậy.
+- Mỗi hành động vào audit trail dưới **tên của token** (vd `claude-agent`): nên cấp cho mỗi agent
+  một token riêng; thu hồi = xoá khỏi `service.toml`.
+
 ## Phát hành (người duy trì)
 
 Phiên bản nằm ở một chỗ: `reconkit/__init__.py` (`__version__`), gói Python đọc từ đó.

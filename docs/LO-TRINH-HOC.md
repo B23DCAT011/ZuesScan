@@ -17,6 +17,7 @@ Ghi chú thiết kế ban đầu: [`GHI-CHU.md`](../GHI-CHU.md).
 | 6 | Công cụ thật (OpenVAS, Nessus, nuclei, DefectDojo) so với ReconKit | toàn dự án | ✅ 2026-11-22 |
 | 7 | Từ công cụ thành dịch vụ: hàng đợi, web an toàn, container, lab cô lập | `server/`, Docker, `lab/` | ✅ 2026-11-23 |
 | 8 | nuclei & subfinder ngoài đời thật: templates, chữ ký, OAST, wildcard DNS | `plugins/nuclei.py`, `plugins/subfinder.py` | ✅ 2026-11-23 |
+| 9 | Cho AI dùng công cụ bảo mật: MCP, xác nhận của con người, prompt injection | `mcp_server.py` | ✅ 2026-11-23 |
 
 ---
 
@@ -433,3 +434,46 @@ Bài học chung: một plugin "đã có test" bằng output mẫu vẫn chưa p
 mẫu cho biết **định dạng**; chỉ chạy thật mới cho biết **thời gian, khối lượng, và hành vi lúc
 hỏng** — ba thứ quyết định nó có dùng được trong vận hành hay không.
 
+---
+
+## Bài 9 — Cho AI dùng công cụ bảo mật: MCP, xác nhận của con người, prompt injection
+
+**Thuật ngữ**
+
+- **MCP (Model Context Protocol)**: chuẩn để một ứng dụng AI (client) gọi *tool* của một
+  *server*. Server khai tool (tên, mô tả, schema tham số); model chọn tool và điền tham số.
+- **Elicitation**: server xin client hỏi *người dùng* một câu có cấu trúc (vd "xác nhận?").
+  Bản giao thức 2026-07-28 làm việc này bằng vòng "input required" (client trả lời rồi gọi lại).
+- **Human-in-the-loop**: hành động có hậu quả cần một người đồng ý — không phải model.
+- **Prompt injection gián tiếp**: chỉ dẫn độc nằm trong *dữ liệu* model đọc (trang web, email,
+  banner của dịch vụ bị quét), không phải trong lời người dùng.
+- **Confused deputy**: chương trình có quyền bị kẻ khác lợi dụng để làm việc mà kẻ đó không có
+  quyền — ở đây: AI có token quét bị dữ liệu độc "nhờ" quét chỗ khác.
+
+**Thực tế người ta làm thế nào**
+
+- Tool cho AI được cấp quyền **tối thiểu**, tách đọc / ghi; hành động ghi cần xác nhận hoặc qua
+  quy trình phê duyệt; mọi thứ ghi log dưới danh tính riêng của agent.
+- Không để model tự chọn *đích* của hành động nguy hiểm: chọn trong danh sách đã duyệt.
+- Dữ liệu từ bên ngoài luôn được đánh dấu là dữ liệu; hệ thống quan trọng không dựa vào việc
+  model "ngoan" để an toàn.
+
+**ReconKit có theo không**
+
+| Điểm | ReconKit |
+|---|---|
+| Một mô hình quyền cho người và AI | ✅ MCP là client của web API: token, vai trò, audit như nhau |
+| Model không chọn được địa chỉ quét | ✅ chỉ tên target trong `service.toml`; `8.8.8.8` → từ chối |
+| Người xác nhận hành động | ✅ elicitation; câu trả lời không phải tham số tool → model không tự điền |
+| Quyết định có trách nhiệm để lại cho người | ✅ không có tool chấp nhận rủi ro |
+| Dữ liệu quét là dữ liệu | ✅ bỏ ký tự điều khiển / đảo chiều, cắt ngắn, mô tả tool nói rõ |
+| Client tự trả lời "đồng ý" | ❌ không chặn được ở server — G26 |
+
+**Bài học khi làm** (đã kiểm bằng chạy thật):
+
+- SDK MCP Python đã sang **v2** (`FastMCP` → `MCPServer`, thuộc tính snake_case); `ctx.elicit()`
+  *không* chạy với giao thức mới — phải dùng `Annotated[..., Resolve(fn)]` trả về `Elicit(...)`.
+  Đọc mã nguồn của bản đã cài thay vì tin trí nhớ.
+- Lỗi thường trong tool bị giấu thành "Error executing tool"; muốn model đọc được lý do thì
+  raise `ToolError`.
+- Tool trả về danh sách thì mỗi phần tử là một khối text riêng — client nên đọc bản có cấu trúc.
