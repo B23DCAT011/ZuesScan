@@ -23,4 +23,9 @@ naabu 2.7.0 linux-arm64 e88af9bbfd777e2ffab6f84696747ba74de98fafeda882c078d158a6
 naabu 2.7.0 darwin-amd64 97eed2223ba5bc0958621569dc92e8c4c257ec3d3ee3c1a9baddf23f152eb825 https://github.com/projectdiscovery/naabu/releases/download/v2.7.0/naabu_2.7.0_macOS_amd64.zip
 naabu 2.7.0 darwin-arm64 25caf00cfbba2b36aa5285c7605909e2bb668dac98729ba939ad3061df9551cf https://github.com/projectdiscovery/naabu/releases/download/v2.7.0/naabu_2.7.0_macOS_arm64.zip
 naabu 2.7.0 windows-amd64 57f014880ec4d8cfe9d23d7a185d1b478f7867fc6f5fef63be1af835a4c5639a https://github.com/projectdiscovery/naabu/releases/download/v2.7.0/naabu_2.7.0_windows_amd64.zip
+httpx 1.12.0 linux-amd64 9d8439e8b6c9aa7d1e2314817a392e00d5178da3af5652f7475f88868f418f76 https://github.com/projectdiscovery/httpx/releases/download/v1.12.0/httpx_1.12.0_linux_amd64.zip
+httpx 1.12.0 linux-arm64 fd7b123c1dfbc3d69f19f524e4eebcd6ec06b9a6cbd56813c76f11645197331e https://github.com/projectdiscovery/httpx/releases/download/v1.12.0/httpx_1.12.0_linux_arm64.zip
+httpx 1.12.0 darwin-amd64 16760b5e2122b66f57b9fbdb59f564b1181507c093d6a36066f40e5de38e8fa9 https://github.com/projectdiscovery/httpx/releases/download/v1.12.0/httpx_1.12.0_macOS_amd64.zip
+httpx 1.12.0 darwin-arm64 21d60328b383dba8a9fe249ac76b12edda4ec2e52a9cb21876c0a79123675569 https://github.com/projectdiscovery/httpx/releases/download/v1.12.0/httpx_1.12.0_macOS_arm64.zip
+httpx 1.12.0 windows-amd64 14d8ccaa2d95ce9365162682f1a2ba3f14d2000bb4bfb0924af65ec5163ae021 https://github.com/projectdiscovery/httpx/releases/download/v1.12.0/httpx_1.12.0_windows_amd64.zip
 nuclei-templates 10.5.2 any 016b7abbf931d4d1a851a5a568e44510dc61691dc8a5202e3b24e701515ec574 https://github.com/projectdiscovery/nuclei-templates/archive/refs/tags/v10.5.2.tar.gz

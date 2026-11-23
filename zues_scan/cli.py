@@ -49,7 +49,7 @@ from zues_scan.profiles import DEFAULT_PROFILE, ProfileError, ScanProfile, load_
 from zues_scan.report import render_html, stored_model
 from zues_scan.report.sarif import to_sarif
 from zues_scan.scanning import ScanSpec, execute, indent
-from zues_scan.schema import Asset, Finding
+from zues_scan.schema import Asset, Finding, WebPage
 from zues_scan.storage import Storage, StorageError
 
 log = logging.getLogger(__name__)
@@ -95,6 +95,8 @@ def _print_summary(run: ScanRun, run_id: int, db_path: str) -> None:
         for s in asset.services:
             pv = " ".join(p for p in (s.product, s.version) if p) or "-"
             print(f"    {f'{s.port}/{s.protocol}':<11}{(s.name or '-'):<16}{pv}")
+            if s.web is not None:
+                print(f"    {'':<11}{'':<16}{_web_line(s.web)}")
         # Most urgent first: known-exploited, then likely-exploited, then impact.
         ranked = sorted(asset.findings, key=priority.sort_key)
         for f in ranked[:MAX_FINDINGS_SHOWN]:
@@ -118,6 +120,13 @@ def _print_summary(run: ScanRun, run_id: int, db_path: str) -> None:
             f"\n  raw output kept: {o.plugin} ({o.format}, {o.size} bytes, "
             f"sha256 {o.sha256[:12]}...)  ->  zues raw {run_id}{pick} --db {db_path}"
         )
+
+
+def _web_line(web: WebPage) -> str:
+    """One line for what httpx saw, e.g. `200 "Welcome to nginx!"  Nginx:1.20.0`."""
+    title = f' "{web.title}"' if web.title else ""
+    techs = ", ".join(web.technologies[:6]) + (" ..." if len(web.technologies) > 6 else "")
+    return f"web: {web.status or '-'}{title}" + (f"  [{techs}]" if techs else "")
 
 
 def _risk_line(f: Finding) -> str:

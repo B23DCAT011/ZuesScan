@@ -17,13 +17,14 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
 from zues_scan import __version__
 from zues_scan.cve import CveSource
+from zues_scan.cve.match import components
 from zues_scan.plugins.base import CheckPlugin, DiscoveryPlugin, ScanError, ScannerPlugin
 from zues_scan.profiles import ScanProfile
 from zues_scan.schema import Asset, Confidence, Finding, RawOutput, ScanTarget
@@ -252,6 +253,7 @@ class Orchestrator:
                 if known is None or not self.scope.is_allowed(found.ip or found.host):
                     continue  # a check may only report on hosts the scan found
                 known.findings.extend(found.findings)
+                _attach_web(known, found)
             log.info(
                 "%s: %d finding(s) in %.1f s",
                 check.name,
@@ -264,7 +266,9 @@ class Orchestrator:
         if self.cve_source is not None:
             for asset in assets:
                 for service in asset.services:
-                    asset.findings.extend(self.cve_source.find(service, asset.host))
+                    # The service itself, then what a web check saw behind it (PHP, ...).
+                    for software in (service, *components(service)):
+                        asset.findings.extend(self.cve_source.find(software, asset.host))
             log.info(
                 "CVE stage (%s): %d finding(s)",
                 self.cve_source.name,
@@ -495,6 +499,17 @@ def _same_host(a: Asset, b: Asset) -> bool:
     if a.ip and b.ip:
         return a.ip == b.ip
     return a.host.lower() == b.host.lower()
+
+
+def _attach_web(known: Asset, found: Asset) -> None:
+    """What a check saw on a web service (httpx) goes onto the scanned service: only
+    services the scan found, never a port a check claims on its own."""
+    for seen in found.services:
+        if seen.web is None:
+            continue
+        for i, service in enumerate(known.services):
+            if (service.port, service.protocol) == (seen.port, seen.protocol):
+                known.services[i] = replace(service, web=seen.web)
 
 
 def _merge_into(known: Asset, found: Asset) -> None:

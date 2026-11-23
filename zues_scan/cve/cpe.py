@@ -108,3 +108,27 @@ PRODUCT_NAMES: dict[str, tuple[str, str]] = {
     "dovecot imapd": ("dovecot", "dovecot"),
     "samba smbd": ("samba", "samba"),
 }
+
+# Technologies as httpx names them (Wappalyzer's names, lowercased) -> CPE vendor and
+# product. Only software whose NVD names are settled; a name not listed is shown but not
+# matched against CVEs.
+TECH_NAMES: dict[str, tuple[str, str]] = {
+    "apache http server": ("apache", "http_server"),
+    "nginx": ("f5", "nginx"),
+    "microsoft iis": ("microsoft", "internet_information_services"),
+    "apache tomcat": ("apache", "tomcat"),
+    "jetty": ("eclipse", "jetty"),
+    "lighttpd": ("lighttpd", "lighttpd"),
+    "openresty": ("openresty", "openresty"),
+    "openssl": ("openssl", "openssl"),
+    "php": ("php", "php"),
+    "wordpress": ("wordpress", "wordpress"),
+    "drupal": ("drupal", "drupal"),
+    "moodle": ("moodle", "moodle"),
+    "phpmyadmin": ("phpmyadmin", "phpmyadmin"),
+    "grafana": ("grafana", "grafana"),
+    "jenkins": ("jenkins", "jenkins"),
+    "gitlab": ("gitlab", "gitlab"),
+    "jquery": ("jquery", "jquery"),
+    "bootstrap": ("getbootstrap", "bootstrap"),
+}

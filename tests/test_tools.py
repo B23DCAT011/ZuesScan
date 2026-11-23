@@ -48,6 +48,7 @@ NUCLEI_EXE = _zip({"nuclei.exe": b"MZ nuclei", "LICENSE.md": b"MIT"})
 SUBFINDER = _zip({"subfinder": b"\x7fELF subfinder"})
 DNSX = _zip({"dnsx": b"\x7fELF dnsx"})
 NAABU = _zip({"naabu": b"\x7fELF naabu"})
+HTTPX = _zip({"httpx": b"\x7fELF httpx"})
 TEMPLATES = _tgz(
     {
         "nuclei-templates-10.5.2/http/cves/2021/CVE-2021-41773.yaml": b"id: CVE-2021-41773\n",
@@ -62,12 +63,13 @@ ENTRIES = [
     _entry("subfinder", SUBFINDER),
     _entry("dnsx", DNSX),
     _entry("naabu", NAABU),
+    _entry("httpx", HTTPX),
     _entry("nuclei-templates", TEMPLATES, "any", "10.5.2"),
 ]
 SERVED = dict(
     zip(
         (e.url for e in ENTRIES),
-        (NUCLEI, NUCLEI_EXE, SUBFINDER, DNSX, NAABU, TEMPLATES),
+        (NUCLEI, NUCLEI_EXE, SUBFINDER, DNSX, NAABU, HTTPX, TEMPLATES),
         strict=True,
     )
 )
@@ -103,9 +105,10 @@ def test_a_bad_lock_line_is_refused(line: str, error: str) -> None:
 def test_install_takes_exactly_the_locked_files(tmp_path: Path) -> None:
     done = tools.install(ENTRIES, tmp_path, "linux-amd64", get=SERVED.__getitem__)
 
-    assert len(done) == 5  # the Windows build was not fetched
+    assert len(done) == 6  # the Windows build was not fetched
     assert sorted(p.name for p in (tmp_path / "bin").iterdir()) == [
         "dnsx",
+        "httpx",
         "naabu",
         "nuclei",
         "subfinder",
@@ -142,7 +145,7 @@ def test_an_archive_escaping_its_folder_is_refused(tmp_path: Path) -> None:
 
 
 def test_nothing_for_this_platform(tmp_path: Path) -> None:
-    with pytest.raises(ToolError, match="nuclei, subfinder, dnsx, naabu on darwin-arm64"):
+    with pytest.raises(ToolError, match="dnsx, naabu, httpx on darwin-arm64"):
         tools.install(ENTRIES, tmp_path, "darwin-arm64", get=SERVED.__getitem__)
 
 
@@ -226,6 +229,7 @@ def test_update_takes_every_platform_from_the_checksums() -> None:
         f"{API}/subfinder/releases/latest": b'{"tag_name":"v2.18.0"}',
         f"{API}/dnsx/releases/latest": b'{"tag_name":"v1.4.0"}',
         f"{API}/naabu/releases/latest": b'{"tag_name":"v2.8.0"}',
+        f"{API}/httpx/releases/latest": b'{"tag_name":"v1.13.0"}',
         f"{API}/nuclei-templates/releases/latest": b'{"tag_name":"v10.6.0"}',
         f"{DL}/nuclei/releases/download/v3.12.0/nuclei_3.12.0_checksums.txt": files(
             "nuclei", "3.12.0"
@@ -236,6 +240,9 @@ def test_update_takes_every_platform_from_the_checksums() -> None:
         # Some releases name the file differently (naabu: naabu-checksums.txt).
         f"{DL}/dnsx/releases/download/v1.4.0/dnsx-checksums.txt": files("dnsx", "1.4.0"),
         f"{DL}/naabu/releases/download/v2.8.0/naabu_2.8.0_checksums.txt": files("naabu", "2.8.0"),
+        f"{DL}/httpx/releases/download/v1.13.0/httpx_1.13.0_checksums.txt": files(
+            "httpx", "1.13.0"
+        ),
         f"{DL}/nuclei-templates/releases/download/v10.6.0/nuclei-templates-10.6.0_checksums.txt": (
             _sums("nuclei-templates-10.6.0.tar.gz")
         ),

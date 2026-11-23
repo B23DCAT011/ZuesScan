@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from zues_scan.cve.cpe import PRODUCT_NAMES, CpeError, parse_cpe, same_vendor
+from zues_scan.cve.cpe import PRODUCT_NAMES, TECH_NAMES, CpeError, parse_cpe, same_vendor
 from zues_scan.cve.records import AffectedRange, CveRecord
 from zues_scan.cve.version import ReportedVersion, read_version
 from zues_scan.schema import Confidence, Finding, Service
@@ -66,6 +66,37 @@ def identify(service: Service) -> Software | None:
     if version is None:
         return None
     return Software(vendor=vendor, product=product, version=version, via=via)
+
+
+WEB_TECHNOLOGY = "web technology seen by httpx: "  # the banner of a component
+
+
+def components(service: Service) -> list[Service]:
+    """Software a web check saw behind `service` (httpx: "PHP:7.4.3"), as services on
+    the same port, so the CVE stage matches them like any other. Without a version, or
+    under a name not in `TECH_NAMES`, nothing is matched."""
+    if service.web is None:
+        return []
+    found = []
+    for tech in service.web.technologies:
+        name, sep, version = tech.rpartition(":")
+        name, version = name.strip(), version.strip()
+        known = TECH_NAMES.get(name.lower()) if sep else None
+        if known is None or not version or not version[0].isdigit():
+            continue
+        vendor, product = known
+        found.append(
+            Service(
+                port=service.port,
+                protocol=service.protocol,
+                name=service.name,
+                product=name,
+                version=version,
+                cpe=f"cpe:/a:{vendor}:{product}:{version}",
+                banner=f"{WEB_TECHNOLOGY}{tech}",
+            )
+        )
+    return found
 
 
 def affected_range(software: Software, record: CveRecord) -> AffectedRange | None:
@@ -117,14 +148,20 @@ def to_finding(
 
 def evidence(service: Service, software: Software, matched: AffectedRange, source: str) -> str:
     """Say what was observed and why it matched, so that a person can re-check it."""
-    seen = [f"product {service.product!r}", f"version {service.version!r}"]
-    if service.cpe:
-        seen.append(f"cpe {service.cpe}")
-    if service.banner:
-        seen.append(f"banner {service.banner!r}")
+    if service.banner and service.banner.startswith(WEB_TECHNOLOGY):
+        # A component: what httpx recognised in the HTTP answer, not a port scanner's word.
+        tech = service.banner.removeprefix(WEB_TECHNOLOGY)
+        observed = f"the web check (httpx) recognised {tech!r} in the HTTP answer"
+    else:
+        seen = [f"product {service.product!r}", f"version {service.version!r}"]
+        if service.cpe:
+            seen.append(f"cpe {service.cpe}")
+        if service.banner:
+            seen.append(f"banner {service.banner!r}")
+        observed = f"scanner reported {', '.join(seen)}"
     text = (
-        f"{service.port}/{service.protocol} {service.state}: scanner reported "
-        f"{', '.join(seen)}. Identified as {software.describe()} (from the {software.via}). "
+        f"{service.port}/{service.protocol} {service.state}: {observed}. "
+        f"Identified as {software.describe()} (from the {software.via}). "
         f"Affected per {source}: {matched.describe()}."
     )
     if software.version.distro:

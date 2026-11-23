@@ -11,8 +11,10 @@ name = "lab-dmz"
 target = "10.66.1.0/24"
 scope = "/config/lab-scope.txt"
 config = "/config/profiles.toml"         # the fast "lab" profile
-profile = "lab"                          # all ports + traceroute, nuclei at 300 req/s
-nuclei = true                            # active checks: confirm what versions suggest
+profile = "lab"                          # all ports + traceroute, checks at 300 req/s
+# httpx: what each web service is (title, technologies); nuclei: active checks that
+# confirm what the versions suggest.
+checks = ["httpx", "nuclei"]
 every = "30m"
 engagement = "LAB-DEMO"
 
@@ -22,7 +24,7 @@ target = "10.66.2.0/24"
 scope = "/config/lab-scope.txt"
 config = "/config/profiles.toml"
 profile = "lab"
-nuclei = true
+checks = ["httpx", "nuclei"]
 every = "30m"
 engagement = "LAB-DEMO"
 

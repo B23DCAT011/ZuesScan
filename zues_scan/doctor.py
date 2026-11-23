@@ -377,6 +377,7 @@ def _no_nmap(profile: object) -> _NoNmap:
 
 def gather(config: str | None = None, cve_cache: str = "zues-cve.db") -> list[Check]:
     from zues_scan.plugins.dnsx import DnsxPlugin
+    from zues_scan.plugins.httpx import HttpxPlugin
     from zues_scan.plugins.naabu import NaabuPlugin
     from zues_scan.plugins.nuclei import NucleiPlugin, default_templates, templates_version
     from zues_scan.plugins.subfinder import SubfinderPlugin
@@ -414,6 +415,8 @@ def gather(config: str | None = None, cve_cache: str = "zues-cve.db") -> list[Ch
     # Its own version only: nmap has its own line above.
     naabu_version = NaabuPlugin(nmap=_no_nmap).version() if naabu else None
     checks.append(check_tool("naabu", naabu, naabu_version, system))
+    httpx = tools.which("httpx")
+    checks.append(check_tool("httpx", httpx, HttpxPlugin().version() if httpx else None, system))
     ssh = shutil.which("ssh")
     checks.append(check_tool("ssh", ssh, _version(["ssh", "-V"]) if ssh else None, system))
     checks.append(check_cve_cache(cve_cache, datetime.now(UTC)))
