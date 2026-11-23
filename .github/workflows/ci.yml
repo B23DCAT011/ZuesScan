@@ -53,8 +53,8 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: pytest
 
-  # The background service (reconkit[server]): queue, worker and scheduler through real
-  # RQ on an in-memory Redis. The core test matrix above installs no extra, which also
+  # The background service (reconkit[server]): queue, worker, scheduler and web API
+  # through real RQ on an in-memory Redis and FastAPI's test client. The core test matrix above installs no extra, which also
   # proves that the core stays dependency-free and that these tests skip cleanly.
   server:
     name: server tests (${{ matrix.os }})
@@ -71,4 +71,5 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - run: pip install -e ".[dev,server,server-test]"
-      - run: pytest tests/test_server_config.py tests/test_server_jobs.py tests/test_server_queue.py
+      # The whole suite: the server tests run here, and the extras must not break the core.
+      - run: pytest

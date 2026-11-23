@@ -329,7 +329,23 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     web (`feat/web`); thực tế còn cần cảnh báo "lần quét định kỳ thất bại N lần liền".
   - Lịch chỉ có dạng "mỗi N phút / giờ / ngày", chưa có cron (vd "2 giờ sáng thứ Bảy") — kết
     hợp được với khung giờ `@window` của scope. Lịch tính từ lần quét trước nên trôi dần.
-  - Token đã có trong cấu hình nhưng chưa có gì dùng tới: API (FastAPI) là bước `feat/web`.
+  - ✅ Web (`feat/web`): API + dashboard dùng token. Còn lại ở phần web:
+    - **Không giới hạn số lần đăng nhập sai** (chỉ ghi log cảnh báo kèm IP). Token 256 bit nên
+      đoán mò không khả thi, nhưng thực tế vẫn nên có rate limit / khoá tạm ở reverse proxy
+      hoặc trong app, và cảnh báo khi một IP thử sai liên tục.
+    - **Cookie chứa chính token** (HttpOnly, SameSite=Strict, 8 giờ): đăng xuất chỉ xoá cookie
+      ở trình duyệt; muốn vô hiệu hoá thật thì gỡ token khỏi `service.toml`. Thực tế: phiên
+      phía server (id ngẫu nhiên trong Redis, hết hạn khi không dùng, thu hồi được từng phiên).
+    - **Không tự làm TLS**: `reconkit web` mặc định chỉ nghe 127.0.0.1; ra mạng thì phải đặt sau
+      reverse proxy có TLS (cookie tự bật `Secure` khi proxy báo `X-Forwarded-Proto: https`).
+    - Phân quyền mới có hai vai trò cho toàn bộ dịch vụ; chưa có quyền theo từng target /
+      engagement (vd khách hàng A chỉ thấy target của A).
+    - Danh sách finding / run chưa phân trang (giới hạn số dòng); chưa có trang so sánh hai run
+      trên web (đã có ở CLI `reconkit diff` và mục "Changes" của báo cáo).
+    - Không có Swagger UI (`/docs` tải script từ CDN, trái CSP); schema OpenAPI vẫn ở
+      `/api/v1/openapi.json` để nhập vào công cụ khác.
+    - SQLite dùng chế độ journal mặc định: web đọc trong lúc worker ghi thì phải chờ nhau (tối đa
+      5 giây). Nhiều worker + web đông người dùng: bật WAL hoặc chuyển sang PostgreSQL.
   - Webhook chưa ký (HMAC) nên bên nhận không xác minh được nguồn; URL webhook là bí mật — đừng
     commit `service.toml` thật.
 

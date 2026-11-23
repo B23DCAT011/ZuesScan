@@ -98,7 +98,11 @@ Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây we
       Redis + RQ, `reconkit worker` (fork trên Linux, chạy tại chỗ trên Windows), `reconkit
       scheduler` (`every = "24h"`, khoá mỗi vòng), `reconkit enqueue`, `reconkit token`, cảnh
       báo webhook: fix giả / xuất hiện lại / finding mới ≥ `min_priority`. Còn lại: G23.
-- [ ] Web API (FastAPI) + Web UI dùng lại code vẽ bản đồ của M1 + thông báo. Thư viện web
-      đặt trong gói tuỳ chọn `reconkit[server]`, lõi vẫn không phụ thuộc.
+- [x] `feat/web` — `reconkit web`: API JSON `/api/v1` (FastAPI) + dashboard JavaScript thuần
+      (D5): target & hàng đợi (nút "Scan now"), danh sách run mở bản đồ M1 nguyên vẹn, finding
+      theo mức ưu tiên với form quyết định, audit trail có kiểm chuỗi băm. Token Bearer cho
+      script; trình duyệt dùng cookie HttpOnly + SameSite=Strict + header chống CSRF; vai trò
+      viewer / operator; `service.toml` đổi là có hiệu lực ngay (thu hồi token), hỏng thì từ chối
+      mọi request. Còn lại: G23.
 - [ ] Đóng gói Docker Compose + volume + backup DB; README có demo (G20).
 - [ ] Lab mục tiêu (Metasploitable / container có lỗ hổng) trong network nội bộ.

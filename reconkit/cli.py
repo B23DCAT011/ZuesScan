@@ -41,13 +41,13 @@ from reconkit.cve.feeds import FeedError
 from reconkit.cve.nvd import API_KEY_ENV, NvdClient, NvdError
 from reconkit.diff import diff_runs
 from reconkit.inventory import ACTIVE, Status
-from reconkit.inventory_store import FindingEvent, FindingRow, InventoryError
+from reconkit.inventory_store import FindingEvent, InventoryError
 from reconkit.orchestrator import RunStatus, ScanRun
 from reconkit.profiles import DEFAULT_PROFILE, ProfileError, ScanProfile, load_profiles
-from reconkit.report import render_html, report_model
+from reconkit.report import render_html, stored_model
 from reconkit.report.sarif import to_sarif
 from reconkit.scanning import ScanSpec, execute, indent
-from reconkit.schema import Asset, Finding, Severity
+from reconkit.schema import Asset, Finding
 from reconkit.storage import Storage, StorageError
 
 log = logging.getLogger(__name__)
@@ -423,19 +423,6 @@ def _print_changes(changes: list[FindingEvent]) -> None:
             print(f"    {alert}{label}: finding #{e.finding_id} {e.title} on {e.host}")
 
 
-def _row_finding(row: FindingRow) -> Finding:
-    """An inventoried finding as a Finding, to rank it like any other."""
-    return Finding(
-        asset=row.host,
-        title=row.title,
-        severity=Severity(row.severity),
-        cve=row.cve,
-        cvss_score=row.cvss_score,
-        kev_added=row.kev_added,
-        epss=row.epss,
-    )
-
-
 def _cmd_inventory(args: argparse.Namespace) -> int:
     """Every host and service seen across runs, or rebuild the inventory."""
     if not _db_exists(args.db):
@@ -480,13 +467,13 @@ def _cmd_findings(args: argparse.Namespace) -> int:
     if not rows:
         print("no finding with that status")
         return 0
-    rows.sort(key=lambda r: priority.sort_key(_row_finding(r)))
+    rows.sort(key=lambda r: priority.sort_key(r.as_finding()))
     print(f"{'ID':>4}  {'STATUS':<11} {'PRIO':<4} {'SEVERITY':<8}  {'HOST':<22} {'PORT':<9} ISSUE")
     for r in rows:
         port = f"{r.port}/{r.protocol}" if r.port else "-"
         issue = f"{r.cve} {r.title}" if r.cve else r.title
         print(
-            f"{r.id:>4}  {r.status:<11} {priority.priority(_row_finding(r)):<4} "
+            f"{r.id:>4}  {r.status:<11} {priority.priority(r.as_finding()):<4} "
             f"{r.severity:<8}  {(r.ip or r.host):<22} {port:<9} {issue}"
         )
     return 0
@@ -538,7 +525,7 @@ def _cmd_finding(args: argparse.Namespace) -> int:
     if row.accepted_until:
         print(f"  accepted until: {row.accepted_until}")
     print(
-        f"  priority: {priority.priority(_row_finding(row))} ({priority.reason(_row_finding(row))})"
+        f"  priority: {priority.priority(row.as_finding())} ({priority.reason(row.as_finding())})"
     )
     print(f"  seen: first {row.first_seen[:19]}, last {row.last_seen[:19]}")
     print(f"  fingerprint: {row.fingerprint}")
@@ -696,6 +683,41 @@ def _cmd_scheduler(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_web(args: argparse.Namespace) -> int:
+    """Serve the web API and dashboard until interrupted."""
+    try:
+        from reconkit.server import web
+        from reconkit.server.config import ConfigError
+    except ImportError as exc:
+        print(
+            f"error: this command needs the server extra: pip install 'reconkit[server]' ({exc})",
+            file=sys.stderr,
+        )
+        return 2
+    if not _loopback(args.host):
+        print(
+            f"warning: listening on {args.host}: put a TLS reverse proxy in front, and send "
+            "X-Forwarded-Proto from it, so that tokens and cookies never cross the network "
+            "in clear text",
+            file=sys.stderr,
+        )
+    try:
+        web.serve(args.config, host=args.host, port=args.port)
+    except ConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
+def _loopback(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def _db_exists(path: str) -> bool:
     """Reading commands never create a database: say so if there is none."""
     if Path(path).is_file():
@@ -743,27 +765,14 @@ def _cmd_report(args: argparse.Namespace) -> int:
             if run_id is None:
                 print(f"error: no run stored in {args.db}", file=sys.stderr)
                 return 2
-            run = store.load_run(run_id)
-            statuses = store.finding_statuses()
-            changes = [
-                {
-                    "finding_id": e.finding_id,
-                    "event": e.event,
-                    "from": e.old_status,
-                    "to": e.new_status,
-                    "title": e.title,
-                    "host": e.host,
-                }
-                for e in store.changes_in_run(run_id)
-            ]
+            model = stored_model(store, run_id)
     except StorageError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    if run is None:
+    if model is None:
         print(f"error: no run #{run_id} in {args.db}", file=sys.stderr)
         return 2
 
-    model = report_model(run, run_id, statuses=statuses, changes=changes)
     outputs = []
     if args.html:
         outputs.append((args.html, "HTML", render_html(model)))
@@ -778,7 +787,8 @@ def _cmd_report(args: argparse.Namespace) -> int:
         except OSError as exc:
             print(f"error: cannot write {path}: {exc}", file=sys.stderr)
             return 1
-        print(f"{kind} report of run #{run_id} ({run.target}, {run.status}) written to {path}")
+        about = f"{model['run']['target']}, {model['run']['status']}"
+        print(f"{kind} report of run #{run_id} ({about}) written to {path}")
     print(
         "note: the report contains the scan results; share it only with people "
         "authorised to see them.",
@@ -1021,6 +1031,14 @@ def build_parser() -> argparse.ArgumentParser:
     scheduler.add_argument("--config", required=True, help="service.toml")
     scheduler.add_argument("--once", action="store_true", help="one round, then stop")
     scheduler.set_defaults(func=_cmd_scheduler)
+
+    web = sub.add_parser("web", help="serve the web API and dashboard (service)")
+    web.add_argument("--config", required=True, help="service.toml")
+    web.add_argument(
+        "--host", default="127.0.0.1", help="address to listen on (default: local only)"
+    )
+    web.add_argument("--port", type=int, default=8000)
+    web.set_defaults(func=_cmd_web)
 
     inventory = sub.add_parser("inventory", help="every host and port seen, across runs")
     inventory.add_argument("--db", default="reconkit.db", help="SQLite database path")

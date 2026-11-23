@@ -69,20 +69,56 @@ class JobInfo:
     operator: str | None
     status: str
     enqueued_at: str | None
-    result: dict[str, Any] | None
+    started_at: str | None
+    ended_at: str | None
+    result: dict[str, Any] | None  # the job's summary (jobs.scan_target), once finished
+    error: str | None  # the last line of the exception, if the job failed
+
+    def as_dict(self) -> dict[str, Any]:
+        return {name: getattr(self, name) for name in self.__slots__}
 
 
 def info(job: Job) -> JobInfo:
     status = job.get_status()
-    result = job.return_value() if status is not None and str(status.value) == "finished" else None
+    state = str(status.value) if status is not None else "unknown"
+    result = job.return_value() if state == "finished" else None
+    error = None
+    if state == "failed":
+        latest = job.latest_result()
+        text = (latest.exc_string if latest is not None else None) or ""
+        # The last line ("ConfigError: no target named ...") says what went wrong; the
+        # traceback, with the server's paths, stays in the worker's log.
+        error = text.strip().splitlines()[-1] if text.strip() else "failed"
     return JobInfo(
         id=job.id,
         target=job.meta.get("target"),
         operator=job.meta.get("operator"),
-        status=str(status.value) if status is not None else "unknown",
-        enqueued_at=job.enqueued_at.isoformat() if job.enqueued_at else None,
+        status=state,
+        enqueued_at=_iso(job.enqueued_at),
+        started_at=_iso(job.started_at),
+        ended_at=_iso(job.ended_at),
         result=result if isinstance(result, dict) else None,
+        error=error,
     )
+
+
+def recent_jobs(q: Queue, limit: int = 50) -> list[JobInfo]:
+    """Queued, running, finished and failed jobs of the queue, newest first."""
+    ids = list(q.get_job_ids())
+    for registry in (
+        q.started_job_registry,
+        q.finished_job_registry,
+        q.failed_job_registry,
+    ):
+        ids.extend(registry.get_job_ids(desc=True, end=limit - 1))
+    jobs = [j for j in Job.fetch_many(dict.fromkeys(ids), connection=q.connection) if j]
+    infos = [info(j) for j in jobs]
+    infos.sort(key=lambda i: i.enqueued_at or "", reverse=True)
+    return infos[:limit]
+
+
+def _iso(moment: Any) -> str | None:
+    return None if moment is None else str(moment.isoformat())
 
 
 class _WindowsWorker(SimpleWorker):
