@@ -107,7 +107,7 @@ Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây we
 - [x] `chore/docker` — `Dockerfile` (không root, nmap chỉ `cap_net_raw`, phụ thuộc ghim theo mã
       băm), `compose.yaml` (Redis + web + worker + scheduler, FS chỉ đọc, `cap_drop: ALL`),
       `reconkit backup` (sao lưu trực tuyến có kiểm tra, `--verify`, `--keep`); CI build và
-      quét thử trong container. Còn lại: ảnh demo (cùng `feat/lab`), nuclei/subfinder trong image.
+      quét thử trong container. ✅ ảnh demo (`feat/lab`), nuclei/subfinder (`chore/docker-tools`).
 - [x] `feat/lab` — `lab/`: Apache 2.4.49, OpenSSH 7.5 (DMZ) và nginx 1.20.0 sau một router NAT
       (mạng internal), hai mạng cách ly (không Internet, không chạm host); `up.sh` / `demo.sh` /
       `down.sh`; kịch bản vòng đời cho ra "fixed" và "fake fix" thật. Ảnh demo trong README (G20).
@@ -123,8 +123,9 @@ thật (nuclei 3.11.1, templates 10.5.2, subfinder 2.17.0), sửa những gì ch
       hết giờ / lỗi không làm mất kết quả nmap (run `partial`), gộp finding trùng giữ dữ liệu
       KEV/CVSS. subfinder: provider config (`--subfinder-config`), home tạm; discovery:
       `--discover-limit`, phân giải song song, lọc wildcard DNS, ghi chú gộp.
-- [ ] `chore/docker-tools` — nuclei, subfinder, templates trong image: ghim phiên bản + SHA-256
-      từ file checksums chính thức, cập nhật bằng một lệnh.
+- [x] `chore/docker-tools` — nuclei, subfinder, templates trong image: ghim phiên bản + SHA-256
+      từ file checksums chính thức (`docker/tools.lock`), `python docker/tools.py update`, chỉ lấy
+      đúng binary, giải nén an toàn; CI kiểm phiên bản trong image khớp lock. Image 182 → 401 MB.
 - [ ] `feat/lab-nuclei` — Apache trong lab khai thác được thật để nuclei xác nhận
       CVE-2021-41773; lab bật nuclei; CI kiểm `confirmed`.
 

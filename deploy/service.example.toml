@@ -6,6 +6,8 @@
 [service]
 db = "/data/reconkit.db"                 # in the `data` volume
 # cve_cache = "/data/reconkit-cve.db"    # NVD data: docker compose run --rm worker cve sync ...
+# subfinder_config = "/config/subfinder.yaml"  # API keys of subfinder's sources (git-ignored)
+# nuclei_templates: the image's pinned copy is used (RECONKIT_NUCLEI_TEMPLATES)
 redis_url = "redis://redis:6379/0"       # the `redis` service of compose.yaml
 queue = "reconkit"
 

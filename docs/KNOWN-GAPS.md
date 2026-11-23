@@ -416,8 +416,11 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     chuỗi audit, xoay vòng, `--verify`). CI build image và quét thật một container bằng SYN scan
     + traceroute với user thường chỉ giữ `NET_RAW`. Đã chạy thử cả stack: scheduler → worker →
     API → backup trong lúc chạy.
-  - Còn lại: image **chưa có nuclei / subfinder** (thực tế: tải bản release ghim phiên bản + kiểm
-    checksum/chữ ký trong build stage); chưa **quét lỗ hổng chính image** (Trivy/Grype trong CI)
+  - ✅ **`chore/docker-tools`**: nuclei, subfinder, nuclei-templates trong image, ghim phiên bản
+    + SHA-256 từ file checksums chính thức (`docker/tools.lock`, `docker/tools.py update`); CI
+    kiểm phiên bản trong image khớp lock. Lưu ý: file checksums lấy cùng nơi với file nhị phân
+    (tin lần đầu); ProjectDiscovery chưa ký release bằng cosign/GPG để kiểm độc lập.
+  - Còn lại: chưa **quét lỗ hổng chính image** (Trivy/Grype trong CI)
     và chưa **ký image** (cosign) / xuất SBOM; digest image gốc phải tự cập nhật (Dependabot /
     Renovate); backup chưa tự chạy theo lịch và chưa mã hoá — thực tế: job định kỳ + đẩy bản mã
     hoá (age/GPG) ra kho ngoài (S3 có object lock).
