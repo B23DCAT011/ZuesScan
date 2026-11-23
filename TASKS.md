@@ -2,7 +2,7 @@
 
 Mục tiêu: một **sản phẩm chạy được thật**, đủ chuẩn để đưa vào portfolio xin việc. Không
 dùng lý do "chỉ là lab" để bỏ qua điểm yếu: chỗ nào đã nhìn ra thì sửa; đường tắt nào cố ý
-giữ tạm phải ghi vào [`docs/KNOWN-GAPS.md`](docs/KNOWN-GAPS.md) (mã `G1`…`G25`).
+giữ tạm phải ghi vào [`docs/KNOWN-GAPS.md`](docs/KNOWN-GAPS.md) (mã `G1`…`G26`).
 
 Quy trình: mỗi task = 1 nhánh (`feat/` · `fix/` · `refactor/` · `chore/` · `docs/`), chạy đủ
 pytest + ruff + mypy trước khi commit, rồi `git merge --no-ff` vào `main` và push (từ
@@ -156,6 +156,8 @@ Mục tiêu: mang ReconKit sang máy khác mà cài nhanh, thêm / bớt công c
       image amd64 + arm64 có SBOM + provenance, ký cosign keyless, quét Trivy, GitHub Release; chạy
       tay = chạy thử không phát hành; action ghim SHA; `RECONKIT_IMAGE` cho compose. Chưa đẩy tag
       đầu tiên (việc phát hành do người duy trì quyết); PyPI chờ chọn tên.
-- [ ] `feat/mcp` — `reconkit mcp`: AI dùng ReconKit qua MCP, chỉ trên target đã khai báo, quyết
-      định nhạy cảm cần người xác nhận, dữ liệu quét luôn là dữ liệu.
+- [x] `feat/mcp` — `reconkit mcp` (SDK MCP 2.3, stdio, `reconkit[mcp]`): 12 tool qua web API;
+      `request_scan` / `claim_fixed` / `reopen_finding` cần người dùng xác nhận (elicitation qua
+      `Resolve`, không phải tham số); không có tool chấp nhận rủi ro; chỉ target đã khai báo; dữ
+      liệu quét làm sạch + đánh dấu không tin cậy. Thử thật qua stdio trên lab. Còn lại: G26.
 
