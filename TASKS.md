@@ -2,7 +2,7 @@
 
 Mục tiêu: một **sản phẩm chạy được thật**, đủ chuẩn để đưa vào portfolio xin việc. Không
 dùng lý do "chỉ là lab" để bỏ qua điểm yếu: chỗ nào đã nhìn ra thì sửa; đường tắt nào cố ý
-giữ tạm phải ghi vào [`docs/KNOWN-GAPS.md`](docs/KNOWN-GAPS.md) (mã `G1`…`G20`).
+giữ tạm phải ghi vào [`docs/KNOWN-GAPS.md`](docs/KNOWN-GAPS.md) (mã `G1`…`G23`).
 
 Quy trình: mỗi task = 1 nhánh (`feat/` · `fix/` · `refactor/` · `chore/` · `docs/`), chạy đủ
 pytest + ruff + mypy trước khi commit, rồi `git merge --no-ff` vào `main` và push (từ
@@ -94,7 +94,10 @@ Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây we
 
 ## Giai đoạn 3 — Dịch vụ chạy nền
 
-- [ ] Scheduler + queue (Redis + RQ) + worker.
+- [x] `feat/worker-queue` — `service.toml` (chỉ target đã khai mới quét được), hàng đợi
+      Redis + RQ, `reconkit worker` (fork trên Linux, chạy tại chỗ trên Windows), `reconkit
+      scheduler` (`every = "24h"`, khoá mỗi vòng), `reconkit enqueue`, `reconkit token`, cảnh
+      báo webhook: fix giả / xuất hiện lại / finding mới ≥ `min_priority`. Còn lại: G23.
 - [ ] Web API (FastAPI) + Web UI dùng lại code vẽ bản đồ của M1 + thông báo. Thư viện web
       đặt trong gói tuỳ chọn `reconkit[server]`, lõi vẫn không phụ thuộc.
 - [ ] Đóng gói Docker Compose + volume + backup DB; README có demo (G20).

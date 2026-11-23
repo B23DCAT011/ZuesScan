@@ -312,6 +312,27 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     IPv6 qua được scope nhưng nmap báo lỗi (exit 4).
   - Sửa: phân giải cả AAAA, kiểm scope như IPv4, chạy nmap riêng với `-6` cho nhóm IPv6.
 
+- [ ] **G23. Dịch vụ chạy nền: những giới hạn còn lại.** (từ `feat/worker-queue`)
+  - ✅ Đã có: `service.toml` (chỉ target được khai mới quét được; token chỉ lưu SHA-256; cấu
+    hình sai thì không khởi động), hàng đợi Redis + RQ, worker chạy đúng đường quét của CLI,
+    scheduler có khoá mỗi vòng, cảnh báo webhook (fix giả, xuất hiện lại, finding mới ≥ P2).
+    Đã chạy thật: Redis 7.4 (Docker) + `scheduler --once` + `worker --burst` trên Windows quét
+    nmap thật 127.0.0.1, hai job → hai run trong DB; webhook nhận payload qua HTTP thật.
+  - **Cảnh báo gửi không được thì mất** (chỉ ghi log). Thực tế: bảng *outbox* trong DB + gửi
+    lại có backoff, đánh dấu đã gửi; hoặc đẩy cảnh báo thành job riêng trong hàng đợi có retry.
+  - **Worker trên Windows chạy job trong chính tiến trình của nó** (không có `fork()`): một job
+    làm sập tiến trình thì sập cả worker; giới hạn thời gian bằng luồng hẹn giờ không ngắt được
+    một lời gọi C đang chặn. Đỡ được phần lớn vì plugin tự đặt timeout cho nmap/nuclei (tiến trình
+    con bị giết). Thực tế: chạy worker trên Linux (container — `chore/docker`), mỗi job một
+    tiến trình con, có supervisor khởi động lại.
+  - Job lỗi chỉ nằm trong *failed registry* của RQ (30 ngày), chưa có ai được báo. Sẽ hiện trên
+    web (`feat/web`); thực tế còn cần cảnh báo "lần quét định kỳ thất bại N lần liền".
+  - Lịch chỉ có dạng "mỗi N phút / giờ / ngày", chưa có cron (vd "2 giờ sáng thứ Bảy") — kết
+    hợp được với khung giờ `@window` của scope. Lịch tính từ lần quét trước nên trôi dần.
+  - Token đã có trong cấu hình nhưng chưa có gì dùng tới: API (FastAPI) là bước `feat/web`.
+  - Webhook chưa ký (HMAC) nên bên nhận không xác minh được nguồn; URL webhook là bí mật — đừng
+    commit `service.toml` thật.
+
 ## Mức 3 — Hoàn thiện sản phẩm / portfolio
 
 - [x] **G17. Chưa có CI.** Sửa: GitHub Actions chạy pytest + ruff + mypy cho mọi PR. (F1, `chore/ci`)
