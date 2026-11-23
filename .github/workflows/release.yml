@@ -1,0 +1,182 @@
+# Release: push a tag vX.Y.Z (equal to reconkit.__version__, with a CHANGELOG.md section).
+#
+#   git tag v0.2.0 && git push origin v0.2.0
+#
+# - the Python package (wheel + sdist) is built once and attached to a GitHub Release whose
+#   notes are the version's CHANGELOG section;
+# - the image is built for linux/amd64 and linux/arm64, pushed to ghcr.io/<owner>/reconkit
+#   with an SBOM and provenance attestations, signed with cosign (keyless: GitHub's OIDC
+#   identity, no key to keep), and scanned with Trivy (results in the Security tab);
+# - "Run workflow" by hand does all of it as a dry run: built and scanned, nothing published.
+#
+# Actions are pinned by commit SHA: this workflow can write packages and releases.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/reconkit
+  PUBLISH: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+
+jobs:
+  check:
+    name: version, tag and changelog agree
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: version
+        run: |
+          version=$(python3 -c 'import re; print(re.search(r"__version__ = \"(.+)\"", open("reconkit/__init__.py").read()).group(1))')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$PUBLISH" = "true" ] && [ "${GITHUB_REF_NAME}" != "v$version" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match reconkit.__version__ $version"
+            exit 1
+          fi
+          if ! grep -q "^## \[$version\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no section for $version"
+            exit 1
+          fi
+
+  python:
+    name: Python package
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - run: python -m pip install build==1.3.0
+      - run: python -m build
+      - name: the wheel installs and runs, with its data files
+        run: |
+          python -m venv /tmp/try
+          /tmp/try/bin/pip install dist/*.whl
+          /tmp/try/bin/reconkit --version | grep -qx "reconkit ${{ needs.check.outputs.version }}"
+          /tmp/try/bin/reconkit tools list
+          /tmp/try/bin/reconkit plugins
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  image:
+    name: image (amd64 + arm64), signed and scanned
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io
+      id-token: write # keyless signing (cosign) and provenance
+      attestations: write
+      security-events: write # Trivy results in the Security tab
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+          labels: |
+            org.opencontainers.image.title=ReconKit
+            org.opencontainers.image.licenses=MIT
+      - if: env.PUBLISH == 'true'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ env.PUBLISH == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          sbom: true
+          provenance: mode=max
+      - name: the amd64 image works (doctor finds every tool)
+        run: |
+          docker buildx build --platform linux/amd64 --load -t reconkit:release .
+          docker run --rm --read-only --tmpfs /tmp reconkit:release doctor --json > doctor.json
+          python3 -c 'import json; r = json.load(open("doctor.json")); assert r["ready"], r'
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: reconkit:release
+          format: sarif
+          output: trivy.sarif
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          # Report, do not block: the image also carries third-party binaries (nuclei,
+          # subfinder) whose Go runtime is outside this project's control. The findings are
+          # reviewed in the Security tab; the base image digest and the tools are bumped.
+          exit-code: "0"
+      - uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
+        if: always() && hashFiles('trivy.sarif') != ''
+        with:
+          sarif_file: trivy.sarif
+          category: trivy-image
+      - if: env.PUBLISH == 'true'
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - name: sign the pushed image (keyless)
+        if: env.PUBLISH == 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
+  release:
+    name: GitHub Release
+    needs: [check, python, image]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - name: notes from the changelog
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          # Plain string matching: "[" in a regex is escaped differently by gawk and mawk.
+          awk -v head="## [$VERSION]" '
+            index($0, head) == 1 { found = 1; next }
+            found && index($0, "## [") == 1 { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          test -s notes.md
+          {
+            echo
+            echo "Image: \`${IMAGE}:${VERSION}\` (linux/amd64, linux/arm64), signed with cosign:"
+            echo
+            echo '```bash'
+            echo "cosign verify ${IMAGE}:${VERSION} \\"
+            echo "  --certificate-identity-regexp 'https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/v.*' \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
+            echo '```'
+          } >> notes.md
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "ReconKit $GITHUB_REF_NAME" --notes-file notes.md

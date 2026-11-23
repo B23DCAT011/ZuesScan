@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reconkit"
-version = "0.1.0"
+dynamic = ["version"]  # from reconkit.__version__: one place to bump, checked against the tag
 description = "Recon orchestrator & vulnerability management (academic project)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -39,6 +39,9 @@ server-test = [
 
 [project.scripts]
 reconkit = "reconkit.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "reconkit.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["."]
