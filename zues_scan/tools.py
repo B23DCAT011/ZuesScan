@@ -1,4 +1,5 @@
-"""The external tools ZuesScan can install itself: nuclei, subfinder, dnsx, nuclei-templates.
+"""The external tools ZuesScan can install itself: nuclei, subfinder, dnsx, naabu and
+nuclei-templates.
 
     zues tools list | install [TOOL...] | verify | path
     python -m zues_scan.tools update            # newest releases -> zues_scan/data/tools.lock
@@ -41,7 +42,7 @@ from pathlib import Path
 
 LOCK = Path(__file__).with_name("data") / "tools.lock"
 REPO = "projectdiscovery"
-BINARIES = ("nuclei", "subfinder", "dnsx")
+BINARIES = ("nuclei", "subfinder", "dnsx", "naabu")
 TEMPLATES = "nuclei-templates"
 TOOLS = (*BINARIES, TEMPLATES)
 # Release file naming of ProjectDiscovery, per platform this module supports.

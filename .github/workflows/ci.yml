@@ -105,7 +105,7 @@ jobs:
           status = {c["name"]: c["status"] for c in report["checks"]}
           print(status)
           assert report["ready"], report
-          tools = ("nmap", "nmap rights", "nuclei", "nuclei templates", "subfinder", "dnsx", "ssh")
+          tools = ("nmap", "nmap rights", "nuclei", "nuclei templates", "subfinder", "dnsx", "naabu", "ssh")
           for tool in tools:
               assert status[tool] == "ok", (tool, status[tool])
           PY
@@ -114,6 +114,8 @@ jobs:
           docker run --rm --read-only --tmpfs /tmp --entrypoint python zues-scan:ci -c '
           from zues_scan import tools
           from zues_scan.plugins.dnsx import DnsxPlugin
+          from zues_scan.plugins.naabu import NaabuPlugin
+          from zues_scan.plugins.nmap import NmapPlugin
           from zues_scan.plugins.nuclei import NucleiPlugin, default_templates
           from zues_scan.plugins.subfinder import SubfinderPlugin
           lock = tools.for_platform(tools.read_lock(), "linux-amd64")
@@ -123,6 +125,7 @@ jobs:
               "nuclei": NucleiPlugin(templates=default_templates()).version(),
               "subfinder": SubfinderPlugin().version(),
               "dnsx": DnsxPlugin().version(),
+              "naabu": NaabuPlugin(nmap=lambda _: NmapPlugin()).version().split()[0],
           }
           print(seen)
           assert seen == want, (seen, want)'

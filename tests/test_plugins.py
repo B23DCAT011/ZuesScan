@@ -90,6 +90,7 @@ def test_the_built_in_plugins() -> None:
     loaded = registry.load(lambda: [])
     assert {n: (s.kind, str(s.activity)) for n, s in loaded.plugins.items()} == {
         "nmap": ("scanner", "scan"),
+        "naabu": ("scanner", "scan"),
         "nuclei": ("check", "active"),
         "ssh-packages": ("check", "scan"),
         "subfinder": ("discovery", "passive"),

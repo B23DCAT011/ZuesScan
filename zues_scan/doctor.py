@@ -364,8 +364,20 @@ def _version(command: list[str]) -> str | None:
     return match.group(1) if match else None
 
 
+class _NoNmap:
+    def __init__(self, _profile: object) -> None: ...
+
+    def is_available(self) -> bool:
+        return False
+
+
+def _no_nmap(profile: object) -> _NoNmap:
+    return _NoNmap(profile)
+
+
 def gather(config: str | None = None, cve_cache: str = "zues-cve.db") -> list[Check]:
     from zues_scan.plugins.dnsx import DnsxPlugin
+    from zues_scan.plugins.naabu import NaabuPlugin
     from zues_scan.plugins.nuclei import NucleiPlugin, default_templates, templates_version
     from zues_scan.plugins.subfinder import SubfinderPlugin
 
@@ -398,6 +410,10 @@ def gather(config: str | None = None, cve_cache: str = "zues-cve.db") -> list[Ch
     checks.append(check_providers(os.environ.get("ZUES_SUBFINDER_CONFIG") or plugin.providers()))
     dnsx = tools.which("dnsx")
     checks.append(check_tool("dnsx", dnsx, DnsxPlugin().version() if dnsx else None, system))
+    naabu = tools.which("naabu")
+    # Its own version only: nmap has its own line above.
+    naabu_version = NaabuPlugin(nmap=_no_nmap).version() if naabu else None
+    checks.append(check_tool("naabu", naabu, naabu_version, system))
     ssh = shutil.which("ssh")
     checks.append(check_tool("ssh", ssh, _version(["ssh", "-V"]) if ssh else None, system))
     checks.append(check_cve_cache(cve_cache, datetime.now(UTC)))

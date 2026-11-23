@@ -133,6 +133,17 @@ class ScanProfile:
             args.append("--traceroute")
         return args
 
+    def ping_args(self) -> list[str]:
+        """nmap options for host discovery only (`-sn`): which addresses are up."""
+        args = ["-sn", f"-T{self.timing}"]
+        if self.max_rate is not None:
+            args += ["--max-rate", str(self.max_rate)]
+        if self.max_retries is not None:
+            args += ["--max-retries", str(self.max_retries)]
+        if self.host_timeout is not None:
+            args += ["--host-timeout", f"{self.host_timeout}s"]
+        return args
+
     def settings(self) -> dict[str, Any]:
         """Every setting, for the record kept with a run."""
         return {k: v for k, v in asdict(self).items() if k != "description"}

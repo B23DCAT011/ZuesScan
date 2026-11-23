@@ -18,4 +18,9 @@ dnsx 1.3.1 linux-arm64 dd657dd1ccee5e137eca2dbad0e97dbd067555f744adb97efcda774f1
 dnsx 1.3.1 darwin-amd64 ade8207185467df3768f08993a1b0140cdec5b5d2b735dc2213b90de5a2d3a1c https://github.com/projectdiscovery/dnsx/releases/download/v1.3.1/dnsx_1.3.1_macOS_amd64.zip
 dnsx 1.3.1 darwin-arm64 6b1681e4168cf6175facea723e16fca4ca2f99c3f9f83dea8c2b79ed20a3f417 https://github.com/projectdiscovery/dnsx/releases/download/v1.3.1/dnsx_1.3.1_macOS_arm64.zip
 dnsx 1.3.1 windows-amd64 112c2d62d67d26a1b940ed9d10d500d2aa1ee3e3e18393d181ac4969936b9d96 https://github.com/projectdiscovery/dnsx/releases/download/v1.3.1/dnsx_1.3.1_windows_amd64.zip
+naabu 2.7.0 linux-amd64 0cc77c0ca32d2f519ffbaa7665bb0e7c88c40753ab22f03551d453a1a823e9f0 https://github.com/projectdiscovery/naabu/releases/download/v2.7.0/naabu_2.7.0_linux_amd64.zip
+naabu 2.7.0 linux-arm64 e88af9bbfd777e2ffab6f84696747ba74de98fafeda882c078d158a610dbd86e https://github.com/projectdiscovery/naabu/releases/download/v2.7.0/naabu_2.7.0_linux_arm64.zip
+naabu 2.7.0 darwin-amd64 97eed2223ba5bc0958621569dc92e8c4c257ec3d3ee3c1a9baddf23f152eb825 https://github.com/projectdiscovery/naabu/releases/download/v2.7.0/naabu_2.7.0_macOS_amd64.zip
+naabu 2.7.0 darwin-arm64 25caf00cfbba2b36aa5285c7605909e2bb668dac98729ba939ad3061df9551cf https://github.com/projectdiscovery/naabu/releases/download/v2.7.0/naabu_2.7.0_macOS_arm64.zip
+naabu 2.7.0 windows-amd64 57f014880ec4d8cfe9d23d7a185d1b478f7867fc6f5fef63be1af835a4c5639a https://github.com/projectdiscovery/naabu/releases/download/v2.7.0/naabu_2.7.0_windows_amd64.zip
 nuclei-templates 10.5.2 any 016b7abbf931d4d1a851a5a568e44510dc61691dc8a5202e3b24e701515ec574 https://github.com/projectdiscovery/nuclei-templates/archive/refs/tags/v10.5.2.tar.gz

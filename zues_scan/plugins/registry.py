@@ -26,6 +26,7 @@ from typing import Any, Literal
 
 from zues_scan.cve.cache import CveCache
 from zues_scan.plugins.dnsx import DnsxPlugin
+from zues_scan.plugins.naabu import NaabuPlugin
 from zues_scan.plugins.nmap import NmapPlugin
 from zues_scan.plugins.nuclei import NucleiPlugin
 from zues_scan.plugins.ssh_packages import SshCredential, SshPackagesPlugin
@@ -84,6 +85,10 @@ def _nmap(ctx: PluginContext) -> Any:
     return NmapPlugin(profile=ctx.profile)
 
 
+def _naabu(ctx: PluginContext) -> Any:
+    return NaabuPlugin(profile=ctx.profile, nmap=lambda *a, **kw: NmapPlugin(*a, **kw))
+
+
 def _nuclei(ctx: PluginContext) -> Any:
     return NucleiPlugin(profile=ctx.profile, templates=ctx.nuclei_templates)
 
@@ -114,6 +119,15 @@ BUILTINS: tuple[PluginSpec, ...] = (
         _nmap,
         binary="nmap",
         needs=("raw sockets for SYN scan and traceroute",),
+    ),
+    PluginSpec(
+        "naabu",
+        "scanner",
+        NaabuPlugin.activity,
+        "fast port discovery (connect scan), then nmap on the open ports only",
+        _naabu,
+        binary="naabu",
+        needs=("nmap for service names and versions",),
     ),
     PluginSpec(
         "nuclei",

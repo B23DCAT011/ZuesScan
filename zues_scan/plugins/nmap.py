@@ -57,8 +57,11 @@ class NmapPlugin:
     name = "nmap"
     activity = Activity.SCAN  # finds open ports and services
 
-    def __init__(self, profile: ScanProfile | None = None) -> None:
+    def __init__(self, profile: ScanProfile | None = None, ping_only: bool = False) -> None:
         self.profile = profile if profile is not None else BUILTIN[DEFAULT_PROFILE]
+        # Host discovery only (-sn): which addresses are up, no port scanned. Used by
+        # scanners that find ports themselves (naabu) and cannot ping without root.
+        self.ping_only = ping_only
 
     @property
     def timeout(self) -> int:
@@ -96,7 +99,7 @@ class NmapPlugin:
         return [
             tools.resolve("nmap"),
             *ipv6,
-            *self.profile.nmap_args(),
+            *(self.profile.ping_args() if self.ping_only else self.profile.nmap_args()),
             "-oX",
             "-",
             *exclude,
