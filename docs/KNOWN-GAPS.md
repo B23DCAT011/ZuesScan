@@ -453,6 +453,21 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     - Bảng điều khiển web chưa có trang kiểm kê web riêng (tìm theo công nghệ: "mọi máy chạy
       PHP 7"); dữ liệu đã có trong API.
 
+- [ ] **G30. Cấu hình qua dashboard: giới hạn còn lại.** (từ `feat/managed-config`)
+  - ✅ Đã có: vai trò `admin`; scope / target / token lưu trong database, kiểm như lúc quét
+    trước khi lưu, audit `config` trong chuỗi băm, có hiệu lực ngay; `service.toml` chỉ đọc và
+    thắng khi trùng tên; `zues user add` tạo admin đầu tiên / lấy lại quyền.
+  - Còn lại:
+    - **Admin mở rộng được giấy phép quét** (theo yêu cầu của chủ dự án: sửa được cả scope trên
+      giao diện). Lớp bảo vệ còn lại là số người giữ token admin và audit trail. Nên có: duyệt
+      hai người cho thay đổi scope (một người đề xuất, người khác chấp thuận), và thông báo
+      webhook mỗi lần scope đổi.
+    - Token chưa có hạn dùng và chưa có đăng nhập SSO / OIDC; token admin nên đổi định kỳ.
+    - Target trên dashboard chưa dùng được credentials SSH hay file profile riêng (cố ý: không
+      trỏ tới file trên máy chủ); chỉ các profile dựng sẵn.
+    - Chưa có lịch sử phiên bản scope để xem / khôi phục trên giao diện (đã có trong audit +
+      `scope_snapshot`, chưa có màn hình).
+
 ## Mức 3 — Hoàn thiện sản phẩm / portfolio
 
 - [x] **G17. Chưa có CI.** Sửa: GitHub Actions chạy pytest + ruff + mypy cho mọi PR. (F1, `chore/ci`)

@@ -43,7 +43,7 @@ log = logging.getLogger(__name__)
 
 # The schema version this code reads and writes. Bump it together with a new entry
 # in `_MIGRATIONS`; never edit a migration that has already shipped.
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 
 class StorageError(Exception):
@@ -445,6 +445,61 @@ _V12 = ("ALTER TABLE asset ADD COLUMN names TEXT NOT NULL DEFAULT '[]'",)
 # technologies — as a JSON object (NULL: not a web service, or not looked at).
 _V13 = ("ALTER TABLE service ADD COLUMN web TEXT",)
 
+# Version 14: the configuration people edit in the dashboard — scopes (the text of a
+# scope file), targets (their settings as JSON) and tokens (only the SHA-256) — next to
+# what service.toml says. `managed_meta.version` grows with every change, so that the
+# services see a change without restarting. Changes are audited: kind 'config'.
+_V14 = (
+    """
+    CREATE TABLE managed_scope (
+        name        TEXT PRIMARY KEY,
+        content     TEXT NOT NULL,
+        sha256      TEXT NOT NULL,
+        updated_at  TEXT NOT NULL,
+        updated_by  TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE managed_target (
+        name        TEXT PRIMARY KEY,
+        settings    TEXT NOT NULL,
+        updated_at  TEXT NOT NULL,
+        updated_by  TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE managed_token (
+        name        TEXT PRIMARY KEY,
+        sha256      TEXT NOT NULL UNIQUE,
+        role        TEXT NOT NULL,
+        created_at  TEXT NOT NULL,
+        created_by  TEXT NOT NULL
+    )
+    """,
+    "CREATE TABLE managed_meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL)",
+    "INSERT INTO managed_meta (key, value) VALUES ('version', 0)",
+    """
+    CREATE TABLE audit_event_new (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        at            TEXT NOT NULL,
+        kind          TEXT NOT NULL
+                      CHECK (kind IN ('scan', 'refused', 'deleted', 'finding', 'config')),
+        run_id        INTEGER REFERENCES scan_run(id) ON DELETE SET NULL,
+        target        TEXT NOT NULL,
+        operator      TEXT,
+        engagement    TEXT,
+        scope_sha256  TEXT,
+        detail        TEXT NOT NULL,
+        prev_hash     TEXT NOT NULL UNIQUE,
+        hash          TEXT NOT NULL UNIQUE
+    )
+    """,
+    "INSERT INTO audit_event_new SELECT * FROM audit_event",
+    "DROP TABLE audit_event",
+    "ALTER TABLE audit_event_new RENAME TO audit_event",
+    "CREATE INDEX idx_audit_run ON audit_event(run_id)",
+)
+
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: _V1,
     2: _V2,
@@ -459,6 +514,7 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
     11: _V11,
     12: _V12,
     13: _V13,
+    14: _V14,
 }
 
 
@@ -690,6 +746,131 @@ class Storage:
                     detail={"reason": reason},
                 )
             )
+
+    # --- configuration edited in the dashboard (schema 14) ---------------------------------
+
+    def managed_version(self) -> int:
+        """Grows with every change below: a service compares it to see it must re-read."""
+        row = self._conn.execute("SELECT value FROM managed_meta WHERE key = 'version'").fetchone()
+        return int(row["value"]) if row else 0
+
+    def managed_scopes(self) -> list[sqlite3.Row]:
+        return self._conn.execute(
+            "SELECT name, content, sha256, updated_at, updated_by FROM managed_scope ORDER BY name"
+        ).fetchall()
+
+    def managed_targets(self) -> list[sqlite3.Row]:
+        return self._conn.execute(
+            "SELECT name, settings, updated_at, updated_by FROM managed_target ORDER BY name"
+        ).fetchall()
+
+    def managed_tokens(self) -> list[sqlite3.Row]:
+        return self._conn.execute(
+            "SELECT name, sha256, role, created_at, created_by FROM managed_token ORDER BY name"
+        ).fetchall()
+
+    def save_managed_scope(self, name: str, content: str, sha256: str, actor: str) -> None:
+        now = datetime.now(UTC).isoformat()
+        old = self._conn.execute(
+            "SELECT sha256 FROM managed_scope WHERE name = ?", (name,)
+        ).fetchone()
+        self._managed_change(
+            "INSERT INTO managed_scope (name, content, sha256, updated_at, updated_by) "
+            "VALUES (?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET content = excluded.content, "
+            "sha256 = excluded.sha256, updated_at = excluded.updated_at, "
+            "updated_by = excluded.updated_by",
+            (name, content, sha256, now, actor),
+            AuditEvent(
+                at=now,
+                kind=AuditKind.CONFIG,
+                target=f"scope:{name}",
+                operator=actor,
+                engagement=None,
+                scope_sha256=sha256,
+                detail={
+                    "action": "scope saved",
+                    "previous_sha256": old["sha256"] if old else None,
+                },
+            ),
+            snapshot=(sha256, content),
+        )
+
+    def save_managed_target(self, name: str, settings: dict[str, Any], actor: str) -> None:
+        now = datetime.now(UTC).isoformat()
+        exists = self._conn.execute(
+            "SELECT 1 FROM managed_target WHERE name = ?", (name,)
+        ).fetchone()
+        self._managed_change(
+            "INSERT INTO managed_target (name, settings, updated_at, updated_by) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET settings = excluded.settings, "
+            "updated_at = excluded.updated_at, updated_by = excluded.updated_by",
+            (name, json.dumps(settings, sort_keys=True), now, actor),
+            AuditEvent(
+                at=now,
+                kind=AuditKind.CONFIG,
+                target=f"target:{name}",
+                operator=actor,
+                engagement=settings.get("engagement"),
+                scope_sha256=None,
+                detail={"action": "target updated" if exists else "target added", **settings},
+            ),
+        )
+
+    def save_managed_token(self, name: str, sha256: str, role: str, actor: str) -> None:
+        now = datetime.now(UTC).isoformat()
+        self._managed_change(
+            "INSERT INTO managed_token (name, sha256, role, created_at, created_by) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (name, sha256, role, now, actor),
+            AuditEvent(
+                at=now,
+                kind=AuditKind.CONFIG,
+                target=f"token:{name}",
+                operator=actor,
+                engagement=None,
+                scope_sha256=None,
+                detail={"action": "token created", "role": role},  # never the token
+            ),
+        )
+
+    def delete_managed(self, kind: str, name: str, actor: str) -> bool:
+        """Remove a scope, target or token; False if there was none by that name."""
+        table = {"scope": "managed_scope", "target": "managed_target", "token": "managed_token"}[
+            kind
+        ]
+        if self._conn.execute(f"SELECT 1 FROM {table} WHERE name = ?", (name,)).fetchone() is None:
+            return False
+        now = datetime.now(UTC).isoformat()
+        self._managed_change(
+            f"DELETE FROM {table} WHERE name = ?",
+            (name,),
+            AuditEvent(
+                at=now,
+                kind=AuditKind.CONFIG,
+                target=f"{kind}:{name}",
+                operator=actor,
+                engagement=None,
+                scope_sha256=None,
+                detail={"action": f"{kind} deleted"},
+            ),
+        )
+        return True
+
+    def _managed_change(
+        self,
+        sql: str,
+        params: tuple[Any, ...],
+        event: AuditEvent,
+        snapshot: tuple[str, str] | None = None,
+    ) -> None:
+        """One change, its audit event and the version bump: all or nothing."""
+        self._conn.execute("BEGIN IMMEDIATE")
+        with self._conn:
+            self._conn.execute(sql, params)
+            if snapshot is not None:
+                self._keep_scope(*snapshot)
+            self._append_audit(event)
+            self._conn.execute("UPDATE managed_meta SET value = value + 1 WHERE key = 'version'")
 
     def _keep_scope(self, sha256: str | None, text: str | None) -> None:
         if sha256 and text is not None:

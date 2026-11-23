@@ -35,14 +35,21 @@ target by its `name`; it never brings its own address, scope file or options.
 
 from __future__ import annotations
 
+import json
 import re
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-ROLES = ("viewer", "operator")
+ROLES = ("viewer", "operator", "admin")
+# What each role may do includes what the roles before it may: an admin is an operator too.
+RANK = {role: i for i, role in enumerate(ROLES)}
+FILE, DASHBOARD = "file", "dashboard"  # where a target, scope or token is defined
+
+
+NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")  # of a target or a dashboard scope
 
 
 class ConfigError(Exception):
@@ -54,6 +61,7 @@ class Token:
     name: str
     sha256: str
     role: str
+    source: str = FILE
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +81,10 @@ class Target:
     credentials: str | None = None
     ipv4_only: bool = False
     discover_limit: int | None = None
+    source: str = FILE  # FILE: service.toml; DASHBOARD: edited in the dashboard
+    # A dashboard target's scope is a scope edited in the dashboard: `scope` is its name
+    # and this its text. A file target's scope is the file at `scope`.
+    scope_text: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +106,10 @@ class ServiceConfig:
     tokens: tuple[Token, ...] = ()
     targets: dict[str, Target] = field(default_factory=dict)
     notify: Notify = Notify()
+    scopes: dict[str, str] = field(default_factory=dict)  # dashboard scopes: name -> text
+    # Dashboard entries left out (e.g. a name service.toml took since): shown to admins.
+    problems: tuple[str, ...] = ()
+    managed_version: int = 0  # of the dashboard's configuration, when it was read
 
     def target(self, name: str) -> Target:
         try:
@@ -159,7 +175,7 @@ def load_config(path: str | Path) -> ServiceConfig:
     webhook = notify.get("webhook")
     if webhook is not None and not str(webhook).startswith(("https://", "http://")):
         raise ConfigError("[notify] webhook must be an http(s) URL")
-    return ServiceConfig(
+    config = ServiceConfig(
         path=str(path),
         db=str(service["db"]),
         redis_url=str(service.get("redis_url", "redis://localhost:6379/0")),
@@ -172,6 +188,79 @@ def load_config(path: str | Path) -> ServiceConfig:
         targets=targets,
         notify=Notify(webhook=webhook, min_priority=notify.get("min_priority", "P2")),
     )
+    return with_dashboard(config)
+
+
+def with_dashboard(config: ServiceConfig) -> ServiceConfig:
+    """`config` plus the scopes, targets and tokens edited in the dashboard (stored in its
+    database). service.toml wins a name both define; a dashboard entry that is no longer
+    valid is left out and reported in `problems`, never fatal: the file decides whether
+    the service starts."""
+    if not Path(config.db).is_file():
+        return config  # nothing edited yet (the database comes with the first scan)
+    from zues_scan.storage import Storage, StorageError
+
+    try:
+        with Storage(config.db) as store:
+            scopes = {row["name"]: row["content"] for row in store.managed_scopes()}
+            target_rows = store.managed_targets()
+            token_rows = store.managed_tokens()
+            version = store.managed_version()
+    except StorageError as exc:
+        raise ConfigError(
+            f"cannot read the dashboard's configuration in {config.db}: {exc}"
+        ) from None
+    problems: list[str] = []
+    targets = dict(config.targets)
+    for row in target_rows:
+        name = row["name"]
+        if name in targets:
+            problems.append(f"dashboard target {name!r} left out: service.toml defines {name!r}")
+            continue
+        try:
+            targets[name] = dashboard_target(name, json.loads(row["settings"]), scopes)
+        except (ConfigError, ValueError) as exc:
+            problems.append(f"dashboard target {name!r} left out: {exc}")
+    tokens = list(config.tokens)
+    taken = {t.name for t in tokens}
+    for row in token_rows:
+        if row["name"] in taken or row["role"] not in ROLES:
+            problems.append(f"dashboard token {row['name']!r} left out: name taken or bad role")
+            continue
+        tokens.append(Token(row["name"], row["sha256"], row["role"], source=DASHBOARD))
+    return replace(
+        config,
+        targets=targets,
+        tokens=tuple(tokens),
+        scopes=scopes,
+        problems=tuple(problems),
+        managed_version=version,
+    )
+
+
+# The settings a dashboard target may have: no server file paths (credentials, profile
+# files), which only the person who runs the server should point at.
+DASHBOARD_KEYS = (
+    "target",
+    "scope",
+    "profile",
+    "every",
+    "engagement",
+    "scanners",
+    "checks",
+    "discoverers",
+    "discover",
+    "discover_limit",
+    "ipv4_only",
+)
+
+
+def dashboard_target(name: str, settings: dict[str, Any], scopes: dict[str, str]) -> Target:
+    """A target edited in the dashboard, checked like one in service.toml."""
+    if not isinstance(settings, dict):
+        raise ConfigError("settings must be a table")
+    _only(settings, set(DASHBOARD_KEYS), f"target {name!r}")
+    return _target({"name": name, **settings}, 0, dashboard_scopes=scopes)
 
 
 def _only(table: dict[str, Any], allowed: set[str], where: str) -> None:
@@ -201,8 +290,8 @@ def _token(raw: dict[str, Any], i: int) -> Token:
     return Token(name, digest, role)
 
 
-def _target(raw: dict[str, Any], i: int) -> Target:
-    where = f"[[targets]] #{i}"
+def _target(raw: dict[str, Any], i: int, dashboard_scopes: dict[str, str] | None = None) -> Target:
+    where = f"[[targets]] #{i}" if dashboard_scopes is None else "target"
     allowed = {
         "name",
         "target",
@@ -225,10 +314,21 @@ def _target(raw: dict[str, Any], i: int) -> Target:
         name, target, scope = str(raw["name"]), str(raw["target"]), str(raw["scope"])
     except KeyError as exc:
         raise ConfigError(f"{where}: missing {exc}") from None
-    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", name):
+    if not NAME.fullmatch(name):
         raise ConfigError(f"{where}: name {name!r}: lowercase letters, digits, - and _")
-    if not Path(scope).is_file():
-        raise ConfigError(f"{where} ({name}): scope file not found: {scope}")
+    if not target.strip():
+        raise ConfigError(f"{where} ({name}): target is empty")
+    if dashboard_scopes is None:
+        if not Path(scope).is_file():
+            raise ConfigError(f"{where} ({name}): scope file not found: {scope}")
+        source, scope_text = FILE, None
+    else:
+        if scope not in dashboard_scopes:
+            raise ConfigError(f"{where} ({name}): no scope named {scope!r}")
+        source, scope_text = DASHBOARD, dashboard_scopes[scope]
+    engagement = raw.get("engagement")
+    if engagement is not None and not isinstance(engagement, str):
+        raise ConfigError(f"{where} ({name}): engagement must be text")
     return Target(
         name=name,
         target=target,
@@ -245,6 +345,8 @@ def _target(raw: dict[str, Any], i: int) -> Target:
         credentials=raw.get("credentials"),
         ipv4_only=bool(raw.get("ipv4_only", False)),
         discover_limit=_positive(raw.get("discover_limit"), f"{where} ({name}) discover_limit"),
+        source=source,
+        scope_text=scope_text,
     )
 
 

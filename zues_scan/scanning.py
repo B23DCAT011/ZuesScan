@@ -46,8 +46,9 @@ class ScanSpec:
     """Everything one scan needs to know."""
 
     target: str
-    scope: str  # path of the scope file
+    scope: str  # path of the scope file (or, with scope_text, what names the scope)
     db: str = "zues.db"
+    scope_text: str | None = None  # the scope itself, when it is not a file (dashboard)
     profile: str = DEFAULT_PROFILE
     config: str | None = None  # TOML file with more profiles
     overrides: dict[str, Any] = field(default_factory=dict)  # single profile settings
@@ -96,7 +97,10 @@ def execute(spec: ScanSpec) -> Outcome:
     except ProfileError as exc:
         return Outcome(2, messages=[f"error: {exc}"])
     try:
-        scope = Scope.from_file(spec.scope)
+        if spec.scope_text is not None:
+            scope = Scope.from_text(spec.scope_text, spec.scope)
+        else:
+            scope = Scope.from_file(spec.scope)
     except FileNotFoundError:
         return Outcome(2, messages=[f"error: scope file not found: {spec.scope}"])
     except ScopeError as exc:

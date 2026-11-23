@@ -32,6 +32,7 @@ class AuditKind:
     REFUSED = "refused"  # the scope guard refused the request: nothing was probed
     DELETED = "deleted"  # a stored run was deleted
     FINDING = "finding"  # a person changed a finding's status (claimed fixed, accepted, ...)
+    CONFIG = "config"  # a person changed a scope, a target or a token in the dashboard
 
 
 @dataclass(frozen=True, slots=True)

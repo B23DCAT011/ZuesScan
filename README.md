@@ -538,6 +538,32 @@ không thư viện ngoài, không bước build) có:
 
 ![Overview: P1-P4, target, hàng đợi quét](docs/img/dashboard-overview.png)
 
+### Cấu hình ngay trên dashboard (vai trò `admin`)
+
+Ba vai trò, mỗi vai trò làm được mọi việc của vai trò trước: `viewer` (xem), `operator` (quét,
+ra quyết định), `admin` (thêm vai trò thứ ba: **sửa scope, target, tool và token**). Admin đầu
+tiên tạo bằng dòng lệnh trên máy chủ — cũng là cách lấy lại quyền nếu mất hết token admin:
+
+```bash
+zues user --config service.toml add tôi --role admin     # in token MỘT lần, lưu SHA-256 vào database
+zues user --config service.toml list                     # token của service.toml và của dashboard
+```
+
+Những gì admin sửa trên dashboard nằm trong **database**, cạnh `service.toml` (file không bị
+ghi): scope (nội dung file scope — allow/deny, `@expires`, `@window`, `@activity`), target
+(địa chỉ / dải / tên miền, scope, profile, lịch quét, scanner / check / discoverer), token.
+Dịch vụ thấy thay đổi ngay, không cần khởi động lại. Trước khi lưu, mọi thứ được kiểm như lúc
+quét: scope phải đọc được (lỗi kèm số dòng); target phải nằm trong scope; tool phải có thật,
+đúng loại, và không vượt `@activity` của scope (nuclei cần `@activity active`); tool chưa cài
+trên máy chủ thì cảnh báo. Không xoá được scope đang được dùng, hay token admin cuối cùng.
+Target trên dashboard **không** trỏ được tới file trên máy chủ (credentials SSH, file profile):
+những thứ đó vẫn chỉ khai trong `service.toml`. Target / token trong `service.toml` hiện ra
+nhưng chỉ đọc; trùng tên thì file thắng (mục dashboard bị bỏ và báo lại).
+
+Mỗi thay đổi là một sự kiện `config` trong **audit trail có chuỗi băm**: ai, lúc nào, gì
+(scope lưu theo SHA-256 như scope của mỗi run). Đây là cái giá của sự tiện: ai có token admin
+là **mở rộng được giấy phép quét** — giữ token admin ít người, và đối chiếu audit (G30).
+
 API dùng được bằng script (`Authorization: Bearer <token>`):
 
 ```bash
@@ -553,6 +579,10 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/v1/runs/3/sarif
 | `GET /api/v1/runs/{id}/report.html`, `/sarif` | viewer | báo cáo HTML (bản đồ) / SARIF 2.1.0 |
 | `POST /api/v1/scans` `{"target": "<tên>"}` | operator | xếp hàng quét một target **đã khai** |
 | `POST /api/v1/findings/{id}/decision` `{"action": "claim_fixed" \| "accept" \| "reopen", "note", "until"}` | operator | quyết định |
+| `GET /api/v1/admin/config` | admin | scope, target, token, plugin, profile — mọi thứ trang Settings cần |
+| `PUT` / `DELETE /api/v1/admin/scopes/{tên}` `{"text": "<nội dung file scope>"}` | admin | sửa / xoá scope |
+| `PUT` / `DELETE /api/v1/admin/targets/{tên}` `{"target", "scope", "profile", "every", "scanners", "checks", "discoverers", ...}` | admin | sửa / xoá target |
+| `POST /api/v1/admin/tokens` `{"name", "role"}`, `DELETE /api/v1/admin/tokens/{tên}` | admin | tạo token (trả về **một lần**) / thu hồi |
 | `POST` / `DELETE /api/v1/session` | — | đăng nhập / đăng xuất của trình duyệt |
 | `GET /healthz` | — | kiểm tra sống (config, DB, Redis) cho Docker |
 

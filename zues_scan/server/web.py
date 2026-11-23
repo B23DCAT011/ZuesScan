@@ -35,7 +35,7 @@ import re
 import sqlite3
 import threading
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
@@ -52,11 +52,14 @@ from rq.job import Job
 from zues_scan import __version__, priority
 from zues_scan.inventory import ACTIVE, Status
 from zues_scan.inventory_store import FindingRow, InventoryError
+from zues_scan.plugins import registry as plugin_registry
+from zues_scan.profiles import BUILTIN as BUILTIN_PROFILES
 from zues_scan.report import render_html, stored_model
 from zues_scan.report.html import page_csp
 from zues_scan.report.sarif import to_sarif
+from zues_scan.server import managed
 from zues_scan.server import queue as rkqueue
-from zues_scan.server.config import ConfigError, ServiceConfig, Token, load_config
+from zues_scan.server.config import DASHBOARD, ConfigError, ServiceConfig, Token, load_config
 from zues_scan.storage import Storage, StorageError
 
 log = logging.getLogger(__name__)
@@ -93,7 +96,9 @@ _JOB_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 
 class LiveConfig:
-    """`service.toml`, re-read at the first request after it changed on disk."""
+    """`service.toml` and the dashboard's configuration, re-read at the first request after
+    either changed (the file on disk; the database's `managed_meta.version`, which another
+    process — `zues user add` — may have changed)."""
 
     def __init__(self, path: str, redis: Redis | None = None) -> None:
         self.path = path
@@ -110,12 +115,26 @@ class LiveConfig:
         except OSError:
             return None
 
+    def _managed_version(self) -> int | None:
+        if self._config is None:
+            return None
+        try:
+            uri = Path(self._config.db).resolve().as_uri() + "?mode=ro"
+            with closing(sqlite3.connect(uri, uri=True)) as conn:
+                row = conn.execute(
+                    "SELECT value FROM managed_meta WHERE key = 'version'"
+                ).fetchone()
+        except sqlite3.Error:
+            return None  # no database yet, or one from before schema 14
+        return int(row[0]) if row else None
+
     def get(self) -> ServiceConfig:
         mtime = self._stat()
-        if mtime != self._mtime:
+        version = self._managed_version()
+        known = self._config.managed_version if self._config else None
+        if mtime != self._mtime or (version is not None and version != known):
             with self._lock:
-                if mtime != self._mtime:
-                    self._reload(mtime)
+                self._reload(mtime)
         if self._config is None:
             raise HTTPException(503, "the service configuration is invalid; see the server log")
         return self._config
@@ -197,14 +216,21 @@ def caller(request: Request, config: Annotated[ServiceConfig, Depends(current_co
 
 
 def operator(who: Annotated[Caller, Depends(caller)]) -> Caller:
-    if who.role != "operator":
+    if not managed.can(who.role, "operator"):
         raise HTTPException(403, "this needs an operator token")
+    return who
+
+
+def admin(who: Annotated[Caller, Depends(caller)]) -> Caller:
+    if not managed.can(who.role, "admin"):
+        raise HTTPException(403, "this needs an admin token")
     return who
 
 
 Config = Annotated[ServiceConfig, Depends(current_config)]
 Viewer = Annotated[Caller, Depends(caller)]
 Operator = Annotated[Caller, Depends(operator)]
+Admin = Annotated[Caller, Depends(admin)]
 
 
 @contextmanager
@@ -230,6 +256,34 @@ class ScanRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     target: str = Field(min_length=1, max_length=64)
+
+
+class ScopeBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(max_length=managed.MAX_SCOPE_BYTES)
+
+
+class TargetBody(BaseModel):
+    """A dashboard target. No server paths (credentials, profile files): service.toml only."""
+
+    model_config = ConfigDict(extra="forbid")
+    target: str = Field(min_length=1, max_length=253)
+    scope: str = Field(min_length=1, max_length=64)
+    profile: str = Field(default="standard", max_length=32)
+    every: str | None = Field(default=None, max_length=16)
+    engagement: str | None = Field(default=None, max_length=200)
+    scanners: list[str] = Field(default_factory=list, max_length=8)
+    checks: list[str] = Field(default_factory=list, max_length=16)
+    discoverers: list[str] = Field(default_factory=list, max_length=8)
+    discover: bool = False
+    discover_limit: int | None = Field(default=None, ge=1, le=100_000)
+    ipv4_only: bool = False
+
+
+class TokenBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=64)
+    role: Literal["viewer", "operator", "admin"]
 
 
 class Decision(BaseModel):
@@ -290,6 +344,7 @@ def targets(who: Viewer, config: Config) -> list[dict[str, Any]]:
             "checks": sorted({*t.checks, *(["nuclei"] if t.nuclei else [])}),
             "authenticated": t.credentials is not None,  # never the key file's path
             "last_started_at": starts.get((t.target, t.profile)),
+            "source": t.source,
         }
         for t in config.targets.values()
     ]
@@ -418,6 +473,161 @@ def decide(finding_id: int, body: Decision, who: Operator, config: Config) -> di
             raise HTTPException(409, str(exc)) from None
     log.info("%s: %s on finding #%d, now %s", who.name, body.action, finding_id, new)
     return {"finding_id": finding_id, "status": str(new)}
+
+
+# --- administration: what to scan, how, and who may (admin tokens only) -----------------------
+
+
+@api.get("/admin/config")
+def admin_config(who: Admin, config: Config) -> dict[str, Any]:
+    """Everything the settings page shows: scopes, targets, tokens, plugins, profiles."""
+    registry = plugin_registry.load()
+    scopes = []
+    for name, text in sorted(config.scopes.items()):
+        try:
+            facts = managed.describe_scope(managed.read_scope(name, text))
+        except managed.ManagedError as exc:
+            facts = {"error": str(exc)}
+        users = sorted(
+            t.name for t in config.targets.values() if t.scope_text is not None and t.scope == name
+        )
+        scopes.append({"name": name, "source": DASHBOARD, "text": text, "used_by": users, **facts})
+    files = sorted({t.scope for t in config.targets.values() if t.scope_text is None})
+    for path in files:
+        users = sorted(
+            t.name for t in config.targets.values() if t.scope_text is None and t.scope == path
+        )
+        scopes.append({"name": path, "source": "file", "used_by": users})  # not its content
+    return {
+        "scopes": scopes,
+        "targets": [
+            _target_settings(t) for t in sorted(config.targets.values(), key=lambda t: t.name)
+        ],
+        "tokens": [
+            {"name": t.name, "role": t.role, "source": t.source, "you": t.name == who.name}
+            for t in sorted(config.tokens, key=lambda t: t.name)
+        ],
+        "plugins": [
+            {
+                "name": s.name,
+                "kind": s.kind,
+                "activity": str(s.activity),
+                "summary": s.summary,
+                "ready": s.binary is None or managed._found(s.binary),
+                "needs": list(s.needs),
+            }
+            for s in registry.plugins.values()
+        ],
+        "profiles": [
+            {"name": p.name, "description": p.description} for p in BUILTIN_PROFILES.values()
+        ],
+        "problems": list(config.problems),
+    }
+
+
+def _target_settings(t: Any) -> dict[str, Any]:
+    every = int(t.every.total_seconds()) if t.every else None
+    return {
+        "name": t.name,
+        "source": t.source,
+        "target": t.target,
+        "scope": t.scope if t.scope_text is not None else None,  # a file target: not its path
+        "profile": t.profile,
+        "every": _every_text(every),
+        "engagement": t.engagement,
+        "scanners": list(t.scanners) or ["nmap"],
+        "checks": sorted({*t.checks, *(["nuclei"] if t.nuclei else [])}),
+        "discoverers": list(t.discoverers),
+        "discover": t.discover,
+        "discover_limit": t.discover_limit,
+        "ipv4_only": t.ipv4_only,
+    }
+
+
+def _every_text(seconds: int | None) -> str | None:
+    if not seconds:
+        return None
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
+        if seconds % size == 0:
+            return f"{seconds // size}{unit}"
+    return f"{seconds // 60}m"
+
+
+@contextmanager
+def _writable(config: ServiceConfig) -> Iterator[Storage]:
+    """The database, created if needed (an admin may configure before the first scan)."""
+    with Storage(config.db) as store:
+        yield store
+
+
+def _refused(exc: Exception) -> HTTPException:
+    if isinstance(exc, LookupError):
+        return HTTPException(404, str(exc).strip("'\""))
+    return HTTPException(422, str(exc))
+
+
+@api.put("/admin/scopes/{name}")
+def put_scope(name: str, body: ScopeBody, who: Admin, config: Config) -> dict[str, Any]:
+    try:
+        with _writable(config) as store:
+            saved = managed.save_scope(store, config, name, body.text, who.name)
+    except managed.ManagedError as exc:
+        raise _refused(exc) from None
+    log.info("%s saved the scope %s", who.name, name)
+    return {"name": saved.name, "warnings": saved.warnings}
+
+
+@api.delete("/admin/scopes/{name}", status_code=204)
+def delete_scope(name: str, who: Admin, config: Config) -> None:
+    try:
+        with _writable(config) as store:
+            managed.delete_scope(store, config, name, who.name)
+    except (managed.ManagedError, LookupError) as exc:
+        raise _refused(exc) from None
+    log.info("%s deleted the scope %s", who.name, name)
+
+
+@api.put("/admin/targets/{name}")
+def put_target(name: str, body: TargetBody, who: Admin, config: Config) -> dict[str, Any]:
+    try:
+        with _writable(config) as store:
+            saved = managed.save_target(store, config, name, body.model_dump(), who.name)
+    except managed.ManagedError as exc:
+        raise _refused(exc) from None
+    log.info("%s saved the target %s", who.name, name)
+    return {"name": saved.name, "warnings": saved.warnings}
+
+
+@api.delete("/admin/targets/{name}", status_code=204)
+def delete_target(name: str, who: Admin, config: Config) -> None:
+    try:
+        with _writable(config) as store:
+            managed.delete_target(store, config, name, who.name)
+    except (managed.ManagedError, LookupError) as exc:
+        raise _refused(exc) from None
+    log.info("%s deleted the target %s", who.name, name)
+
+
+@api.post("/admin/tokens", status_code=201)
+def post_token(body: TokenBody, who: Admin, config: Config) -> dict[str, Any]:
+    try:
+        with _writable(config) as store:
+            token = managed.create_token(store, config, body.name, body.role, who.name)
+    except managed.ManagedError as exc:
+        raise _refused(exc) from None
+    log.info("%s created the %s token %s", who.name, body.role, body.name)
+    # Shown this once: only its SHA-256 is kept.
+    return {"name": body.name.strip(), "role": body.role, "token": token}
+
+
+@api.delete("/admin/tokens/{name}", status_code=204)
+def delete_token(name: str, who: Admin, config: Config) -> None:
+    try:
+        with _writable(config) as store:
+            managed.delete_token(store, config, name, who.name)
+    except (managed.ManagedError, LookupError) as exc:
+        raise _refused(exc) from None
+    log.info("%s deleted the token %s", who.name, name)
 
 
 @api.get("/hosts")
