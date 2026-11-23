@@ -96,6 +96,18 @@ jobs:
               reconkit scan $ip --scope /tmp/scope.txt --db /tmp/r.db --profile full > /tmp/out
               cat /tmp/out
               grep -q '6379/tcp' /tmp/out && grep -q 'route:' /tmp/out"
+      - name: reconkit doctor finds every tool ready in the image
+        run: |
+          docker run --rm --read-only --tmpfs /tmp reconkit:ci doctor --json > doctor.json
+          python3 - <<'PY'
+          import json
+          report = json.load(open("doctor.json"))
+          status = {c["name"]: c["status"] for c in report["checks"]}
+          print(status)
+          assert report["ready"], report
+          for tool in ("nmap", "nmap rights", "nuclei", "nuclei templates", "subfinder", "ssh"):
+              assert status[tool] == "ok", (tool, status[tool])
+          PY
       - name: nuclei, templates and subfinder are the locked versions
         run: |
           nuclei=$(awk '$1 == "nuclei" { print $2; exit }' docker/tools.lock)

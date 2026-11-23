@@ -34,12 +34,14 @@ LABEL org.opencontainers.image.title="ReconKit" \
       org.opencontainers.image.source="https://github.com/B23DCAT011/reconkit" \
       org.opencontainers.image.licenses="MIT"
 
+# The SSH client is for authenticated scans (--credentials: installed packages vs the
+# Debian tracker); `reconkit doctor` found it missing from the image.
 # nmap, allowed to open raw sockets without being root (SYN scan, traceroute): the one
 # capability NET_RAW, which Docker grants by default. A container started with
 # --cap-drop ALL (web, scheduler in compose.yaml) cannot run nmap at all; the worker
 # adds NET_RAW back.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends nmap libcap2-bin \
+ && apt-get install -y --no-install-recommends nmap openssh-client libcap2-bin \
  && setcap cap_net_raw+eip /usr/bin/nmap \
  && apt-get purge -y libcap2-bin \
  && apt-get autoremove -y \
