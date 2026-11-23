@@ -226,9 +226,11 @@ def test_cli_discover(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr("reconkit.scope.resolve_addresses", DNS)
-    monkeypatch.setattr(cli, "SubfinderPlugin", lambda: FakeDiscovery(["api.example.com"]))
+    monkeypatch.setattr(
+        "reconkit.scanning.SubfinderPlugin", lambda: FakeDiscovery(["api.example.com"])
+    )
     asset = Asset(host="10.0.0.5", ip="10.0.0.5", services=[Service(port=443, name="https")])
-    monkeypatch.setattr(cli, "NmapPlugin", lambda **_: FakePlugin([asset]))
+    monkeypatch.setattr("reconkit.scanning.NmapPlugin", lambda **_: FakePlugin([asset]))
     scope = tmp_path / "scope.txt"
     scope.write_text("example.com\n*.example.com\n10.0.0.0/24\n", encoding="utf-8")
     argv = ["scan", "example.com", "--discover", "--scope", str(scope), "--db", str(tmp_path / "d")]

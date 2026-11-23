@@ -1101,6 +1101,18 @@ class Storage:
             for r in rows
         ]
 
+    def latest_starts(self) -> dict[tuple[str, str | None], str]:
+        """When each (target, profile) was last scanned: the newest run's start time.
+
+        Failed runs count: the scan was attempted, and a target that fails every time
+        must not be retried at every scheduler round.
+        """
+        rows = self._conn.execute(
+            "SELECT target, profile, MAX(started_at) AS started_at FROM scan_run "
+            "GROUP BY target, profile"
+        ).fetchall()
+        return {(r["target"], r["profile"]): r["started_at"] for r in rows}
+
     def latest_run_id(self) -> int | None:
         """The id of the most recent run, or None if there is none."""
         row = self._conn.execute("SELECT MAX(id) AS id FROM scan_run").fetchone()

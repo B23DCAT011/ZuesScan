@@ -306,7 +306,9 @@ def lab(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     state: dict[str, Any] = {"services": [SSH_OLD]}
     monkeypatch.setattr("reconkit.scope.resolve_addresses", lab_resolver)
-    monkeypatch.setattr(cli, "NmapPlugin", lambda **_: FakePlugin([lab_asset(*state["services"])]))
+    monkeypatch.setattr(
+        "reconkit.scanning.NmapPlugin", lambda **_: FakePlugin([lab_asset(*state["services"])])
+    )
     scope = tmp_path / "scope.txt"
     scope.write_text("scanme.lab\n10.0.0.0/24\n", encoding="utf-8")
     db = str(tmp_path / "out.db")

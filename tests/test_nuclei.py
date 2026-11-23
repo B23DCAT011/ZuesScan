@@ -218,8 +218,7 @@ def test_cli_nuclei_flag(
 ) -> None:
     monkeypatch.setattr("reconkit.scope.resolve_addresses", lab_resolver)
     monkeypatch.setattr(
-        cli,
-        "NmapPlugin",
+        "reconkit.scanning.NmapPlugin",
         lambda **_: FakePlugin([Asset(host="10.0.0.5", ip="10.0.0.5", services=[APACHE])]),
     )
     made: list[object] = []
@@ -228,7 +227,7 @@ def test_cli_nuclei_flag(
         made.append(profile)
         return FakeCheck()
 
-    monkeypatch.setattr(cli, "NucleiPlugin", make)
+    monkeypatch.setattr("reconkit.scanning.NucleiPlugin", make)
     scope = tmp_path / "scope.txt"
     scope.write_text("10.0.0.0/24\n", encoding="utf-8")
     argv = ["scan", "10.0.0.5", "--scope", str(scope), "--db", str(tmp_path / "d"), "--no-cve"]
