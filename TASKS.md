@@ -175,4 +175,8 @@ Mục tiêu: mang ZuesScan sang máy khác mà cài nhanh, thêm / bớt công c
       nghệ) lưu vào `Service.web` (schema 13), hiện ở CLI / bản đồ / API / MCP; công nghệ có phiên
       bản → bước CVE, cùng CVE với nmap thành một finding. Lab chạy httpx + nuclei; CI kiểm.
       Thử thật trên lab (Apache 2.4.49, nginx 1.20.0 "Welcome to nginx!"). Còn lại: G29.
+- [x] `feat/managed-config` — vai trò `admin`; scope / target / token lưu trong database (schema 14)
+      cạnh `service.toml` (chỉ đọc, thắng khi trùng tên); API `/api/v1/admin/*`; kiểm như lúc quét
+      trước khi lưu; audit `config`; có hiệu lực ngay (cả từ tiến trình khác); `zues user add`.
+      Còn lại: G30.
 

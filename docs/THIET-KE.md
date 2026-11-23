@@ -53,6 +53,7 @@ cột mốc M1 (giao diện đầu tiên) chỉ bắt đầu sau F9.
 | D6 | Hàng đợi (GĐ 3) | **Redis + RQ** | Đơn giản, đủ cho vài worker |
 | D7 | Traceroute | **Có**, plugin nmap bật `--traceroute` theo profile | Cần cho các hop trên bản đồ; đổi lại quét lâu hơn một chút |
 | D8 | Lộ trình | **Chèn M1 sau F9** | Xem `TASKS.md` |
+| D11 | Cấu hình qua dashboard (2026-11-23) | **Scope / target / token sửa trên dashboard nằm trong database (schema 14), `service.toml` chỉ đọc và thắng khi trùng tên; vai trò `admin`; kiểm như lúc quét trước khi lưu; mọi thay đổi vào chuỗi audit** | Cài đặt không cần sửa file tay; người chạy máy chủ vẫn giữ quyền cuối (file); một mục dashboard hỏng không làm sập dịch vụ (bị bỏ + báo); admin mở rộng được scope theo yêu cầu chủ dự án — bù lại bằng audit có chuỗi băm (G30) |
 | D10 | AI agent (2026-11-23) | **MCP server stdio là client của web API; mỗi hành động cần người xác nhận (elicitation qua `Resolve`); không có tool chấp nhận rủi ro** | Một mô hình quyền duy nhất (token, vai trò, audit) cho người và AI; model không tự điền được câu trả lời xác nhận; quyết định có trách nhiệm pháp lý để lại cho con người |
 | D9 | Mở rộng công cụ (2026-11-23) | **Registry + entry points `zues_scan.plugins`; mỗi plugin khai `activity`, scope đặt trần `@activity` (mặc định `scan`)** | Thêm công cụ = cài một gói, không sửa lõi; được khai thác hay không thuộc về giấy phép, không thuộc về cờ dòng lệnh. Xem `docs/PLUGINS.md` |
 

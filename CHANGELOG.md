@@ -7,6 +7,15 @@ section of a version as its release notes, so every tag needs one.
 ## [Unreleased]
 
 ### Added
+- Settings in the dashboard's API, for a new `admin` role (an admin is an operator too):
+  scopes (the text of a scope file), targets (address, scope, profile, schedule, scanners,
+  checks, discoverers) and tokens, kept in the database (schema 14) next to service.toml,
+  which stays read-only and wins a name both define. Checked before saving as a scan
+  would: the scope parses, the target is inside it, plugins exist and stay within its
+  `@activity`; no server file paths from the dashboard; a used scope or the last admin
+  cannot be deleted. Every change is a `config` event in the hash-chained audit trail;
+  the services see changes without a restart. `zues user add NAME --role admin` makes the
+  first admin (and recovers access). `Scope.from_text`, `ScanSpec.scope_text`.
 - httpx check plugin (`--check httpx`): what each web service is — URL, status, title,
   Server header, technologies (Wappalyzer) — fetched with a plain GET of `/`, by address,
   redirects not followed, rate from `check_rate`. Kept on the service (`Service.web`,
