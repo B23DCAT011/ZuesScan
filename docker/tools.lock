@@ -1,0 +1,9 @@
+# External tools of the image, pinned by version and SHA-256 (see docker/tools.py).
+# Hashes come from each release's own checksums file. Regenerate with:
+#     python docker/tools.py update
+# tool version arch sha256 url
+nuclei 3.11.1 amd64 ea63d4ae232808cd7c6bc00d0142428e231fab59dae01042246097d195835ab6 https://github.com/projectdiscovery/nuclei/releases/download/v3.11.1/nuclei_3.11.1_linux_amd64.zip
+nuclei 3.11.1 arm64 8044e3d9768ba0a744b2872c1a87e813006f013da97ca9f50f7661a4203bec07 https://github.com/projectdiscovery/nuclei/releases/download/v3.11.1/nuclei_3.11.1_linux_arm64.zip
+subfinder 2.17.0 amd64 a39c3e5c7a26ef3c430915c4d6cbf7716a00f26769a75e9405aba796142eba37 https://github.com/projectdiscovery/subfinder/releases/download/v2.17.0/subfinder_2.17.0_linux_amd64.zip
+subfinder 2.17.0 arm64 24913d49dddc1d3a5e99a4a7580da5be980959b9415b96f52c4f7f4124392190 https://github.com/projectdiscovery/subfinder/releases/download/v2.17.0/subfinder_2.17.0_linux_arm64.zip
+nuclei-templates 10.5.2 any 016b7abbf931d4d1a851a5a568e44510dc61691dc8a5202e3b24e701515ec574 https://github.com/projectdiscovery/nuclei-templates/archive/refs/tags/v10.5.2.tar.gz

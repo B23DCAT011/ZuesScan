@@ -29,7 +29,7 @@ jobs:
       - run: pip install -e ".[dev,server,server-test]"
       - run: ruff check .
       - run: ruff format --check .
-      - run: mypy reconkit tests
+      - run: mypy reconkit tests docker/tools.py
 
   test:
     name: tests (${{ matrix.os }}, py${{ matrix.python }})
@@ -96,6 +96,18 @@ jobs:
               reconkit scan $ip --scope /tmp/scope.txt --db /tmp/r.db --profile full > /tmp/out
               cat /tmp/out
               grep -q '6379/tcp' /tmp/out && grep -q 'route:' /tmp/out"
+      - name: nuclei, templates and subfinder are the locked versions
+        run: |
+          nuclei=$(awk '$1 == "nuclei" { print $2; exit }' docker/tools.lock)
+          templates=$(awk '$1 == "nuclei-templates" { print $2; exit }' docker/tools.lock)
+          subfinder=$(awk '$1 == "subfinder" { print $2; exit }' docker/tools.lock)
+          versions=$(docker run --rm --read-only --tmpfs /tmp --entrypoint python reconkit:ci -c '
+          from reconkit.plugins.nuclei import NucleiPlugin, default_templates
+          from reconkit.plugins.subfinder import SubfinderPlugin
+          print(NucleiPlugin(templates=default_templates()).version())
+          print(SubfinderPlugin().version())')
+          echo "$versions"
+          test "$versions" = "$(printf '%s (templates %s)\n%s' "$nuclei" "$templates" "$subfinder")"
 
   # The whole system on the vulnerable lab: compose stack + targets behind a router,
   # scheduled scans, then the lifecycle demo must end with a verified fix and a fake fix.
