@@ -39,8 +39,10 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import re
+import secrets
 import socket
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
@@ -327,25 +329,51 @@ class Scope:
         resolver: Resolver | None = None,
         *,
         ipv4_only: bool = False,
+        workers: int = 16,
+        wildcard_probe: str | None = None,
     ) -> tuple[ScanTarget, list[tuple[str, str]]]:
         """Plan a scan of `domain` and the names found under it.
 
         Each name is planned like any requested name (resolved once, every address in
         the allowlist); names that fail are returned with the reason and not scanned.
+        Names are resolved in parallel (`workers`): discovery can return thousands.
+
+        Wildcard DNS: if a random name under `domain` resolves, the zone answers every
+        name, and a discovered name that resolves only to those same addresses tells
+        nothing (sources are full of such junk). It is skipped, as `subfinder -nW` would.
         Raises :class:`ScopeError` if none of them may be scanned.
         """
         if resolver is None:
             resolver = resolve_ipv4 if ipv4_only else resolve_addresses
-        candidates = list(dict.fromkeys([domain.lower(), *(n.lower() for n in names)]))
-        pairs: list[tuple[str, str]] = []
-        skipped: list[tuple[str, str]] = []
-        for name in candidates:
+        domain = domain.lower()
+        candidates = list(dict.fromkeys([domain, *(n.lower() for n in names)]))
+        probe = wildcard_probe or f"reconkit-wildcard-{secrets.token_hex(6)}"
+        try:
+            wildcard = frozenset(resolver(f"{probe}.{domain}"))
+        except ResolutionError:
+            wildcard = frozenset()
+
+        def plan_one(name: str) -> ScanTarget | str:
             try:
                 planned = self._plan_hostname(name, resolver)
             except (ScopeError, ResolutionError) as exc:
-                skipped.append((name, str(exc)))
-                continue
-            pairs += [(name, address) for address in planned.addresses]
+                return str(exc)
+            if name != domain and wildcard and set(planned.addresses) <= wildcard:
+                return (
+                    f"resolves like any name under {domain} (wildcard DNS record): "
+                    "probably not a real host"
+                )
+            return planned
+
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+            outcomes = list(pool.map(plan_one, candidates))  # order kept
+        pairs: list[tuple[str, str]] = []
+        skipped: list[tuple[str, str]] = []
+        for name, outcome in zip(candidates, outcomes, strict=True):
+            if isinstance(outcome, str):
+                skipped.append((name, outcome))
+            else:
+                pairs += [(name, address) for address in outcome.addresses]
         if not pairs:
             raise ScopeError(
                 f"none of the {len(candidates)} name(s) found for {domain!r} may be scanned"

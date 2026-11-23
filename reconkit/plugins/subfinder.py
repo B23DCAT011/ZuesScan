@@ -7,20 +7,29 @@ goes through the scope guard (`Scope.plan_discovered`) before anything is scanne
 
 `discover()` runs `subfinder -d <domain> -oJ -silent` and reads its JSON lines
 (`{"host": "api.example.com", "source": "crtsh", ...}`); `parse_jsonl()` does the
-reading as a pure function, tested without the binary. API keys for subfinder's
-sources live in subfinder's own provider config, never in ReconKit.
+reading as a pure function, tested without the binary.
+
+API keys for subfinder's sources live in subfinder's own provider config file, never in
+ReconKit: `provider_config` names it (in the service: `subfinder_config`), else the
+user's own (`~/.config/subfinder/provider-config.yaml`) is used if there is one. Without
+keys, only the free sources answer. Each run gets a fresh home directory, so subfinder
+writes nothing into the user's (or the container's data volume).
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
+import tempfile
+from pathlib import Path
 
 from reconkit.plugins.base import DiscoveryResult, ScanError
 from reconkit.schema import RawOutput
 
+CONFIG_ENV = "RECONKIT_SUBFINDER_CONFIG"
 _NAME = re.compile(r"(?=.{1,253}$)([a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?\.)+[a-z][a-z0-9-]*")
 
 
@@ -29,9 +38,19 @@ class SubfinderPlugin:
 
     name = "subfinder"
 
-    def __init__(self, timeout: int = 600, max_minutes: int = 8) -> None:
+    def __init__(
+        self, timeout: int = 600, max_minutes: int = 8, provider_config: str | None = None
+    ) -> None:
         self.timeout = timeout  # seconds before ReconKit stops subfinder
         self.max_minutes = max_minutes  # subfinder's own limit, kept below the timeout
+        self.provider_config = provider_config
+
+    def providers(self) -> str | None:
+        """The provider config (API keys) subfinder will read, if any."""
+        if self.provider_config:
+            return self.provider_config
+        own = Path.home() / ".config" / "subfinder" / "provider-config.yaml"
+        return str(own) if own.is_file() else None
 
     def is_available(self) -> bool:
         return shutil.which("subfinder") is not None
@@ -53,7 +72,7 @@ class SubfinderPlugin:
         return match.group(1) if match else None
 
     def command(self, domain: str) -> list[str]:
-        return [
+        command = [
             "subfinder",
             "-d",
             domain,
@@ -63,6 +82,10 @@ class SubfinderPlugin:
             str(self.max_minutes),
             "-disable-update-check",
         ]
+        providers = self.providers()
+        if providers:
+            command += ["-pc", providers]
+        return command
 
     def discover(self, domain: str) -> DiscoveryResult:
         """The names subfinder finds under `domain` (the domain itself not included)."""
@@ -70,14 +93,16 @@ class SubfinderPlugin:
             raise ScanError("subfinder is not installed or not on PATH", plugin=self.name)
         command = self.command(domain)
         try:
-            proc = subprocess.run(
-                command,
-                capture_output=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=self.timeout,
-                check=True,
-            )
+            with tempfile.TemporaryDirectory(prefix="reconkit-subfinder-") as home:
+                proc = subprocess.run(
+                    command,
+                    capture_output=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=self.timeout,
+                    check=True,
+                    env={**os.environ, "HOME": home, "USERPROFILE": home},
+                )
         except subprocess.TimeoutExpired as exc:
             raise ScanError(
                 f"subfinder timed out after {self.timeout}s for {domain}", plugin=self.name

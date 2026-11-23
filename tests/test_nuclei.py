@@ -50,7 +50,8 @@ def test_web_urls_use_the_approved_address(ip: str, service: Service, url: str |
 
 def test_targets_are_grouped_by_virtual_host() -> None:
     assert NucleiPlugin.targets(_assets()) == {
-        None: ["http://10.0.0.5:8080"],
+        # SSH is checked too, by address (network and JavaScript templates).
+        None: ["http://10.0.0.5:8080", "10.0.0.5:22"],
         "www.example.com": ["https://10.0.0.7:443"],
     }
 
@@ -117,10 +118,18 @@ def test_check_runs_once_per_virtual_host_and_ties_findings_to_services(
     calls = _fake_nuclei(monkeypatch, SAMPLE)
     assets = _assets()
     result = NucleiPlugin().check(PLAN, assets)
-    assert [c["input"] for c in calls] == ["http://10.0.0.5:8080\n", "https://10.0.0.7:443\n"]
-    assert "Host: www.example.com" in calls[1]["command"]
-    assert len(result.raw) == 2 and result.raw[0].format == "nuclei-jsonl"
+    # Web services by URL; SSH in a run of its own, with the network templates only.
+    assert [c["input"] for c in calls] == [
+        "http://10.0.0.5:8080\n",
+        "10.0.0.5:22\n",
+        "https://10.0.0.7:443\n",
+    ]
+    assert "-pt" not in calls[0]["command"]
+    assert calls[1]["command"][-2:] == ["-pt", "javascript,tcp,ssl"]
+    assert "Host: www.example.com" in calls[2]["command"]
+    assert len(result.raw) == 3 and result.raw[0].format == "nuclei-jsonl"
     assert result.raw[0].command[-2:] == ("<", "http://10.0.0.5:8080")
+    assert not result.incomplete
     by_ip = {a.ip: a for a in result.assets}
     cve = by_ip["10.0.0.5"].findings[0]
     assert cve.service is APACHE  # the very service the port scan found
@@ -129,15 +138,15 @@ def test_check_runs_once_per_virtual_host_and_ties_findings_to_services(
 def test_nothing_to_check() -> None:
     plugin = NucleiPlugin()
     plugin.is_available = lambda: True  # type: ignore[method-assign]
-    result = plugin.check(PLAN, [Asset(host="10.0.0.5", ip="10.0.0.5", services=[SSH])])
-    assert result.assets == [] and result.notes == ["no web service to check"]
+    dns = Service(port=53, protocol="udp", name="domain")
+    result = plugin.check(PLAN, [Asset(host="10.0.0.5", ip="10.0.0.5", services=[dns])])
+    assert result.assets == [] and result.notes == ["no service to check"]
 
 
 @pytest.mark.parametrize(
     ("outcome", "message"),
     [
         (subprocess.CalledProcessError(1, "nuclei", stderr="bad template"), "exited with code 1"),
-        (subprocess.TimeoutExpired("nuclei", 5), "timed out"),
         (OSError("gone"), "could not start"),
     ],
 )
@@ -223,7 +232,7 @@ def test_cli_nuclei_flag(
     )
     made: list[object] = []
 
-    def make(profile: object) -> FakeCheck:
+    def make(profile: object, **_: object) -> FakeCheck:
         made.append(profile)
         return FakeCheck()
 

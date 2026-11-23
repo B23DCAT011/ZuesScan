@@ -43,7 +43,7 @@ from reconkit.cve.nvd import API_KEY_ENV, NvdClient, NvdError
 from reconkit.diff import diff_runs
 from reconkit.inventory import ACTIVE, Status
 from reconkit.inventory_store import FindingEvent, InventoryError
-from reconkit.orchestrator import RunStatus, ScanRun
+from reconkit.orchestrator import DISCOVER_LIMIT, RunStatus, ScanRun
 from reconkit.profiles import DEFAULT_PROFILE, ProfileError, ScanProfile, load_profiles
 from reconkit.report import render_html, stored_model
 from reconkit.report.sarif import to_sarif
@@ -191,7 +191,10 @@ def _spec(args: argparse.Namespace) -> ScanSpec:
         cve_cache=args.cve_cache,
         credentials=args.credentials,
         nuclei=args.nuclei,
+        nuclei_templates=args.nuclei_templates,
         discover=args.discover,
+        subfinder_config=args.subfinder_config,
+        discover_limit=args.discover_limit,
         ipv4_only=args.ipv4_only,
         operator=args.operator,
         engagement=args.engagement,
@@ -964,8 +967,26 @@ def build_parser() -> argparse.ArgumentParser:
     tuning.add_argument(
         "--nuclei",
         action="store_true",
-        help="also run nuclei templates on the web services found (active checks: "
+        help="also run nuclei templates on the services found (active checks: "
         "only if the authorisation covers them)",
+    )
+    tuning.add_argument(
+        "--nuclei-templates",
+        metavar="DIR",
+        help="run exactly these nuclei templates, offline (default: "
+        "$RECONKIT_NUCLEI_TEMPLATES, else nuclei's own installation)",
+    )
+    tuning.add_argument(
+        "--subfinder-config",
+        metavar="FILE",
+        help="subfinder provider config with API keys (default: "
+        "$RECONKIT_SUBFINDER_CONFIG, else ~/.config/subfinder/provider-config.yaml)",
+    )
+    tuning.add_argument(
+        "--discover-limit",
+        type=int,
+        metavar="N",
+        help=f"consider at most N discovered names (default {DISCOVER_LIMIT})",
     )
     tuning.add_argument(
         "--ipv4-only",

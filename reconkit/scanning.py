@@ -14,18 +14,22 @@ Exit codes (the CLI's): 0 done, 1 database / unexpected error, 2 bad input,
 from __future__ import annotations
 
 import contextlib
+import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from reconkit.audit import default_operator
 from reconkit.cve import CveDataError, CveSource, LocalCveSource
 from reconkit.cve.cache import CacheError, CveCache, NvdCveSource
 from reconkit.inventory_store import FindingEvent
-from reconkit.orchestrator import NoPluginAvailableError, Orchestrator, ScanRun, now
+from reconkit.orchestrator import DISCOVER_LIMIT, NoPluginAvailableError, Orchestrator, ScanRun, now
 from reconkit.plugins.base import CheckPlugin, ScanError
 from reconkit.plugins.nmap import NmapPlugin
 from reconkit.plugins.nuclei import NucleiPlugin
+from reconkit.plugins.nuclei import default_templates as nuclei_templates_default
 from reconkit.plugins.ssh_packages import CredentialError, SshPackagesPlugin, load_credentials
+from reconkit.plugins.subfinder import CONFIG_ENV as SUBFINDER_CONFIG_ENV
 from reconkit.plugins.subfinder import SubfinderPlugin
 from reconkit.profiles import DEFAULT_PROFILE, ProfileError, ScanProfile, load_profiles, override
 from reconkit.scope import ResolutionError, Scope, ScopeError
@@ -47,7 +51,10 @@ class ScanSpec:
     cve_cache: str | None = None  # a local NVD cache
     credentials: str | None = None  # SSH keys for the authenticated package check
     nuclei: bool = False
+    nuclei_templates: str | None = None  # default: $RECONKIT_NUCLEI_TEMPLATES
     discover: bool = False
+    subfinder_config: str | None = None  # default: $RECONKIT_SUBFINDER_CONFIG
+    discover_limit: int | None = None
     ipv4_only: bool = False
     operator: str | None = None
     engagement: str | None = None
@@ -105,7 +112,15 @@ def execute(spec: ScanSpec) -> Outcome:
         except (CveDataError, CacheError, CredentialError) as exc:
             return Outcome(2, messages=[f"error: {exc}"])
         if spec.nuclei:
-            checks.append(NucleiPlugin(profile=profile))
+            templates = spec.nuclei_templates or nuclei_templates_default()
+            if templates and not Path(templates).is_dir():
+                return Outcome(2, messages=[f"error: nuclei templates not found: {templates}"])
+            checks.append(NucleiPlugin(profile=profile, templates=templates))
+        providers = spec.subfinder_config or os.environ.get(SUBFINDER_CONFIG_ENV) or None
+        if spec.discover and providers and not Path(providers).is_file():
+            return Outcome(2, messages=[f"error: subfinder config not found: {providers}"])
+        if spec.discover_limit is not None and spec.discover_limit < 1:
+            return Outcome(2, messages=["error: --discover-limit must be at least 1"])
         orch = Orchestrator(
             plugins=[NmapPlugin(profile=profile)],
             scope=scope,
@@ -114,8 +129,9 @@ def execute(spec: ScanSpec) -> Outcome:
             ipv4_only=spec.ipv4_only,
             operator=spec.operator or default_operator(),
             engagement=spec.engagement,
-            discovery=[SubfinderPlugin()] if spec.discover else None,
+            discovery=[SubfinderPlugin(provider_config=providers)] if spec.discover else None,
             checks=checks,
+            discover_limit=spec.discover_limit or DISCOVER_LIMIT,
         )
         # Open the database before scanning: if the results cannot be saved, find out
         # now, not after probing the target for five minutes.
