@@ -1,0 +1,7 @@
+# ReconKit lab: deliberately vulnerable containers on two isolated Docker networks
+# (lab/compose.lab.yaml). Nothing outside these two ranges may be scanned.
+@engagement LAB-DEMO, ReconKit lab on isolated internal Docker networks
+10.66.1.0/24
+10.66.2.0/24
+!10.66.1.0/28   # the workers' own addresses (see ip_range in compose.lab.yaml)
+!10.66.2.1      # the bridge's gateway address: the Docker host's side, never a target

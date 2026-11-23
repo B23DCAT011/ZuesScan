@@ -96,3 +96,27 @@ jobs:
               reconkit scan $ip --scope /tmp/scope.txt --db /tmp/r.db --profile full > /tmp/out
               cat /tmp/out
               grep -q '6379/tcp' /tmp/out && grep -q 'route:' /tmp/out"
+
+  # The whole system on the vulnerable lab: compose stack + targets behind a router,
+  # scheduled scans, then the lifecycle demo must end with a verified fix and a fake fix.
+  lab:
+    name: lab end to end
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: sh lab/up.sh > /dev/null   # its token is printed once: keep it out of the log
+      - run: sh lab/demo.sh | tee demo.txt
+      - name: the scans saw what the demo did
+        run: |
+          grep -Eq '^ +[0-9]+ +fake_fix .*CVE-2021-41773' demo.txt
+          grep -Eq '^ +[0-9]+ +fixed .*CVE-2021-23017' demo.txt
+          grep -Eq '^ +[0-9]+ +accepted .*CVE-2018-15473' demo.txt
+      - name: the lab cannot reach the Internet
+        run: |
+          probe='timeout 5 bash -c "</dev/tcp/1.1.1.1/443"'
+          if docker compose -p reconkit-lab exec -T apache bash -c "$probe"; then
+            echo "a lab target reached the Internet"; exit 1
+          fi
+      - if: always()
+        run: sh lab/down.sh

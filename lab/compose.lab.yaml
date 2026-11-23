@@ -1,0 +1,94 @@
+# ReconKit lab: deliberately vulnerable services on two ISOLATED networks, scanned by the
+# worker of compose.yaml. Start it with lab/up.sh (or see the commands in README "Lab").
+#
+#   lab-dmz       10.66.1.0/24   worker, Apache 2.4.49 (.20), OpenSSH 7.5 (.22), router (.254)
+#   lab-internal  10.66.2.0/24   nginx 1.20.0 (.30), router (.254)
+#
+# Both networks are isolated: the host side of their bridge has no address (the host is
+# unreachable from them, and so is their default gateway) and nothing is NATed out, so
+# the vulnerable containers cannot reach the Internet or the host; no port is published.
+# Only the worker and the router join them. Never attach a target to another network.
+#
+# Why not `internal: true`? Docker then drops every packet whose destination is outside
+# the network's own subnet, so no router could forward between the two networks - and
+# the host stays reachable through the bridge's address. Checked on Engine 28.
+services:
+  worker:
+    networks:
+      default: { gw_priority: 1 }  # its default route stays the normal network's
+      lab-dmz: {}
+    volumes:
+      - ./lab:/config:ro          # lab/service.toml and lab/lab-scope.txt
+  web:
+    volumes:
+      - ./lab:/config:ro
+  scheduler:
+    volumes:
+      - ./lab:/config:ro
+    depends_on:
+      # No scan before the worker can reach the internal network.
+      worker-route:
+        condition: service_completed_successfully
+
+  # The worker keeps only NET_RAW: this sidecar shares its network namespace just long
+  # enough to add the route to the internal network through the router, then exits.
+  worker-route:
+    build: lab/router
+    image: reconkit-lab-router:local
+    network_mode: "service:worker"
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN]
+    entrypoint: ["ip", "route", "replace", "10.66.2.0/24", "via", "10.66.1.254"]
+    restart: "no"
+    depends_on: [worker, router]
+
+  router:
+    build: lab/router
+    image: reconkit-lab-router:local
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN, NET_RAW]
+    init: true                    # stops at once on `docker compose down`
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    networks:
+      lab-dmz: { ipv4_address: 10.66.1.254 }
+      lab-internal: { ipv4_address: 10.66.2.254 }
+    restart: unless-stopped
+
+  apache:
+    # Apache httpd 2.4.49: CVE-2021-41773 (path traversal, on CISA's KEV list).
+    image: httpd:2.4.49@sha256:dcba0d12e2362fb0c50ec524ae8aa1cca4a4ba7216617a57e7bbca20767e79cc
+    networks:
+      lab-dmz: { ipv4_address: 10.66.1.20 }
+    restart: unless-stopped
+
+  ssh:
+    build: lab/ssh
+    image: reconkit-lab-ssh:local
+    networks:
+      lab-dmz: { ipv4_address: 10.66.1.22 }
+    restart: unless-stopped
+
+  nginx:
+    # nginx 1.20.0: CVE-2021-23017 (resolver off-by-one). "Fix" it for the demo with
+    # LAB_NGINX=1.27.5 (see README "Lab"), and the next scan marks the finding fixed.
+    image: nginx:${LAB_NGINX:-1.20.0}
+    networks:
+      lab-internal: { ipv4_address: 10.66.2.30 }
+    restart: unless-stopped
+
+x-isolated: &isolated
+  com.docker.network.bridge.inhibit_ipv4: "true"           # no host address on the bridge
+  com.docker.network.bridge.enable_ip_masquerade: "false"  # no NAT to the outside
+
+networks:
+  lab-dmz:
+    driver_opts: *isolated
+    ipam:
+      # Containers without a fixed address (the workers) get one in .1-.14: the scope
+      # excludes that range, so a scan never reports the scanners themselves.
+      config: [{ subnet: 10.66.1.0/24, ip_range: 10.66.1.0/28 }]
+  lab-internal:
+    driver_opts: *isolated
+    ipam:
+      config: [{ subnet: 10.66.2.0/24 }]
