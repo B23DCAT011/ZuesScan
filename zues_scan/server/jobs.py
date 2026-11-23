@@ -20,7 +20,9 @@ log = logging.getLogger(__name__)
 def spec_for(config: ServiceConfig, target: Target, operator: str) -> ScanSpec:
     return ScanSpec(
         target=target.target,
-        scope=target.scope,
+        # A dashboard target's scope is text from the database; the run records its name.
+        scope=target.scope if target.scope_text is None else f"dashboard scope {target.scope}",
+        scope_text=target.scope_text,
         db=config.db,
         profile=target.profile,
         config=target.config,

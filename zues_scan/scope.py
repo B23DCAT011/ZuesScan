@@ -279,17 +279,21 @@ class Scope:
     @classmethod
     def from_file(cls, path: str | Path) -> Scope:
         """Load a scope from an allowlist file (one entry per line)."""
+        return cls.from_text(Path(path).read_bytes().decode("utf-8"), str(path))
+
+    @classmethod
+    def from_text(cls, text: str, source: str) -> Scope:
+        """Read a scope from the text of a scope file; `source` names it in messages and
+        in the run's record (a path, or a scope edited in the dashboard)."""
         scope = cls()
-        data = Path(path).read_bytes()
-        scope.path = str(path)
-        scope.sha256 = hashlib.sha256(data).hexdigest()
-        scope.text = data.decode("utf-8")
-        lines = scope.text.splitlines()
-        for lineno, line in enumerate(lines, start=1):
+        scope.path = source
+        scope.sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        scope.text = text
+        for lineno, line in enumerate(text.splitlines(), start=1):
             try:
                 scope.add(line)
             except ScopeError as exc:
-                raise ScopeError(f"{path}:{lineno}: {exc}") from None
+                raise ScopeError(f"{source}:{lineno}: {exc}") from None
         return scope
 
     @classmethod

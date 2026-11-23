@@ -818,6 +818,41 @@ def _cmd_token(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_user(args: argparse.Namespace) -> int:
+    """Dashboard tokens, kept in the service's database: the first admin is made here."""
+    from zues_scan.server import managed
+    from zues_scan.server.config import ConfigError, load_config
+    from zues_scan.storage import Storage, StorageError
+
+    try:
+        config = load_config(args.config)
+    except ConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    actor = f"{default_operator()} (zues user)"
+    try:
+        with Storage(config.db) as store:
+            if args.user_command == "list":
+                print(f"{'NAME':<24} {'ROLE':<9} SOURCE")
+                for t in sorted(config.tokens, key=lambda t: t.name):
+                    print(f"{t.name:<24} {t.role:<9} {t.source}")
+                for problem in config.problems:
+                    print(f"note: {problem}")
+                return 0
+            if args.user_command == "add":
+                token = managed.create_token(store, config, args.name, args.role, actor)
+                print(f"{args.role} token for {args.name} (shown once, keep it secret):")
+                print(token)
+                print("\nsign in to the dashboard with it; it is recorded as the operator's name")
+                return 0
+            managed.delete_token(store, config, args.name, actor)
+            print(f"token {args.name} removed")
+            return 0
+    except (managed.ManagedError, LookupError, StorageError) as exc:
+        print(f"error: {str(exc).strip(chr(39))}", file=sys.stderr)
+        return 2
+
+
 def _cmd_enqueue(args: argparse.Namespace) -> int:
     loaded = _server(args)
     if loaded is None:
@@ -1299,8 +1334,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     token = sub.add_parser("token", help="make an API token for the service (service.toml)")
     token.add_argument("--name", required=True, help="who it is for (recorded as operator)")
-    token.add_argument("--role", choices=["viewer", "operator"], default="viewer")
+    token.add_argument("--role", choices=["viewer", "operator", "admin"], default="viewer")
     token.set_defaults(func=_cmd_token)
+
+    user = sub.add_parser(
+        "user", help="dashboard tokens kept in the service's database (the first admin)"
+    )
+    user.add_argument("--config", required=True, help="service.toml")
+    users = user.add_subparsers(dest="user_command", required=True)
+    add = users.add_parser("add", help="create a token; it is printed once")
+    add.add_argument("name", help="who it is for (recorded as operator)")
+    add.add_argument("--role", choices=["viewer", "operator", "admin"], default="viewer")
+    users.add_parser("list", help="every token: service.toml's and the dashboard's")
+    remove = users.add_parser("remove", help="revoke a dashboard token")
+    remove.add_argument("name")
+    user.set_defaults(func=_cmd_user)
 
     enqueue = sub.add_parser("enqueue", help="queue a scan of a configured target (service)")
     enqueue.add_argument("target", help="the target's name in service.toml")
