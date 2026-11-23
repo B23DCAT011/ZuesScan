@@ -41,6 +41,36 @@ pytest
 pip install -e ".[dev,server,server-test]"   # thêm test của dịch vụ chạy nền (Redis giả trong RAM)
 ```
 
+## Kiểm tra máy: `reconkit doctor`
+
+Trước khi quét trên một máy mới, `reconkit doctor` cho biết máy có gì, thiếu gì và **lệnh cài
+đúng cho hệ điều hành đó** (apt / dnf / pacman / apk / zypper, brew, winget):
+
+```text
+$ reconkit doctor
+ReconKit 0.1.0 on Debian GNU/Linux 13 (trixie), Python 3.13.18
+
+  ok       nmap              7.95 (/usr/bin/nmap)
+  warn     nmap rights       no raw-socket rights: without them nmap falls back to a TCP
+                             connect scan and cannot traceroute
+                             -> sudo setcap cap_net_raw+eip /usr/bin/nmap  and  export NMAP_PRIVILEGED=1
+  missing  nuclei            not found (optional)
+  ...
+ready to scan (2 thing(s) above would make scans better)
+```
+
+- **nmap là bắt buộc** (thiếu → mã thoát 1, "not ready"); nuclei, subfinder, ssh, dữ liệu CVE,
+  gói dịch vụ là tuỳ chọn. Với nmap còn kiểm **quyền raw socket**: root, file capability
+  `cap_net_raw` (đọc thẳng thuộc tính `security.capability` của file) + `NMAP_PRIVILEGED`, hay
+  Npcap trên Windows — thiếu quyền thì nmap âm thầm chuyển sang TCP connect scan, chậm hơn và
+  không traceroute được. Trên Windows còn nhận ra nmap đã cài nhưng chưa có trong PATH.
+- **ReconKit không tự cài gói hệ thống** (nmap, ssh): việc đó cần quyền admin, và một công cụ
+  bảo mật không được tự leo quyền; Npcap bản miễn phí cũng không được đóng gói phân phối kèm.
+- `--config service.toml` kiểm thêm cấu hình dịch vụ, database, Redis; `--json` cho script / CI.
+
+Chính lệnh này đã tìm ra image Docker thiếu SSH client (quét có đăng nhập không chạy được trong
+Docker) và việc `subfinder -version` tự ghi file cấu hình vào volume dữ liệu — cả hai đã sửa.
+
 ## Dùng thử
 
 ```bash

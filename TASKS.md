@@ -131,3 +131,21 @@ thật (nuclei 3.11.1, templates 10.5.2, subfinder 2.17.0), sửa những gì ch
       (request/giây của nuclei) tách khỏi `max_rate` (gói/giây của nmap); `reconkit finding`
       hiện độ tin cậy; CI kiểm `confirmed`, Terrapin và phiên bản templates trong run.
 
+## Giai đoạn 5 — Dễ cài, dễ mở rộng, cho AI dùng
+
+Mục tiêu: mang ReconKit sang máy khác mà cài nhanh, thêm / bớt công cụ không phải sửa code, và
+để một AI (qua MCP) dùng được ReconKit một cách an toàn.
+
+- [x] `feat/doctor` — `reconkit doctor [--config] [--json]`: công cụ, phiên bản, quyền raw socket
+      của nmap, templates, key của subfinder, dữ liệu CVE, gói dịch vụ, Redis; lệnh cài đúng cho
+      từng hệ điều hành; không tự cài gói hệ thống. Tìm ra và sửa: image thiếu SSH client,
+      `subfinder -version` ghi cấu hình vào `/data`.
+- [ ] `feat/plugin-registry` — registry plugin + entry points, bật / tắt bằng cấu hình, mỗi plugin
+      khai báo mức chủ động (scope cho phép tới đâu), `reconkit plugins`, bộ test hợp đồng.
+- [ ] `feat/tools-install` — `reconkit tools install|verify` cho nuclei / subfinder / templates:
+      ghim phiên bản + SHA-256, nhiều hệ điều hành, thư mục của người dùng, không cần admin.
+- [ ] `chore/release` — version theo tag, phát hành gói Python và image (nhiều kiến trúc, ký,
+      SBOM, quét image).
+- [ ] `feat/mcp` — `reconkit mcp`: AI dùng ReconKit qua MCP, chỉ trên target đã khai báo, quyết
+      định nhạy cảm cần người xác nhận, dữ liệu quét luôn là dữ liệu.
+
