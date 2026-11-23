@@ -1,6 +1,6 @@
-# Điểm yếu đã biết & kế hoạch nâng cấp — ReconKit
+# Điểm yếu đã biết & kế hoạch nâng cấp — ZuesScan
 
-Danh sách các chỗ ReconKit **chưa đạt chuẩn sản phẩm thật**, kèm dẫn chứng trong code và
+Danh sách các chỗ ZuesScan **chưa đạt chuẩn sản phẩm thật**, kèm dẫn chứng trong code và
 hướng sửa theo cách làm ngoài thực tế. Nguyên tắc: điểm yếu nào đã nhìn ra thì phải sửa,
 không dùng lý do "chỉ là lab". Đường tắt nào cố ý giữ tạm thời cũng phải ghi vào đây.
 
@@ -136,7 +136,7 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     Fixture test nên lấy từ output nmap thật.
   - Tên sản phẩm của nmap ≠ tên trong CPE (`Apache httpd` ↔ `apache:http_server`) — thêm lý
     do phải khớp theo CPE thay vì theo tên.
-  - ✅ **Đã sửa (`feat/cve-matching`)**: `reconkit/cve/` thành package. Dữ liệu CVE (seed và
+  - ✅ **Đã sửa (`feat/cve-matching`)**: `zues_scan/cve/` thành package. Dữ liệu CVE (seed và
     sau này cache NVD) dùng định dạng 2: mỗi CVE có danh sách `affects` y như `cpeMatch` của NVD
     (CPE + `versionStart/EndIncluding/Excluding`); seed được viết lại theo dữ liệu NVD thật.
     Khớp theo **vendor + product của CPE** (nmap không có CPE thì tra bảng tên sản phẩm nmap →
@@ -153,8 +153,8 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
 - [x] **G9. Dữ liệu CVE chỉ là seed 4 dòng.**
   Sửa: `NvdCveSource` đồng bộ NVD API 2.0 về cache local (có API key, tôn trọng rate limit);
   cân nhắc OSV, CISA KEV.
-  - ✅ **Đã sửa (`feat/nvd-source`)**: `reconkit cve sync` tải CVE từ NVD API 2.0 về một file
-    SQLite riêng (`reconkit-cve.db`: bảng `cve`, `cve_range` có index theo sản phẩm,
+  - ✅ **Đã sửa (`feat/nvd-source`)**: `zues cve sync` tải CVE từ NVD API 2.0 về một file
+    SQLite riêng (`zues-cve.db`: bảng `cve`, `cve_range` có index theo sản phẩm,
     `sync_state`). Chỉ dùng thư viện chuẩn (`urllib`). Mỗi trang 2.000 CVE; nghỉ 6 giây giữa
     hai request (1 giây nếu có API key, đọc từ biến môi trường `NVD_API_KEY`, không bao giờ
     nhận qua dòng lệnh); gặp 403 / 429 / 5xx thì chờ lâu dần rồi thử lại. Lần đầu tải hết,
@@ -166,7 +166,7 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     `7.4p1 Debian 10+deb9u7` khớp 42 CVE, đều `tentative`.
   - Còn lại: tải toàn bộ NVD lần đầu (~300.000 CVE) mất khoảng 15–20 phút nếu không có API
     key. NVD đôi khi ghi dải theo bản phát hành mà bỏ patch level (vd OpenSSH `<= 9.8` trong
-    khi bản vá là `9.8p1`) → ReconKit theo đúng dữ liệu NVD nên có thể báo nhầm bản đã vá. Chưa
+    khi bản vá là `9.8p1`) → ZuesScan theo đúng dữ liệu NVD nên có thể báo nhầm bản đã vá. Chưa
     dùng OSV (dữ liệu theo gói của từng hệ sinh thái / distro).
 - [x] **G10. Không phân biệt "chắc chắn" và "có thể" bị lỗi** (backport của distro giữ nguyên
   số phiên bản). Sửa: thêm `Finding.confidence` (`tentative` / `confirmed`).
@@ -181,7 +181,7 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     khai thác (an toàn) và kiểm câu trả lời; nếu cùng CVE cũng khớp theo version, finding quan
     sát được giữ lại.
   - ✅ **Quét có đăng nhập (`feat/authenticated-scan`)**: với host có khai báo SSH key
-    (`--credentials`), ReconKit đọc gói đã cài (`dpkg-query`) và đối chiếu Debian Security
+    (`--credentials`), ZuesScan đọc gói đã cài (`dpkg-query`) và đối chiếu Debian Security
     Tracker (so version theo đúng thuật toán của dpkg). CVE mà gói đã cài **có bản vá** thì
     finding đoán theo banner cho CVE đó trên host bị **rút lại** (ghi chú trong run). An toàn:
     chỉ key (không mật khẩu), host key phải có sẵn trong file known_hosts riêng (không tin lần
@@ -193,13 +193,13 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
   - ✅ **Đã sửa (`feat/cve-priority`)**: mỗi finding mang **CVSS** (điểm + vector, ưu tiên điểm
     của NVD, v3.1 > v3.0 > v4.0 > v2), **CWE**, ngày vào **CISA KEV** (đã bị khai thác ngoài
     thực tế) và **EPSS** (xác suất bị khai thác trong 30 ngày, FIRST tính lại mỗi ngày) — lưu
-    theo run (schema DB v8): run ghi lại điều nó biết lúc đó. `reconkit cve sync` tải thêm catalog
+    theo run (schema DB v8): run ghi lại điều nó biết lúc đó. `zues cve sync` tải thêm catalog
     KEV (từ mirror GitHub chính thức của CISA, vì www.cisa.gov chặn client tự động) và file EPSS
     hằng ngày (~410.000 CVE). **Thứ tự ưu tiên** (theo tinh thần SSVC / "KEV trước, rồi EPSS,
     rồi CVSS"): P1 có trong KEV; P2 EPSS ≥ 10 % hoặc CVSS ≥ 9; P3 EPSS ≥ 1 % hoặc CVSS ≥ 7;
     P4 còn lại. CLI và báo cáo sắp theo ưu tiên và nói lý do. Kiểm với dữ liệu thật: MySQL 8.0.37
     trên máy dev khớp 61 CVE, 2 cái P3 (EPSS ~1 %), còn lại P4.
-  - Còn lại: ngưỡng EPSS / CVSS là lựa chọn của ReconKit, chưa cấu hình được. Chưa tính bối
+  - Còn lại: ngưỡng EPSS / CVSS là lựa chọn của ZuesScan, chưa cấu hình được. Chưa tính bối
     cảnh tài sản (máy public hay nội bộ, quan trọng đến đâu) như SSVC đầy đủ. Cờ "dùng trong
     ransomware" của KEV mới chỉ hiện ở `cve show`. EPSS / KEV của run cũ không tự cập nhật.
 - [x] **G12. Fingerprint có `title`.** Sửa câu chữ title là lỗi cũ thành "lỗi mới".
@@ -229,7 +229,7 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     stderr). Mỗi run lưu output vào bảng `scan_run_output` (schema DB v4): nén zlib, kèm
     kích thước và **SHA-256** của bản gốc; khi đọc ra thì kiểm lại mã băm, lệch → từ chối
     (bằng chứng đã bị sửa hoặc hỏng). Lần quét **thất bại** cũng giữ output nếu tool đã kịp in
-    ra (XML hỏng, 0 host, không host nào trả lời). Lệnh mới `reconkit raw <run id>` lấy lại
+    ra (XML hỏng, 0 host, không host nào trả lời). Lệnh mới `zues raw <run id>` lấy lại
     output (stdout chỉ có output, pipe được; hoặc `--out file`). Finding của bước CVE có
     `evidence`: cổng, product / version / CPE / banner scanner báo, khớp với mục nào của nguồn
     CVE, và ghi rõ là *suy luận theo phiên bản, chưa kiểm chứng bằng khai thác*.
@@ -245,7 +245,7 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
 - [x] **G14. `scan_run` không có trạng thái / lỗi / phiên bản tool.**
   Sửa: thêm `status`, `error`, `tool_version`.
   - ✅ **Đã sửa (F7)**: `scan_run` có `status` (`completed` / `partial` / `failed`, có ràng
-    buộc `CHECK`), `error`, `reconkit_version`. Phiên bản tool nằm ở bảng riêng
+    buộc `CHECK`), `error`, `zues_version`. Phiên bản tool nằm ở bảng riêng
     `scan_run_plugin` (mỗi scanner một dòng: `ran` / `skipped` / `failed` + `version`) vì
     một run sẽ có nhiều scanner; hợp đồng plugin thêm `version()`. Host ngoài scope bị loại
     được lưu vào `scan_run_out_of_scope`.
@@ -253,7 +253,7 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     thông báo lỗi và stderr của tool, không có host nào. Lý do: khi quét theo lịch, "quét bị
     hỏng" mà không để lại gì thì trông y hệt "chưa ai quét". Run `failed` không thể bị đọc
     nhầm thành "đã quét, không thấy gì". Bị scope từ chối (exit 3) vẫn không tạo run.
-  - Còn lại: ~~chưa có lệnh CLI xem danh sách run~~ (✅ M1: `reconkit runs`); ~~lần bị scope từ
+  - Còn lại: ~~chưa có lệnh CLI xem danh sách run~~ (✅ M1: `zues runs`); ~~lần bị scope từ
     chối chưa để lại dấu vết~~ (✅ G21: sự kiện `refused` trong audit trail).
 - [x] **G15. Thiếu index khóa ngoại, thiếu `ON DELETE CASCADE`, chưa có migration.**
   Sửa: index FK, cascade, bảng `schema_version` + migration đơn giản.
@@ -262,7 +262,7 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     dưới. Schema có số phiên bản (`SCHEMA_VERSION = 2`, bảng `schema_version`): mở DB là tự
     chạy các migration còn thiếu trong **một transaction** (hỏng giữa chừng → DB cũ nguyên
     vẹn), sau khi **sao lưu** DB cũ ra `<db>.v<N>.bak`, và kiểm `PRAGMA foreign_key_check`
-    trước khi commit. DB do bản ReconKit mới hơn ghi thì từ chối mở. CLI mở DB **trước** khi
+    trước khi commit. DB do bản ZuesScan mới hơn ghi thì từ chối mở. CLI mở DB **trước** khi
     quét. Đã kiểm bằng cách migrate một DB v1 thật.
   - Còn lại: `service` chưa có ràng buộc `UNIQUE (asset_id, port, protocol)`; bản sao lưu
     không tự dọn.
@@ -272,14 +272,14 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
   - ✅ **Đã sửa (`feat/audit-trail`)**: mỗi run lưu **người chạy** (mặc định `user@host`,
     `--operator`), **engagement** (`--engagement` hoặc dòng `@engagement` trong file scope),
     **file scope** (đường dẫn + SHA-256 của đúng từng byte; nội dung được lưu một lần cho mỗi
-    phiên bản, xem lại bằng `reconkit audit --scope <sha>`) và **kế hoạch quét đã duyệt** (địa
+    phiên bản, xem lại bằng `zues audit --scope <sha>`) và **kế hoạch quét đã duyệt** (địa
     chỉ, loại trừ) — schema DB v10. File scope có thể ghi **điều khoản của giấy phép**:
     `@expires 2026-12-31 +07:00` (hết hạn thì từ chối), `@window Mon-Fri 22:00-06:00 +07:00`
     (chỉ quét trong khung giờ, qua nửa đêm được). Bảng `audit_event` ghi **mọi lần quét, mọi
     lần bị từ chối (exit 3) và mọi lần xóa run** thành một **chuỗi băm SHA-256**: mỗi sự kiện
     băm cả nội dung của nó lẫn mã băm sự kiện trước; sự kiện quét chứa mã băm output gốc.
-    `reconkit audit --verify` tính lại cả chuỗi và kiểm từng bằng chứng: sửa / xóa / đổi thứ tự
-    một sự kiện, thay output gốc, hay xóa run mà không qua `reconkit delete` đều bị phát hiện.
+    `zues audit --verify` tính lại cả chuỗi và kiểm từng bằng chứng: sửa / xóa / đổi thứ tự
+    một sự kiện, thay output gốc, hay xóa run mà không qua `zues delete` đều bị phát hiện.
     Ghi chuỗi lấy khóa ghi trước (`BEGIN IMMEDIATE`) và `prev_hash` là UNIQUE nên hai tiến
     trình không thể làm chuỗi rẽ nhánh. Đã kiểm với nmap thật.
   - Còn lại: người có quyền ghi DB vẫn dựng lại được *cả* chuỗi — phải lưu **mã băm đầu chuỗi**
@@ -302,7 +302,7 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     họ nào không host nào trả lời (thường gặp: có bản ghi AAAA nhưng máy quét không đi được
     IPv6) thì thành **ghi chú** của run, không làm hỏng cả lần quét, miễn họ kia có kết quả.
     Dải IPv6 lớn hơn /112 bị từ chối: một subnet /64 có 2^64 địa chỉ, không quét quét lần lượt
-    được — host IPv6 được tìm qua DNS. Run có thêm `notes` (schema DB v9); `reconkit raw
+    được — host IPv6 được tìm qua DNS. Run có thêm `notes` (schema DB v9); `zues raw
     --index` chọn một trong nhiều output. Đã kiểm với nmap thật: `localhost` → 127.0.0.1 và ::1.
   - Còn lại: chưa tìm host IPv6 bằng cách khác ngoài DNS (vd Neighbor Discovery trong LAN).
   - Dẫn chứng: `resolve_ipv4()` chỉ hỏi bản ghi A; plugin nmap không truyền `-6` (nmap
@@ -336,12 +336,12 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     - **Cookie chứa chính token** (HttpOnly, SameSite=Strict, 8 giờ): đăng xuất chỉ xoá cookie
       ở trình duyệt; muốn vô hiệu hoá thật thì gỡ token khỏi `service.toml`. Thực tế: phiên
       phía server (id ngẫu nhiên trong Redis, hết hạn khi không dùng, thu hồi được từng phiên).
-    - **Không tự làm TLS**: `reconkit web` mặc định chỉ nghe 127.0.0.1; ra mạng thì phải đặt sau
+    - **Không tự làm TLS**: `zues web` mặc định chỉ nghe 127.0.0.1; ra mạng thì phải đặt sau
       reverse proxy có TLS (cookie tự bật `Secure` khi proxy báo `X-Forwarded-Proto: https`).
     - Phân quyền mới có hai vai trò cho toàn bộ dịch vụ; chưa có quyền theo từng target /
       engagement (vd khách hàng A chỉ thấy target của A).
     - Danh sách finding / run chưa phân trang (giới hạn số dòng); chưa có trang so sánh hai run
-      trên web (đã có ở CLI `reconkit diff` và mục "Changes" của báo cáo).
+      trên web (đã có ở CLI `zues diff` và mục "Changes" của báo cáo).
     - Không có Swagger UI (`/docs` tải script từ CDN, trái CSP); schema OpenAPI vẫn ở
       `/api/v1/openapi.json` để nhập vào công cụ khác.
     - SQLite dùng chế độ journal mặc định: web đọc trong lúc worker ghi thì phải chờ nhau (tối đa
@@ -375,18 +375,18 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       "đã thử, không khai thác được" như một quan sát.
     - Templates mới ra hằng ngày: bản ghim cần cập nhật định kỳ (dựng lại image). Template tự
       viết phải được ký (`nuclei -sign`) mới chạy dưới `-dut`.
-    - `reconkit tools install`: bản macOS (amd64, arm64) có trong lock nhưng chưa được chạy thử
+    - `zues tools install`: bản macOS (amd64, arm64) có trong lock nhưng chưa được chạy thử
       trên một máy Mac thật (Windows và Linux đã thử). Chưa có bản Windows arm64 của nuclei.
     - Rate mặc định 50 req/s: một web server ~4 phút; dải lớn cần `max_rate` cao hơn hoặc
       `timeout` dài hơn trong profile.
     - subfinder chỉ thụ động (không brute-force DNS); không có API key thì ít nguồn; lọc wildcard
       chỉ dựa trên một tên ngẫu nhiên (zone có nhiều mức wildcard có thể lọt).
 
-- [ ] **G25. Plugin của bên thứ ba chạy với toàn quyền của ReconKit.** (từ `feat/plugin-registry`)
+- [ ] **G25. Plugin của bên thứ ba chạy với toàn quyền của ZuesScan.** (từ `feat/plugin-registry`)
   - ✅ Đã có: registry + entry points; gói hỏng bị bỏ qua và báo; không được trùng tên plugin dựng
     sẵn; mỗi plugin khai `activity`, scope đặt trần `@activity` (mặc định `scan`), vượt trần bị
     từ chối trước khi gửi gì và ghi vào audit; plugin khai thấp hơn spec của chính nó bị từ chối;
-    bộ kiểm tra hợp đồng `reconkit.plugins.contract`.
+    bộ kiểm tra hợp đồng `zues_scan.plugins.contract`.
   - Còn lại: plugin chạy **trong cùng tiến trình** — đọc được DB, file credentials, token; và
     `activity` là **lời khai** của plugin, một plugin độc có thể nói dối. Thực tế: chỉ cài từ
     nguồn tin cậy, ghim phiên bản + hash như các phụ thuộc khác; danh sách plugin được phép trong
@@ -394,7 +394,7 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     (như cách worker đã tách khỏi web).
 
 - [ ] **G26. AI agent qua MCP: giới hạn còn lại.** (từ `feat/mcp`)
-  - ✅ Đã có: `reconkit mcp` (stdio, client của web API), 12 tool; xếp hàng quét / ghi quyết định
+  - ✅ Đã có: `zues mcp` (stdio, client của web API), 12 tool; xếp hàng quét / ghi quyết định
     cần người xác nhận (elicitation, không phải tham số của tool); không có tool chấp nhận rủi ro;
     chỉ target đã cấu hình; dữ liệu quét được làm sạch và đánh dấu không tin cậy; audit dưới tên
     token. Đã thử bằng client MCP thật qua stdio trên lab (từ chối → không quét; đồng ý → run
@@ -405,7 +405,7 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       audit. Thực tế: token agent chỉ `viewer` theo mặc định; tách quyền "xin quét" thành một
       vai trò riêng; giới hạn số lần quét mỗi giờ cho token agent.
     - Chỉ stdio: chưa có MCP qua HTTP (Streamable HTTP + OAuth) để agent ở máy khác dùng trực
-      tiếp dịch vụ. Hiện agent ở máy khác dùng `RECONKIT_URL` qua HTTPS (reverse proxy).
+      tiếp dịch vụ. Hiện agent ở máy khác dùng `ZUES_URL` qua HTTPS (reverse proxy).
     - Token nằm trong biến môi trường / file cấu hình của client MCP (không commit; nên dùng phạm
       vi `local` / `user` của Claude Code, không phải `project`).
     - Làm sạch chuỗi chống được ký tự điều khiển và độ dài, **không** chống được nội dung thao
@@ -415,16 +415,16 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
 
 - [x] **G17. Chưa có CI.** Sửa: GitHub Actions chạy pytest + ruff + mypy cho mọi PR. (F1, `chore/ci`)
 - [x] **G18. Chỉ in ra màn hình.** Sửa: xuất báo cáo JSON / HTML / SARIF.
-  - ✅ **Phần HTML (M1, `feat/report-html`)**: `reconkit report --html` sinh một file HTML tự
+  - ✅ **Phần HTML (M1, `feat/report-html`)**: `zues report --html` sinh một file HTML tự
     chứa (bản đồ Cytoscape.js + bảng finding / host + thông tin run), mở offline. Dữ liệu quét
     (banner, tên sản phẩm) do máy bị quét tự khai nên có thể độc: JSON được escape để không thoát
     được khỏi thẻ `<script>`, script của trang chỉ ghi text (không `innerHTML`), CSP chỉ cho
     chạy script / style có SHA-256 đã liệt kê và `default-src 'none'` (trang không gọi mạng được).
-    `reconkit runs` liệt kê các run.
+    `zues runs` liệt kê các run.
   - ✅ **JSON / SARIF (`feat/report-json-sarif`)**: `--json` xuất đúng dữ liệu của báo cáo;
     `--sarif` xuất SARIF 2.1.0 (chuẩn OASIS, DefectDojo đọc được): mỗi CVE / bài kiểm là một
     *rule* (link NVD, CWE, `security-severity`), mỗi finding là một *result* có mức, `rank` theo
-    CVSS, vị trí `tcp://host:port`, fingerprint của ReconKit trong `partialFingerprints` (để công
+    CVSS, vị trí `tcp://host:port`, fingerprint của ZuesScan trong `partialFingerprints` (để công
     cụ khác nhận ra cùng một lỗi qua các lần quét), và ưu tiên / độ tin cậy / EPSS / KEV / trạng
     thái vòng đời. ~~Báo cáo chưa so sánh hai run~~ (✅ `feat/diff`: mục "Changes").
   - Còn lại: SARIF mới được kiểm theo cấu trúc trong test, chưa chạy validator theo JSON schema
@@ -433,7 +433,7 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     thấy subnet mask thật.
 - [x] **G19. Dùng `print`, chưa có logging.** Sửa: module `logging`, cờ `--verbose`.
   - ✅ **Đã sửa (`feat/logging`)**: mỗi module ghi log qua `logging.getLogger(__name__)` (cây
-    `reconkit`). Mặc định chỉ hiện cảnh báo; `-v` tiến trình, `-vv` chi tiết (lệnh nmap đầy đủ,
+    `zues`). Mặc định chỉ hiện cảnh báo; `-v` tiến trình, `-vv` chi tiết (lệnh nmap đầy đủ,
     từng request NVD); `--log-file` luôn ghi đủ mức debug; `--log-format json` mỗi dòng một object
     JSON (có trường `event`, `run_id`…) cho hệ thống gom log. Không bao giờ ghi API key (nó nằm
     trong header, không trong URL) và không ghi output gốc của scanner (đã có trong DB, có băm).
@@ -446,13 +446,13 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
   - ✅ **Docker (`chore/docker`)**: `Dockerfile` (image gốc ghim digest, gói Python ghim phiên bản
     + mã băm, user không phải root, nmap chỉ có `cap_net_raw`), `compose.yaml` (Redis có AOF,
     web / worker / scheduler, FS chỉ đọc, `cap_drop: ALL`, chỉ worker có `NET_RAW`, healthcheck,
-    web chỉ ở 127.0.0.1), `reconkit backup` (backup trực tuyến + kiểm tra + SHA-256 + mã băm đầu
+    web chỉ ở 127.0.0.1), `zues backup` (backup trực tuyến + kiểm tra + SHA-256 + mã băm đầu
     chuỗi audit, xoay vòng, `--verify`). CI build image và quét thật một container bằng SYN scan
     + traceroute với user thường chỉ giữ `NET_RAW`. Đã chạy thử cả stack: scheduler → worker →
     API → backup trong lúc chạy.
   - ✅ **`chore/docker-tools`**: nuclei, subfinder, nuclei-templates trong image, ghim phiên bản
-    + SHA-256 từ file checksums chính thức (nay là `reconkit/data/tools.lock`,
-    `python -m reconkit.tools update`; cũng dùng cho `reconkit tools install`); CI
+    + SHA-256 từ file checksums chính thức (nay là `zues_scan/data/tools.lock`,
+    `python -m zues_scan.tools update`; cũng dùng cho `zues tools install`); CI
     kiểm phiên bản trong image khớp lock. Lưu ý: file checksums lấy cùng nơi với file nhị phân
     (tin lần đầu); ProjectDiscovery chưa ký release bằng cosign/GPG để kiểm độc lập.
   - ✅ **`chore/release`**: workflow phát hành quét image bằng Trivy, xuất SBOM + provenance, ký

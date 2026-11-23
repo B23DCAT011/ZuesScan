@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from reconkit.plugins.base import ScanResult
-from reconkit.schema import Asset, RawOutput, ScanTarget, Service
-from reconkit.scope import ResolutionError, Resolver, Scope
+from zues_scan.plugins.base import ScanResult
+from zues_scan.schema import Asset, RawOutput, ScanTarget, Service
+from zues_scan.scope import ResolutionError, Resolver, Scope
 
 # The lab every test scans: one name, living at 10.0.0.5 inside an allowed /24.
 LAB_DNS = {"scanme.lab": ["10.0.0.5"]}
@@ -92,6 +92,6 @@ def _own_tools_dir(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """No test may pick up tools or templates installed on the developer's machine."""
-    monkeypatch.setenv("RECONKIT_TOOLS_DIR", str(tmp_path_factory.mktemp("tools")))
-    monkeypatch.delenv("RECONKIT_NUCLEI_TEMPLATES", raising=False)
-    monkeypatch.delenv("RECONKIT_SUBFINDER_CONFIG", raising=False)
+    monkeypatch.setenv("ZUES_TOOLS_DIR", str(tmp_path_factory.mktemp("tools")))
+    monkeypatch.delenv("ZUES_NUCLEI_TEMPLATES", raising=False)
+    monkeypatch.delenv("ZUES_SUBFINDER_CONFIG", raising=False)

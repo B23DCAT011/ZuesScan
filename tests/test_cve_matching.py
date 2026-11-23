@@ -4,12 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from reconkit.cve import CveDataError, LocalCveSource
-from reconkit.cve.cpe import Cpe, CpeError, parse_cpe, same_vendor
-from reconkit.cve.records import AffectedRange, load_records
-from reconkit.cve.version import Version, read_version
-from reconkit.plugins.nmap import NmapPlugin
-from reconkit.schema import Confidence, Service
+from zues_scan.cve import CveDataError, LocalCveSource
+from zues_scan.cve.cpe import Cpe, CpeError, parse_cpe, same_vendor
+from zues_scan.cve.records import AffectedRange, load_records
+from zues_scan.cve.version import Version, read_version
+from zues_scan.plugins.nmap import NmapPlugin
+from zues_scan.schema import Confidence, Service
 
 DATA = Path(__file__).parent / "data"
 
@@ -211,19 +211,19 @@ def test_matches_found_in_a_realistic_nmap_scan() -> None:
 
 
 def test_bundled_seed_is_valid() -> None:
-    records = load_records(Path(__file__).parent.parent / "reconkit" / "data" / "cve_seed.json")
+    records = load_records(Path(__file__).parent.parent / "zues_scan" / "data" / "cve_seed.json")
     assert {r.id for r in records} >= {"CVE-2018-15473", "CVE-2021-41773"}
     assert all(a.is_bounded() for r in records for a in r.affects)
 
 
-_V2 = '{"format": "reconkit-cve", "version": 2, "entries": '
+_V2 = '{"format": "zues-cve", "version": 2, "entries": '
 
 
 @pytest.mark.parametrize(
     ("content", "message"),
     [
         ('{"entries": [{"product": "openssh", "version": "7.4"}]}', "old format"),
-        ('{"format": "reconkit-cve", "version": 9, "entries": []}', "expected"),
+        ('{"format": "zues-cve", "version": 9, "entries": []}', "expected"),
         (_V2 + '[{"cve": "X"}]}', "missing"),
         (_V2 + '[{"cve": "X", "affects": [{"cpe": "nope"}]}]}', "not a CPE"),
         (

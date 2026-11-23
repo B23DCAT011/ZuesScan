@@ -1,10 +1,10 @@
-# Release: push a tag vX.Y.Z (equal to reconkit.__version__, with a CHANGELOG.md section).
+# Release: push a tag vX.Y.Z (equal to zues_scan.__version__, with a CHANGELOG.md section).
 #
 #   git tag v0.2.0 && git push origin v0.2.0
 #
 # - the Python package (wheel + sdist) is built once and attached to a GitHub Release whose
 #   notes are the version's CHANGELOG section;
-# - the image is built for linux/amd64 and linux/arm64, pushed to ghcr.io/<owner>/reconkit
+# - the image is built for linux/amd64 and linux/arm64, pushed to ghcr.io/<owner>/zues-scan
 #   with an SBOM and provenance attestations, signed with cosign (keyless: GitHub's OIDC
 #   identity, no key to keep), and scanned with Trivy (results in the Security tab);
 # - "Run workflow" by hand does all of it as a dry run: built and scanned, nothing published.
@@ -25,7 +25,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/reconkit
+  IMAGE: ghcr.io/${{ github.repository_owner }}/zues-scan
   PUBLISH: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
 
 jobs:
@@ -38,10 +38,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: version
         run: |
-          version=$(python3 -c 'import re; print(re.search(r"__version__ = \"(.+)\"", open("reconkit/__init__.py").read()).group(1))')
+          version=$(python3 -c 'import re; print(re.search(r"__version__ = \"(.+)\"", open("zues_scan/__init__.py").read()).group(1))')
           echo "version=$version" >> "$GITHUB_OUTPUT"
           if [ "$PUBLISH" = "true" ] && [ "${GITHUB_REF_NAME}" != "v$version" ]; then
-            echo "::error::tag ${GITHUB_REF_NAME} does not match reconkit.__version__ $version"
+            echo "::error::tag ${GITHUB_REF_NAME} does not match zues_scan.__version__ $version"
             exit 1
           fi
           if ! grep -q "^## \[$version\]" CHANGELOG.md; then
@@ -64,9 +64,9 @@ jobs:
         run: |
           python -m venv /tmp/try
           /tmp/try/bin/pip install dist/*.whl
-          /tmp/try/bin/reconkit --version | grep -qx "reconkit ${{ needs.check.outputs.version }}"
-          /tmp/try/bin/reconkit tools list
-          /tmp/try/bin/reconkit plugins
+          /tmp/try/bin/zues --version | grep -qx "zues ${{ needs.check.outputs.version }}"
+          /tmp/try/bin/zues tools list
+          /tmp/try/bin/zues plugins
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist
@@ -96,7 +96,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=short
           labels: |
-            org.opencontainers.image.title=ReconKit
+            org.opencontainers.image.title=ZuesScan
             org.opencontainers.image.licenses=MIT
       - if: env.PUBLISH == 'true'
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -116,12 +116,12 @@ jobs:
           provenance: mode=max
       - name: the amd64 image works (doctor finds every tool)
         run: |
-          docker buildx build --platform linux/amd64 --load -t reconkit:release .
-          docker run --rm --read-only --tmpfs /tmp reconkit:release doctor --json > doctor.json
+          docker buildx build --platform linux/amd64 --load -t zues-scan:release .
+          docker run --rm --read-only --tmpfs /tmp zues-scan:release doctor --json > doctor.json
           python3 -c 'import json; r = json.load(open("doctor.json")); assert r["ready"], r'
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: reconkit:release
+          image-ref: zues-scan:release
           format: sarif
           output: trivy.sarif
           ignore-unfixed: true
@@ -179,4 +179,4 @@ jobs:
           } >> notes.md
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "ReconKit $GITHUB_REF_NAME" --notes-file notes.md
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "ZuesScan $GITHUB_REF_NAME" --notes-file notes.md

@@ -11,16 +11,16 @@ from typing import Any
 import pytest
 from conftest import FakePlugin, fake_resolver, lab_resolver, lab_scope
 
-from reconkit import cli
-from reconkit.cve import LocalCveSource
-from reconkit.orchestrator import Orchestrator, RunStatus
-from reconkit.plugins.base import ScanError, ScanResult
-from reconkit.plugins.nuclei import NucleiPlugin, network_target, templates_version
-from reconkit.plugins.subfinder import SubfinderPlugin
-from reconkit.schema import Asset, Confidence, RawOutput, ScanTarget, Service
-from reconkit.scope import Scope
-from reconkit.server.config import ConfigError, load_config
-from reconkit.server.jobs import spec_for
+from zues_scan import cli
+from zues_scan.cve import LocalCveSource
+from zues_scan.orchestrator import Orchestrator, RunStatus
+from zues_scan.plugins.base import ScanError, ScanResult
+from zues_scan.plugins.nuclei import NucleiPlugin, network_target, templates_version
+from zues_scan.plugins.subfinder import SubfinderPlugin
+from zues_scan.schema import Asset, Confidence, RawOutput, ScanTarget, Service
+from zues_scan.scope import Scope
+from zues_scan.server.config import ConfigError, load_config
+from zues_scan.server.jobs import spec_for
 
 SAMPLE = (Path(__file__).parent / "data" / "nuclei_sample.jsonl").read_text(encoding="utf-8")
 APACHE = Service(port=8080, name="http", product="Apache httpd", version="2.4.49")
@@ -40,7 +40,7 @@ def templates(tmp_path: Path) -> Path:
     folder = tmp_path / "nuclei-templates"
     (folder / "http").mkdir(parents=True)
     (folder / ".nuclei-ignore").write_text("tags:\n  - dos\n", encoding="utf-8")
-    (folder / ".reconkit-version").write_text("10.5.2\n", encoding="utf-8")
+    (folder / ".zues-version").write_text("10.5.2\n", encoding="utf-8")
     return folder
 
 
@@ -263,7 +263,7 @@ class Finder:
         return "2.17.0"
 
     def discover(self, domain: str) -> Any:
-        from reconkit.plugins.base import DiscoveryResult
+        from zues_scan.plugins.base import DiscoveryResult
 
         return DiscoveryResult(names=list(self.names))
 
@@ -389,7 +389,7 @@ def test_bad_tool_settings_stop_before_scanning(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     scanner = FakePlugin([])
-    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", lambda **_: scanner)
+    monkeypatch.setattr("zues_scan.plugins.registry.NmapPlugin", lambda **_: scanner)
     (tmp_path / "scope.txt").write_text("example.com\n*.example.com\n", encoding="utf-8")
     argv = ["scan", "example.com", "--scope", "scope.txt", "--db", "r.db", "--discover", *extra]
     assert cli.main(argv) == 2
@@ -407,10 +407,10 @@ def test_the_image_sets_the_templates_by_environment(
             super().__init__()
             made.append(kwargs)
 
-    monkeypatch.setenv("RECONKIT_NUCLEI_TEMPLATES", str(templates))
-    monkeypatch.setattr("reconkit.scope.resolve_addresses", lab_resolver)
-    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", lambda **_: FakePlugin([]))
-    monkeypatch.setattr("reconkit.plugins.registry.NucleiPlugin", Made)
+    monkeypatch.setenv("ZUES_NUCLEI_TEMPLATES", str(templates))
+    monkeypatch.setattr("zues_scan.scope.resolve_addresses", lab_resolver)
+    monkeypatch.setattr("zues_scan.plugins.registry.NmapPlugin", lambda **_: FakePlugin([]))
+    monkeypatch.setattr("zues_scan.plugins.registry.NucleiPlugin", Made)
     scope = tmp_path / "scope.txt"
     scope.write_text("@activity active\n10.0.0.0/24\n", encoding="utf-8")
     argv = ["scan", "10.0.0.5", "--scope", str(scope), "--db", str(tmp_path / "r.db"), "--nuclei"]
@@ -422,7 +422,7 @@ def test_the_image_sets_the_templates_by_environment(
 
 
 def test_check_rate_is_its_own_setting() -> None:
-    from reconkit.profiles import BUILTIN, ProfileError, override
+    from zues_scan.profiles import BUILTIN, ProfileError, override
 
     full = BUILTIN["full"]
     assert NucleiPlugin(full).rate == 50  # neither set: the cautious default
@@ -436,7 +436,7 @@ def test_check_rate_is_its_own_setting() -> None:
 
 
 def test_the_lab_profile_scans_fast_without_capping_nmap() -> None:
-    from reconkit.profiles import load_profiles
+    from zues_scan.profiles import load_profiles
 
     lab = load_profiles(Path(__file__).parent.parent / "lab" / "profiles.toml")["lab"]
     assert (lab.ports, lab.traceroute, lab.max_rate, lab.check_rate) == ("-", True, None, 300)

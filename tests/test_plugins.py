@@ -14,18 +14,18 @@ from typing import Any
 import pytest
 from conftest import FakePlugin, lab_asset, lab_resolver, lab_scope
 
-from reconkit import cli
-from reconkit.orchestrator import Orchestrator
-from reconkit.plugins import contract, registry
-from reconkit.plugins.base import DiscoveryResult, ScanResult
-from reconkit.plugins.registry import PluginContext, PluginError, PluginSpec
-from reconkit.schema import Asset, Finding, RawOutput, ScanTarget, Service
-from reconkit.scope import Activity, Scope, ScopeError
-from reconkit.server.config import ConfigError, load_config
-from reconkit.server.jobs import spec_for
-from reconkit.storage import Storage
+from zues_scan import cli
+from zues_scan.orchestrator import Orchestrator
+from zues_scan.plugins import contract, registry
+from zues_scan.plugins.base import DiscoveryResult, ScanResult
+from zues_scan.plugins.registry import PluginContext, PluginError, PluginSpec
+from zues_scan.schema import Asset, Finding, RawOutput, ScanTarget, Service
+from zues_scan.scope import Activity, Scope, ScopeError
+from zues_scan.server.config import ConfigError, load_config
+from zues_scan.server.jobs import spec_for
+from zues_scan.storage import Storage
 
-EXAMPLE = Path(__file__).parent.parent / "examples" / "reconkit-exposed-git"
+EXAMPLE = Path(__file__).parent.parent / "examples" / "zues-exposed-git"
 PLAN = ScanTarget("10.0.0.5", ("10.0.0.5",))
 
 
@@ -99,16 +99,16 @@ def test_the_built_in_plugins() -> None:
 
 def test_a_package_adds_a_plugin_and_a_broken_one_is_left_out() -> None:
     entries = [
-        Entry("probe", spec(), dist="reconkit-probe"),
-        Entry("lazy", lambda: spec("lazy"), dist="reconkit-lazy"),  # a function returning one
+        Entry("probe", spec(), dist="zues-probe"),
+        Entry("lazy", lambda: spec("lazy"), dist="zues-lazy"),  # a function returning one
         Entry("broken", ImportError("No module named 'requests'")),
         Entry("wrong", object()),
         Entry("nmap", spec("nmap", "scanner")),  # may not replace a built-in
     ]
     loaded = registry.load(lambda: entries)
 
-    assert loaded.plugins["probe"].source == "reconkit-probe"
-    assert loaded.plugins["lazy"].source == "reconkit-lazy"
+    assert loaded.plugins["probe"].source == "zues-probe"
+    assert loaded.plugins["lazy"].source == "zues-lazy"
     assert loaded.plugins["nmap"].source == "built-in"
     assert len(loaded.problems) == 3
     assert "No module named 'requests'" in loaded.problems[0]
@@ -121,7 +121,7 @@ def test_a_package_adds_a_plugin_and_a_broken_one_is_left_out() -> None:
     [
         (("Bad Name", "check", Activity.SCAN), "lowercase letters"),
         (("probe", "exploit", Activity.SCAN), "kind must be one of"),
-        (("probe", "check", "active"), "must be a reconkit.scope.Activity"),
+        (("probe", "check", "active"), "must be a zues_scan.scope.Activity"),
     ],
 )
 def test_a_spec_is_checked(args: tuple[Any, Any, Any], error: str) -> None:
@@ -184,7 +184,7 @@ def test_a_check_that_does_not_say_counts_as_active() -> None:
 # --- the command line and the service ---------------------------------------------------------
 
 
-def test_reconkit_plugins_lists_them(capsys: pytest.CaptureFixture[str]) -> None:
+def test_zues_plugins_lists_them(capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main(["plugins"]) == 0
     out = capsys.readouterr().out
     assert out.splitlines()[0].split() == ["NAME", "KIND", "ACTIVITY", "READY", "SOURCE", "SUMMARY"]
@@ -218,9 +218,9 @@ def test_wrong_plugin_names_stop_before_scanning(
 def test_a_refused_check_is_in_the_audit_trail(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr("reconkit.scope.resolve_addresses", lab_resolver)
-    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", lambda **_: FakePlugin([]))
-    monkeypatch.setattr("reconkit.plugins.registry.NucleiPlugin", lambda **_: NucleiLike())
+    monkeypatch.setattr("zues_scan.scope.resolve_addresses", lab_resolver)
+    monkeypatch.setattr("zues_scan.plugins.registry.NmapPlugin", lambda **_: FakePlugin([]))
+    monkeypatch.setattr("zues_scan.plugins.registry.NucleiPlugin", lambda **_: NucleiLike())
     db = tmp_path / "r.db"
     argv = ["scan", "10.0.0.5", "--scope", _scope(tmp_path), "--db", str(db), "--nuclei"]
 
@@ -323,10 +323,10 @@ def test_a_discovery_plugin_stays_under_its_domain() -> None:
 @pytest.fixture
 def example(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.syspath_prepend(str(EXAMPLE))
-    sys.modules.pop("reconkit_exposed_git", None)
-    import reconkit_exposed_git
+    sys.modules.pop("zues_exposed_git", None)
+    import zues_exposed_git
 
-    return reconkit_exposed_git
+    return zues_exposed_git
 
 
 @pytest.fixture
@@ -374,9 +374,9 @@ def test_the_example_plugin_finds_an_exposed_repository(
 
 
 def test_the_example_plugin_registers_through_its_entry_point(example: Any) -> None:
-    loaded = registry.load(lambda: [Entry("exposed-git", example.PLUGIN, "reconkit-exposed-git")])
+    loaded = registry.load(lambda: [Entry("exposed-git", example.PLUGIN, "zues-exposed-git")])
     spec = loaded.get("exposed-git", "check")
-    assert (spec.activity, spec.source) == (Activity.ACTIVE, "reconkit-exposed-git")
+    assert (spec.activity, spec.source) == (Activity.ACTIVE, "zues-exposed-git")
     text = (EXAMPLE / "pyproject.toml").read_text(encoding="utf-8")
-    assert '[project.entry-points."reconkit.plugins"]' in text
-    assert 'exposed-git = "reconkit_exposed_git:PLUGIN"' in text
+    assert '[project.entry-points."zues_scan.plugins"]' in text
+    assert 'exposed-git = "zues_exposed_git:PLUGIN"' in text

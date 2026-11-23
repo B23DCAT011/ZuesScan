@@ -1,7 +1,7 @@
 """Tests for the CVE matching stage (offline local source)."""
 
-from reconkit.cve import LocalCveSource
-from reconkit.schema import Service, Severity
+from zues_scan.cve import LocalCveSource
+from zues_scan.schema import Service, Severity
 
 
 def test_matches_known_product_version() -> None:

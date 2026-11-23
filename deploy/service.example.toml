@@ -1,15 +1,15 @@
-# ReconKit service configuration for Docker Compose. Copy it to deploy/service.toml
+# ZuesScan service configuration for Docker Compose. Copy it to deploy/service.toml
 # (git-ignored) and edit: compose mounts this folder read-only at /config.
 #
 # Only the targets listed here can be scanned, by the scheduler or through the web.
 
 [service]
-db = "/data/reconkit.db"                 # in the `data` volume
-# cve_cache = "/data/reconkit-cve.db"    # NVD data: docker compose run --rm worker cve sync ...
+db = "/data/zues.db"                 # in the `data` volume
+# cve_cache = "/data/zues-cve.db"    # NVD data: docker compose run --rm worker cve sync ...
 # subfinder_config = "/config/subfinder.yaml"  # API keys of subfinder's sources (git-ignored)
-# nuclei_templates: the image's pinned copy is used (RECONKIT_NUCLEI_TEMPLATES)
+# nuclei_templates: the image's pinned copy is used (ZUES_NUCLEI_TEMPLATES)
 redis_url = "redis://redis:6379/0"       # the `redis` service of compose.yaml
-queue = "reconkit"
+queue = "zues"
 
 # One block per person or script: `docker compose run --rm web token --name alice --role operator`
 # prints the token once and the block to paste here. Never store the token itself.

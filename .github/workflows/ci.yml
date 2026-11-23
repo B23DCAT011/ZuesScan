@@ -29,7 +29,7 @@ jobs:
       - run: pip install -e ".[dev,server,server-test,mcp]"
       - run: ruff check .
       - run: ruff format --check .
-      - run: mypy reconkit tests examples/reconkit-exposed-git/reconkit_exposed_git
+      - run: mypy zues_scan tests examples/zues-exposed-git/zues_exposed_git
 
   test:
     name: tests (${{ matrix.os }}, py${{ matrix.python }})
@@ -53,7 +53,7 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: pytest
 
-  # The background service (reconkit[server]): queue, worker, scheduler and web API
+  # The background service (zues-scan[server]): queue, worker, scheduler and web API
   # through real RQ on an in-memory Redis and FastAPI's test client. The core test matrix above installs no extra, which also
   # proves that the core stays dependency-free and that these tests skip cleanly.
   server:
@@ -81,24 +81,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: docker build -t reconkit:ci .
+      - run: docker build -t zues-scan:ci .
       - run: docker compose config --quiet
       - name: smoke test
         run: |
-          docker run --rm reconkit:ci --help > /dev/null
-          test "$(docker run --rm --entrypoint id reconkit:ci -u)" = 10001
+          docker run --rm zues-scan:ci --help > /dev/null
+          test "$(docker run --rm --entrypoint id zues-scan:ci -u)" = 10001
           docker network create lab
           docker run -d --rm --name target --network lab redis:7.4-alpine
           ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' target)
           docker run --rm --network lab --read-only --tmpfs /tmp --cap-drop ALL \
-            --cap-add NET_RAW --entrypoint sh reconkit:ci -c "
+            --cap-add NET_RAW --entrypoint sh zues-scan:ci -c "
               echo $ip > /tmp/scope.txt
-              reconkit scan $ip --scope /tmp/scope.txt --db /tmp/r.db --profile full > /tmp/out
+              zues scan $ip --scope /tmp/scope.txt --db /tmp/r.db --profile full > /tmp/out
               cat /tmp/out
               grep -q '6379/tcp' /tmp/out && grep -q 'route:' /tmp/out"
-      - name: reconkit doctor finds every tool ready in the image
+      - name: zues doctor finds every tool ready in the image
         run: |
-          docker run --rm --read-only --tmpfs /tmp reconkit:ci doctor --json > doctor.json
+          docker run --rm --read-only --tmpfs /tmp zues-scan:ci doctor --json > doctor.json
           python3 - <<'PY'
           import json
           report = json.load(open("doctor.json"))
@@ -110,12 +110,12 @@ jobs:
           PY
       - name: nuclei, templates and subfinder are the locked versions
         run: |
-          nuclei=$(awk '$1 == "nuclei" && $3 == "linux-amd64" { print $2; exit }' reconkit/data/tools.lock)
-          templates=$(awk '$1 == "nuclei-templates" && $3 == "any" { print $2; exit }' reconkit/data/tools.lock)
-          subfinder=$(awk '$1 == "subfinder" && $3 == "linux-amd64" { print $2; exit }' reconkit/data/tools.lock)
-          versions=$(docker run --rm --read-only --tmpfs /tmp --entrypoint python reconkit:ci -c '
-          from reconkit.plugins.nuclei import NucleiPlugin, default_templates
-          from reconkit.plugins.subfinder import SubfinderPlugin
+          nuclei=$(awk '$1 == "nuclei" && $3 == "linux-amd64" { print $2; exit }' zues_scan/data/tools.lock)
+          templates=$(awk '$1 == "nuclei-templates" && $3 == "any" { print $2; exit }' zues_scan/data/tools.lock)
+          subfinder=$(awk '$1 == "subfinder" && $3 == "linux-amd64" { print $2; exit }' zues_scan/data/tools.lock)
+          versions=$(docker run --rm --read-only --tmpfs /tmp --entrypoint python zues-scan:ci -c '
+          from zues_scan.plugins.nuclei import NucleiPlugin, default_templates
+          from zues_scan.plugins.subfinder import SubfinderPlugin
           print(NucleiPlugin(templates=default_templates()).version())
           print(SubfinderPlugin().version())')
           echo "$versions"
@@ -142,16 +142,16 @@ jobs:
           grep -q 'confidence: confirmed' demo.txt                # Apache CVE-2021-41773
       - name: each run records nuclei's and the templates' versions
         run: |
-          docker compose -p reconkit-lab exec -T worker python -c "
-          from reconkit.storage import Storage
-          with Storage('/data/reconkit.db') as store:
+          docker compose -p zues-lab exec -T worker python -c "
+          from zues_scan.storage import Storage
+          with Storage('/data/zues.db') as store:
               versions = store.load_run(store.latest_run_id()).tool_versions
           print(versions)
           assert '(templates ' in versions['nuclei'], versions"
       - name: the lab cannot reach the Internet
         run: |
           probe='timeout 5 bash -c "</dev/tcp/1.1.1.1/443"'
-          if docker compose -p reconkit-lab exec -T apache bash -c "$probe"; then
+          if docker compose -p zues-lab exec -T apache bash -c "$probe"; then
             echo "a lab target reached the Internet"; exit 1
           fi
       - if: always()

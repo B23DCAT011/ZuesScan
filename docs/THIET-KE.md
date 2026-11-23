@@ -1,4 +1,4 @@
-# Thiết kế & quyết định — ReconKit
+# Thiết kế & quyết định — ZuesScan
 
 Bản tóm tắt của tài liệu "Phân tích & Thiết kế hệ thống v0.2" (bản Word lưu ngoài git).
 Các quyết định dưới đây được chốt ngày **2026-11-07**; muốn đổi thì sửa file này trong một PR
@@ -8,7 +8,7 @@ Liên quan: [`TASKS.md`](../TASKS.md) (lộ trình) · [`KNOWN-GAPS.md`](KNOWN-G
 
 ## Đích đến
 
-Từ một công cụ CLI quét một mục tiêu, ReconKit trở thành **dịch vụ chạy nền**:
+Từ một công cụ CLI quét một mục tiêu, ZuesScan trở thành **dịch vụ chạy nền**:
 
 - quét định kỳ các mạng đã được uỷ quyền;
 - **ghi nhớ** kết quả theo thời gian;
@@ -54,10 +54,10 @@ cột mốc M1 (giao diện đầu tiên) chỉ bắt đầu sau F9.
 | D7 | Traceroute | **Có**, plugin nmap bật `--traceroute` theo profile | Cần cho các hop trên bản đồ; đổi lại quét lâu hơn một chút |
 | D8 | Lộ trình | **Chèn M1 sau F9** | Xem `TASKS.md` |
 | D10 | AI agent (2026-11-23) | **MCP server stdio là client của web API; mỗi hành động cần người xác nhận (elicitation qua `Resolve`); không có tool chấp nhận rủi ro** | Một mô hình quyền duy nhất (token, vai trò, audit) cho người và AI; model không tự điền được câu trả lời xác nhận; quyết định có trách nhiệm pháp lý để lại cho con người |
-| D9 | Mở rộng công cụ (2026-11-23) | **Registry + entry points `reconkit.plugins`; mỗi plugin khai `activity`, scope đặt trần `@activity` (mặc định `scan`)** | Thêm công cụ = cài một gói, không sửa lõi; được khai thác hay không thuộc về giấy phép, không thuộc về cờ dòng lệnh. Xem `docs/PLUGINS.md` |
+| D9 | Mở rộng công cụ (2026-11-23) | **Registry + entry points `zues_scan.plugins`; mỗi plugin khai `activity`, scope đặt trần `@activity` (mặc định `scan`)** | Thêm công cụ = cài một gói, không sửa lõi; được khai thác hay không thuộc về giấy phép, không thuộc về cờ dòng lệnh. Xem `docs/PLUGINS.md` |
 
 Ràng buộc chung: lõi vẫn **không phụ thuộc thư viện ngoài**. Thư viện web và hàng đợi đặt
-trong gói tuỳ chọn `reconkit[server]`.
+trong gói tuỳ chọn `zues-scan[server]`.
 
 ## Vòng đời một lỗ hổng (dựa trên fingerprint) — ✅ đã làm (`feat/diff`)
 
@@ -71,7 +71,7 @@ MỚI → ĐANG MỞ → ĐÃ BÁO SỬA → (run sau không thấy) → ĐÃ X�
 
 "Không thấy" chưa chắc là "đã vá". Chỉ xác nhận đã vá khi host vẫn phản hồi mà lỗi không còn.
 
-Cách ReconKit áp dụng quy tắc trên (`reconkit/inventory.py`): một run chỉ được coi là "đã nhìn
+Cách ZuesScan áp dụng quy tắc trên (`zues_scan/inventory.py`): một run chỉ được coi là "đã nhìn
 vào" một lỗi khi (1) host trả lời, (2) cổng chắc chắn được quét — dịch vụ vẫn mở, hoặc cùng
 profile với lần thấy lỗi, hoặc profile liệt kê rõ cổng đó, và (3) với CVE: cùng loại dữ liệu CVE
 (seed / cache NVD). Run không nhìn vào thì **không đổi gì**. Host nằm trong kế hoạch quét mà
@@ -80,7 +80,7 @@ không trả lời → `not_responding`, không phải "đã vá".
 | Trạng thái (code) | Nghĩa |
 |---|---|
 | `new` → `open` | thấy lần đầu → thấy lại |
-| `fix_claimed` | có người báo đã sửa (`reconkit finding ID --claim-fixed`) |
+| `fix_claimed` | có người báo đã sửa (`zues finding ID --claim-fixed`) |
 | `fixed` | đã báo sửa và run sau (có nhìn vào) không còn thấy |
 | `fake_fix` ⚠ | đã báo sửa nhưng run sau vẫn thấy |
 | `gone` | tự hết mà chưa ai báo sửa: kiểm tra lại |

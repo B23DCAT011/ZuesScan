@@ -3,8 +3,8 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "reconkit"
-dynamic = ["version"]  # from reconkit.__version__: one place to bump, checked against the tag
+name = "zues-scan"
+dynamic = ["version"]  # from zues_scan.__version__: one place to bump, checked against the tag
 description = "Recon orchestrator & vulnerability management (academic project)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -19,15 +19,15 @@ dev = [
     "mypy>=1.10",
 ]
 # The background service (phase 3): queue, worker, web API. The scanning core needs
-# none of it: `pip install reconkit` stays dependency-free.
+# none of it: `pip install zues` stays dependency-free.
 server = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
     "redis>=5.0",
     "rq>=1.16",
 ]
-# `reconkit mcp`: ReconKit as tools for AI agents (Model Context Protocol), as a client
-# of a running ReconKit service. Needed only on the machine that runs the agent.
+# `zues mcp`: ZuesScan as tools for AI agents (Model Context Protocol), as a client
+# of a running ZuesScan service. Needed only on the machine that runs the agent.
 mcp = [
     "mcp>=2.3,<3",
 ]
@@ -43,17 +43,17 @@ server-test = [
 ]
 
 [project.scripts]
-reconkit = "reconkit.cli:main"
+zues = "zues_scan.cli:main"
 
 [tool.setuptools.dynamic]
-version = { attr = "reconkit.__version__" }
+version = { attr = "zues_scan.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["reconkit*"]
+include = ["zues_scan*"]
 
 [tool.setuptools.package-data]
-reconkit = ["data/*.json", "data/*.lock", "report/assets/*", "report/vendor/*", "server/static/*"]
+zues_scan = ["data/*.json", "data/*.lock", "report/assets/*", "report/vendor/*", "server/static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

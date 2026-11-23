@@ -9,22 +9,22 @@ from pathlib import Path
 import pytest
 from conftest import FakePlugin, lab_asset, lab_resolver
 
-from reconkit import backup as backups
-from reconkit import cli
-from reconkit.schema import Service
-from reconkit.storage import SCHEMA_VERSION, Storage
+from zues_scan import backup as backups
+from zues_scan import cli
+from zues_scan.schema import Service
+from zues_scan.storage import SCHEMA_VERSION, Storage
 
 
 @pytest.fixture
 def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A database with one real (fake-scanner) run, saved through the CLI."""
-    monkeypatch.setattr("reconkit.scope.resolve_ipv4", lab_resolver)
-    monkeypatch.setattr("reconkit.scope.resolve_addresses", lab_resolver)
+    monkeypatch.setattr("zues_scan.scope.resolve_ipv4", lab_resolver)
+    monkeypatch.setattr("zues_scan.scope.resolve_addresses", lab_resolver)
     fake = FakePlugin([lab_asset(Service(port=21, product="vsftpd", version="2.3.4"))])
-    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", lambda **_: fake)
+    monkeypatch.setattr("zues_scan.plugins.registry.NmapPlugin", lambda **_: fake)
     scope = tmp_path / "scope.txt"
     scope.write_text("scanme.lab\n10.0.0.0/24\n", encoding="utf-8")
-    path = tmp_path / "reconkit.db"
+    path = tmp_path / "zues.db"
     assert cli.main(["scan", "scanme.lab", "--scope", str(scope), "--db", str(path)]) == 0
     return path
 
@@ -35,7 +35,7 @@ def test_a_backup_is_a_checked_copy_with_its_hash(db: Path, tmp_path: Path) -> N
     check = made.check
     assert check.ok, check.problems
     copy = Path(check.path)
-    assert re.fullmatch(r"reconkit-\d{8}T\d{6}Z\.db", copy.name)
+    assert re.fullmatch(r"zues-\d{8}T\d{6}Z\.db", copy.name)
     assert (check.runs, check.schema_version) == (1, SCHEMA_VERSION)
     assert check.audit_events == 1 and check.audit_head is not None
     sidecar = copy.with_name(copy.name + ".sha256").read_text(encoding="utf-8")
@@ -69,10 +69,10 @@ def test_verify_needs_the_recorded_hash(db: Path, tmp_path: Path) -> None:
     copy = Path(backups.backup(db, tmp_path / "out").check.path)
     copy.with_name(copy.name + ".sha256").unlink()
     [problem] = backups.verify(copy).problems
-    assert problem.startswith("no reconkit-") and "cannot be compared" in problem
+    assert problem.startswith("no zues-") and "cannot be compared" in problem
 
 
-def test_verify_rejects_what_is_not_a_reconkit_database(tmp_path: Path) -> None:
+def test_verify_rejects_what_is_not_a_zues_database(tmp_path: Path) -> None:
     junk = tmp_path / "junk.db"
     junk.write_bytes(b"not a database at all" * 100)
     assert any("not a readable SQLite" in p for p in backups.verify(junk).problems)
@@ -82,24 +82,24 @@ def test_rotation_keeps_the_newest_and_touches_nothing_else(db: Path, tmp_path: 
     out = tmp_path / "out"
     out.mkdir()
     for stamp in ("20260101T000000Z", "20260102T000000Z", "20260103T000000Z"):
-        (out / f"reconkit-{stamp}.db").write_bytes(b"old")
-        (out / f"reconkit-{stamp}.db.sha256").write_text("x", encoding="utf-8")
+        (out / f"zues-{stamp}.db").write_bytes(b"old")
+        (out / f"zues-{stamp}.db.sha256").write_text("x", encoding="utf-8")
     (out / "notes.txt").write_text("mine", encoding="utf-8")
-    (out / "reconkit-manual.db").write_bytes(b"mine too")
+    (out / "zues-manual.db").write_bytes(b"mine too")
 
     made = backups.backup(db, out, keep=2)
 
     assert made.removed == [
-        "reconkit-20260101T000000Z.db",
-        "reconkit-20260102T000000Z.db",
+        "zues-20260101T000000Z.db",
+        "zues-20260102T000000Z.db",
     ]
     left = sorted(p.name for p in out.iterdir())
     assert left == sorted(
         [
             "notes.txt",
-            "reconkit-manual.db",
-            "reconkit-20260103T000000Z.db",
-            "reconkit-20260103T000000Z.db.sha256",
+            "zues-manual.db",
+            "zues-20260103T000000Z.db",
+            "zues-20260103T000000Z.db.sha256",
             Path(made.check.path).name,
             Path(made.check.path).name + ".sha256",
         ]

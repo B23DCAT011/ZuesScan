@@ -1,18 +1,18 @@
-# ReconKit as a service: Redis, the web API + dashboard, a worker, the scheduler.
+# ZuesScan as a service: Redis, the web API + dashboard, a worker, the scheduler.
 #
 #   cp deploy/service.example.toml deploy/service.toml    # then edit targets and tokens
 #   docker compose up -d --build
 #   open http://127.0.0.1:8000
 #
-# Hardening: every ReconKit container runs as an unprivileged user on a read-only root
+# Hardening: every ZuesScan container runs as an unprivileged user on a read-only root
 # filesystem with all Linux capabilities dropped. Only the worker gets one back,
 # NET_RAW, for nmap's raw sockets (see the worker below).
-name: reconkit
+name: zues-scan
 
-x-reconkit: &reconkit
+x-zues: &zues
   build: .
-  # A released image instead of a local build: RECONKIT_IMAGE=ghcr.io/<owner>/reconkit:0.2.0
-  image: ${RECONKIT_IMAGE:-reconkit:local}
+  # A released image instead of a local build: ZUES_IMAGE=ghcr.io/<owner>/zues-scan:0.2.0
+  image: ${ZUES_IMAGE:-zues-scan:local}
   restart: unless-stopped
   read_only: true
   tmpfs:
@@ -48,7 +48,7 @@ services:
       retries: 5
 
   web:
-    <<: *reconkit
+    <<: *zues
     command: ["web", "--config", "/config/service.toml", "--host", "0.0.0.0", "--port", "8000"]
     # Published on the host's loopback only. To serve other machines, put a TLS reverse
     # proxy in front (it must send X-Forwarded-Proto; set FORWARDED_ALLOW_IPS to its
@@ -66,7 +66,7 @@ services:
       retries: 3
 
   worker:
-    <<: *reconkit
+    <<: *zues
     command: ["worker", "--config", "/config/service.toml"]
     # nmap needs raw sockets for SYN scans and traceroute. The image gives the nmap
     # binary that one capability (setcap cap_net_raw), which a non-root process can
@@ -79,7 +79,7 @@ services:
     # and point redis_url at a Redis the host can reach.
 
   scheduler:
-    <<: *reconkit
+    <<: *zues
     command: ["scheduler", "--config", "/config/service.toml"]
 
 volumes:

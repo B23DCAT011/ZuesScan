@@ -1,5 +1,5 @@
 #!/bin/sh
-# Start the ReconKit lab: the service (compose.yaml) + vulnerable targets on isolated
+# Start the ZuesScan lab: the service (compose.yaml) + vulnerable targets on isolated
 # networks (lab/compose.lab.yaml), under its own project name. On the first run, make an
 # operator token and print it once.
 #
@@ -8,7 +8,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 export MSYS_NO_PATHCONV=1  # Git Bash on Windows: keep container paths as they are
-compose() { docker compose -p reconkit-lab -f compose.yaml -f lab/compose.lab.yaml "$@"; }
+compose() { docker compose -p zues-lab -f compose.yaml -f lab/compose.lab.yaml "$@"; }
 
 [ -f lab/service.toml ] || cp lab/service.example.toml lab/service.toml
 compose up -d --build
@@ -22,4 +22,4 @@ if ! grep -q '^\[\[tokens\]\]' lab/service.toml; then
 fi
 echo
 echo "The scheduler scans lab-dmz and lab-internal now and every 30 minutes."
-echo "Follow it with: docker compose -p reconkit-lab logs -f worker"
+echo "Follow it with: docker compose -p zues-lab logs -f worker"

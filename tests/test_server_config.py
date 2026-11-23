@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from reconkit.server.config import ConfigError, load_config, parse_every
+from zues_scan.server.config import ConfigError, load_config, parse_every
 
 DIGEST = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"  # sha256("test")
 
@@ -24,7 +24,7 @@ def write_config(tmp_path: Path, body: str) -> Path:
 
 FULL = """
 [service]
-db = "{dir}/reconkit.db"
+db = "{dir}/zues.db"
 cve_cache = "{dir}/cve.db"
 redis_url = "redis://redis:6379/1"
 queue = "scans"
@@ -61,7 +61,7 @@ min_priority = "P1"
 def test_a_full_config_is_read(tmp_path: Path) -> None:
     config = load_config(write_config(tmp_path, FULL))
 
-    assert config.db == f"{tmp_path.as_posix()}/reconkit.db"
+    assert config.db == f"{tmp_path.as_posix()}/zues.db"
     assert config.cve_cache == f"{tmp_path.as_posix()}/cve.db"
     assert (config.redis_url, config.queue) == ("redis://redis:6379/1", "scans")
     assert [(t.name, t.role) for t in config.tokens] == [("alice", "operator"), ("bob", "viewer")]
@@ -82,7 +82,7 @@ def test_the_minimal_config_has_safe_defaults(tmp_path: Path) -> None:
     config = load_config(write_config(tmp_path, '[service]\ndb = "x.db"\n'))
 
     assert config.redis_url == "redis://localhost:6379/0"
-    assert config.queue == "reconkit"
+    assert config.queue == "zues"
     assert config.tokens == () and config.targets == {}
     assert config.notify.webhook is None and config.notify.min_priority == "P2"
 

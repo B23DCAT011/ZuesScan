@@ -1,13 +1,15 @@
-# ReconKit
+# ZuesScan
 
 Bộ điều phối recon & quản lý lỗ hổng chạy nền (đồ án an toàn thông tin).
+
+Lệnh: `zues`. Trước 0.2.0 dự án tên là *ReconKit* — dữ liệu tạo từ thời đó vẫn dùng được.
 
 > ⚠️ Chỉ dùng trên tài sản của mình hoặc được uỷ quyền bằng văn bản (lab, mạng nội bộ, chương trình có scope hợp pháp).
 
 ## Tài liệu thiết kế (SDD v0.1)
 https://claude.ai/artifact/69X8tKYCnShu8rYwzaNiV8
 
-## ReconKit làm gì
+## ZuesScan làm gì
 
 Quét định kỳ những gì **được phép** quét, nhớ mọi thứ đã thấy, và chỉ ra điều cần làm:
 
@@ -37,8 +39,8 @@ Chạy thử toàn bộ trong 2 lệnh (cần Docker): `sh lab/up.sh` rồi `sh 
 [Docker](#docker). Chỉ cần Docker; dùng image đã phát hành thì không phải build:
 
 ```bash
-export RECONKIT_IMAGE=ghcr.io/b23dcat011/reconkit:0.2.0       # linux/amd64 + linux/arm64
-cosign verify $RECONKIT_IMAGE \
+export ZUES_IMAGE=ghcr.io/b23dcat011/zues-scan:0.2.0       # linux/amd64 + linux/arm64
+cosign verify $ZUES_IMAGE \
   --certificate-identity-regexp 'https://github.com/B23DCAT011/reconkit/.github/workflows/release.yml@refs/tags/v.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com    # image do CI ký thật
 docker compose pull web worker scheduler && docker compose up -d --no-build
@@ -48,30 +50,30 @@ docker compose pull web worker scheduler && docker compose up -d --no-build
 
 ```bash
 pipx install git+https://github.com/B23DCAT011/reconkit       # hoặc: pip install --user ...
-reconkit doctor               # máy có gì, thiếu gì, và lệnh cài đúng cho hệ điều hành này
-sudo apt install nmap         # (ví dụ) gói hệ thống: ReconKit chỉ in lệnh, không tự cài
-reconkit tools install        # nuclei + subfinder + nuclei-templates: không cần admin
-reconkit doctor               # "ready to scan"
+zues doctor               # máy có gì, thiếu gì, và lệnh cài đúng cho hệ điều hành này
+sudo apt install nmap         # (ví dụ) gói hệ thống: ZuesScan chỉ in lệnh, không tự cài
+zues tools install        # nuclei + subfinder + nuclei-templates: không cần admin
+zues doctor               # "ready to scan"
 ```
 
 Chia việc như vậy là có chủ ý:
 
 | Công cụ | Ai cài | Vì sao |
 |---|---|---|
-| nmap, ssh (và Npcap trên Windows) | **người dùng**, bằng trình quản lý gói của hệ thống (`reconkit doctor` in đúng lệnh) | cần quyền admin, cài driver / capability; một công cụ bảo mật không được tự leo quyền; Npcap bản miễn phí không được đóng gói phân phối kèm |
-| nuclei, subfinder, nuclei-templates | **ReconKit** (`reconkit tools install`) | một file chạy được, giấy phép MIT; cài vào thư mục của người dùng, không cần admin |
+| nmap, ssh (và Npcap trên Windows) | **người dùng**, bằng trình quản lý gói của hệ thống (`zues doctor` in đúng lệnh) | cần quyền admin, cài driver / capability; một công cụ bảo mật không được tự leo quyền; Npcap bản miễn phí không được đóng gói phân phối kèm |
+| nuclei, subfinder, nuclei-templates | **ZuesScan** (`zues tools install`) | một file chạy được, giấy phép MIT; cài vào thư mục của người dùng, không cần admin |
 
-`reconkit tools install` tải **đúng** bản đã ghim trong `reconkit/data/tools.lock` cho nền tảng
+`zues tools install` tải **đúng** bản đã ghim trong `zues_scan/data/tools.lock` cho nền tảng
 này (Linux / macOS amd64 + arm64, Windows amd64), từ chối file có SHA-256 khác, chỉ lấy đúng file
 chạy trong mỗi zip, giải nén templates an toàn, rồi ghi SHA-256 của những gì đã cài:
 
 ```bash
-reconkit tools list           # bản ghim, bản đã cài, và chương trình ReconKit sẽ dùng
-reconkit tools verify         # có gì bị sửa từ lúc cài không
-reconkit tools path           # thư mục chứa nuclei / subfinder (thêm vào PATH nếu muốn gọi tay)
+zues tools list           # bản ghim, bản đã cài, và chương trình ZuesScan sẽ dùng
+zues tools verify         # có gì bị sửa từ lúc cài không
+zues tools path           # thư mục chứa nuclei / subfinder (thêm vào PATH nếu muốn gọi tay)
 ```
 
-ReconKit tìm công cụ theo thứ tự: bản nó đã cài → PATH → chỗ bộ cài nmap của Windows đặt (nên
+ZuesScan tìm công cụ theo thứ tự: bản nó đã cài → PATH → chỗ bộ cài nmap của Windows đặt (nên
 nmap vừa cài xong vẫn dùng được dù terminal đang mở chưa thấy PATH mới). Templates đã cài được
 dùng tự động, và mỗi run ghi `nuclei 3.11.1 (templates 10.5.2)`. Image Docker được dựng bằng
 đúng file lock và đúng code này.
@@ -89,24 +91,24 @@ pip install -e ".[dev,server,server-test]"   # thêm test của dịch vụ ch�
 ## Plugin: thêm / bớt công cụ
 
 ```bash
-reconkit plugins                                   # plugin nào có, loại gì, mức chủ động, sẵn sàng chưa
-reconkit scan 10.0.0.0/24 --scope scope.txt --check nuclei --check exposed-git
-pip install ./examples/reconkit-exposed-git        # thêm một plugin = cài một gói Python
+zues plugins                                   # plugin nào có, loại gì, mức chủ động, sẵn sàng chưa
+zues scan 10.0.0.0/24 --scope scope.txt --check nuclei --check exposed-git
+pip install ./examples/zues-exposed-git        # thêm một plugin = cài một gói Python
 ```
 
 nmap, nuclei, subfinder, kiểm tra gói qua SSH là plugin dựng sẵn; công cụ khác thêm bằng một gói
-Python khai báo entry point `reconkit.plugins` — không sửa ReconKit. Mỗi plugin khai **mức chủ
+Python khai báo entry point `zues_scan.plugins` — không sửa ZuesScan. Mỗi plugin khai **mức chủ
 động** (`passive` / `scan` / `active`) và file scope quyết định được tới đâu (`@activity`).
 Hướng dẫn viết plugin, bộ kiểm tra hợp đồng và ví dụ: [`docs/PLUGINS.md`](docs/PLUGINS.md).
 
-## Kiểm tra máy: `reconkit doctor`
+## Kiểm tra máy: `zues doctor`
 
-Trước khi quét trên một máy mới, `reconkit doctor` cho biết máy có gì, thiếu gì và **lệnh cài
+Trước khi quét trên một máy mới, `zues doctor` cho biết máy có gì, thiếu gì và **lệnh cài
 đúng cho hệ điều hành đó** (apt / dnf / pacman / apk / zypper, brew, winget):
 
 ```text
-$ reconkit doctor
-ReconKit 0.1.0 on Debian GNU/Linux 13 (trixie), Python 3.13.18
+$ zues doctor
+ZuesScan 0.1.0 on Debian GNU/Linux 13 (trixie), Python 3.13.18
 
   ok       nmap              7.95 (/usr/bin/nmap)
   warn     nmap rights       no raw-socket rights: without them nmap falls back to a TCP
@@ -122,7 +124,7 @@ ready to scan (2 thing(s) above would make scans better)
   `cap_net_raw` (đọc thẳng thuộc tính `security.capability` của file) + `NMAP_PRIVILEGED`, hay
   Npcap trên Windows — thiếu quyền thì nmap âm thầm chuyển sang TCP connect scan, chậm hơn và
   không traceroute được. Trên Windows còn nhận ra nmap đã cài nhưng chưa có trong PATH.
-- **ReconKit không tự cài gói hệ thống** (nmap, ssh): việc đó cần quyền admin, và một công cụ
+- **ZuesScan không tự cài gói hệ thống** (nmap, ssh): việc đó cần quyền admin, và một công cụ
   bảo mật không được tự leo quyền; Npcap bản miễn phí cũng không được đóng gói phân phối kèm.
 - `--config service.toml` kiểm thêm cấu hình dịch vụ, database, Redis; `--json` cho script / CI.
 
@@ -135,9 +137,9 @@ Docker) và việc `subfinder -version` tự ghi file cấu hình vào volume d�
 # scope.txt: allowlist, mỗi dòng một target (host / IP / CIDR, '!' = deny, '#' = chú thích)
 printf 'scanme.lab\n10.0.0.0/24\n!10.0.0.1  # router, khong duoc quet\n' > scope.txt
 
-reconkit scan scanme.lab --scope scope.txt --db reconkit.db
-reconkit scan 10.0.0.0/24 --scope scope.txt        # quét cả dải, tự loại trừ 10.0.0.1
-reconkit scan 10.0.0.0/24 --scope scope.txt --traceroute   # ghi cả đường đi tới từng host (profile full bật sẵn)
+zues scan scanme.lab --scope scope.txt --db zues.db
+zues scan 10.0.0.0/24 --scope scope.txt        # quét cả dải, tự loại trừ 10.0.0.1
+zues scan 10.0.0.0/24 --scope scope.txt --traceroute   # ghi cả đường đi tới từng host (profile full bật sẵn)
 ```
 
 ### Kiểm tra chủ động bằng nuclei
@@ -147,8 +149,8 @@ reconkit scan 10.0.0.0/24 --scope scope.txt --traceroute   # ghi cả đường 
 `confirmed` — mạnh hơn suy đoán theo phiên bản.
 
 ```bash
-reconkit scan 10.0.0.0/24 --scope scope.txt --nuclei
-reconkit scan 10.0.0.0/24 --scope scope.txt --nuclei --nuclei-templates /opt/nuclei-templates
+zues scan 10.0.0.0/24 --scope scope.txt --nuclei
+zues scan 10.0.0.0/24 --scope scope.txt --nuclei --nuclei-templates /opt/nuclei-templates
 ```
 
 - **Web** (HTTP/HTTPS) được kiểm bằng URL theo **địa chỉ** đã duyệt; tên miền (vhost) gửi qua
@@ -161,7 +163,7 @@ reconkit scan 10.0.0.0/24 --scope scope.txt --nuclei --nuclei-templates /opt/nuc
   chỉ chạy template **có chữ ký hợp lệ** của ProjectDiscovery (`-dut`: template bị sửa hay bị
   cài thêm không chạy), bỏ mức `info` (nhận diện công nghệ, thiếu header — không phải lỗ hổng),
   giới hạn request/giây theo `--max-rate` của profile (mặc định 50).
-- **Templates ghim**: `--nuclei-templates DIR` (hoặc biến `RECONKIT_NUCLEI_TEMPLATES`; image
+- **Templates ghim**: `--nuclei-templates DIR` (hoặc biến `ZUES_NUCLEI_TEMPLATES`; image
   Docker đặt sẵn) chạy đúng bộ templates đó, offline, với thư mục cấu hình mới cho mỗi lần chạy;
   phiên bản templates được ghi cùng run (`nuclei 3.11.1 (templates 10.5.2)`). Không có thì
   nuclei dùng cài đặt riêng của máy.
@@ -179,27 +181,27 @@ reconkit scan 10.0.0.0/24 --scope scope.txt --nuclei --nuclei-templates /opt/nuc
 [[ssh]]
 hosts = ["10.0.0.0/24"]
 user = "audit"                                 # tài khoản thường, không cần sudo
-key = "~/.ssh/reconkit_audit"
-known_hosts = "~/.ssh/reconkit_known_hosts"    # host key phải có sẵn ở đây
+key = "~/.ssh/zues_audit"
+known_hosts = "~/.ssh/zues_known_hosts"    # host key phải có sẵn ở đây
 ```
 
 ```bash
-reconkit cve sync --debian bookworm      # tải Debian Security Tracker (~90 MB)
-reconkit scan 10.0.0.0/24 --scope scope.txt --cve-cache reconkit-cve.db --credentials creds.toml
+zues cve sync --debian bookworm      # tải Debian Security Tracker (~90 MB)
+zues scan 10.0.0.0/24 --scope scope.txt --cve-cache zues-cve.db --credentials creds.toml
 ```
 
-ReconKit đọc gói đã cài và báo những CVE mà bản vá chưa được cài — chính xác hơn đoán theo
+ZuesScan đọc gói đã cài và báo những CVE mà bản vá chưa được cài — chính xác hơn đoán theo
 banner, vì Debian vá bằng backport mà không đổi số version của phần mềm. Ngược lại, CVE nào gói
 đã có bản vá thì các finding đoán theo banner cho CVE đó bị rút lại.
 
 ### Scan profile
 
 ```bash
-reconkit profiles                                   # liệt kê profile + tuỳ chọn nmap tương ứng
-reconkit scan 10.0.0.0/24 --scope scope.txt --profile full           # cả 65.535 cổng + traceroute
-reconkit scan 10.0.0.5 --scope scope.txt --profile quick --timing 3   # ghi đè một thông số
-reconkit scan 10.0.0.5 --scope scope.txt --ports 22,80,8000-8100
-reconkit scan 10.0.0.0/24 --scope scope.txt --config reconkit.toml --profile nightly
+zues profiles                                   # liệt kê profile + tuỳ chọn nmap tương ứng
+zues scan 10.0.0.0/24 --scope scope.txt --profile full           # cả 65.535 cổng + traceroute
+zues scan 10.0.0.5 --scope scope.txt --profile quick --timing 3   # ghi đè một thông số
+zues scan 10.0.0.5 --scope scope.txt --ports 22,80,8000-8100
+zues scan 10.0.0.0/24 --scope scope.txt --config zues.toml --profile nightly
 ```
 
 | Profile | Quét gì | Dùng khi |
@@ -234,19 +236,19 @@ quét thì không có route.
 
 Quy tắc của scope:
 
-- **Tên miền trong allowlist chưa đủ.** ReconKit phân giải tên một lần, và *mọi* IP nó trỏ
+- **Tên miền trong allowlist chưa đủ.** ZuesScan phân giải tên một lần, và *mọi* IP nó trỏ
   tới cũng phải nằm trong allowlist; nếu không sẽ từ chối và nêu rõ IP nào. Vì vậy file
   scope phải khai cả IP / dải của máy, không chỉ tên. nmap luôn được đưa **IP** đã kiểm tra,
   không bao giờ là tên.
 - **Wildcard.** `*.example.com` cho phép mọi *tên* dưới example.com (không gồm example.com).
-  `reconkit scan example.com --discover` dùng subfinder tìm subdomain (thụ động, không gửi gì
+  `zues scan example.com --discover` dùng subfinder tìm subdomain (thụ động, không gửi gì
   tới mục tiêu), rồi chỉ quét những tên có mọi địa chỉ nằm trong scope; tên bị loại được ghi
   lại kèm lý do (20 tên đầu, còn lại đếm gộp). Nguồn công khai có thể trả về **hàng chục nghìn**
   tên (thử thật với `example.com`: 25.514 tên, 87% từ một bộ dữ liệu rác), nên: chỉ xét tối đa
   `--discover-limit` tên (mặc định 1000, ưu tiên tên gần tên miền gốc), phân giải song song, và
   bỏ tên chỉ trỏ về đúng địa chỉ của bản ghi **wildcard DNS** (`*.example.com` trả lời mọi tên).
   API key cho các nguồn của subfinder nằm trong file provider config của subfinder:
-  `--subfinder-config FILE` (hoặc `RECONKIT_SUBFINDER_CONFIG`, hoặc file sẵn có của bạn ở
+  `--subfinder-config FILE` (hoặc `ZUES_SUBFINDER_CONFIG`, hoặc file sẵn có của bạn ở
   `~/.config/subfinder/`); không có key thì chỉ các nguồn miễn phí trả lời.
 - **IPv6 cũng vậy.** Tên được phân giải ra cả IPv4 và IPv6; địa chỉ IPv6 cũng phải có trong
   scope (vd `2001:db8::/64`), hoặc quét `--ipv4-only`. Không quét quét dải IPv6 lớn hơn /112.
@@ -262,21 +264,21 @@ CLI in ra những gì thay đổi, và cảnh báo khi một lỗi đã báo s�
 quay lại:
 
 ```bash
-reconkit findings                     # lỗi còn mở, theo thứ tự ưu tiên
-reconkit finding 12                   # chi tiết + lịch sử của một lỗi
-reconkit finding 12 --claim-fixed     # báo đã sửa: lần quét sau sẽ xác minh (hoặc báo fix giả)
-reconkit finding 7 --accept --reason "máy cô lập, thay trong Q1" --until 2027-03-31
-reconkit inventory                    # mọi host / cổng đã thấy, thấy lần đầu / cuối khi nào
-reconkit diff                         # run mới nhất so với run trước đó cùng target
-reconkit diff 3 8                     # hai run bất kỳ (có cảnh báo nếu không so sánh được)
+zues findings                     # lỗi còn mở, theo thứ tự ưu tiên
+zues finding 12                   # chi tiết + lịch sử của một lỗi
+zues finding 12 --claim-fixed     # báo đã sửa: lần quét sau sẽ xác minh (hoặc báo fix giả)
+zues finding 7 --accept --reason "máy cô lập, thay trong Q1" --until 2027-03-31
+zues inventory                    # mọi host / cổng đã thấy, thấy lần đầu / cuối khi nào
+zues diff                         # run mới nhất so với run trước đó cùng target
+zues diff 3 8                     # hai run bất kỳ (có cảnh báo nếu không so sánh được)
 ```
 
-"Không thấy" chưa chắc là "đã vá": ReconKit chỉ kết luận một lỗi đã hết khi host vẫn trả lời,
+"Không thấy" chưa chắc là "đã vá": ZuesScan chỉ kết luận một lỗi đã hết khi host vẫn trả lời,
 cổng đó chắc chắn đã được quét và dữ liệu CVE cùng loại — xem `docs/THIET-KE.md`.
 
 ### Giấy phép quét & audit trail
 
-File scope có thể ghi điều khoản của giấy phép, ReconKit sẽ tuân theo:
+File scope có thể ghi điều khoản của giấy phép, ZuesScan sẽ tuân theo:
 
 ```text
 @engagement PT-2026-014, ký 2026-11-01 với ACME IT   # ghi vào mỗi run
@@ -297,10 +299,10 @@ file scope (và nội dung của nó), cùng danh sách địa chỉ đã đư�
 từ chối và mọi lần xóa run được ghi vào **audit trail dạng chuỗi băm**:
 
 ```bash
-reconkit audit --db reconkit.db            # ai quét gì, lúc nào, theo giấy phép nào
-reconkit audit --db reconkit.db --verify   # kiểm chuỗi băm + bằng chứng; in mã băm đầu chuỗi
-reconkit audit --db reconkit.db --scope 21e2cba7   # nội dung file scope đã dùng
-reconkit delete 3 --db reconkit.db --yes   # xóa một run (việc xóa cũng được ghi lại)
+zues audit --db zues.db            # ai quét gì, lúc nào, theo giấy phép nào
+zues audit --db zues.db --verify   # kiểm chuỗi băm + bằng chứng; in mã băm đầu chuỗi
+zues audit --db zues.db --scope 21e2cba7   # nội dung file scope đã dùng
+zues delete 3 --db zues.db --yes   # xóa một run (việc xóa cũng được ghi lại)
 ```
 
 Lưu mã băm đầu chuỗi ở nơi khác (ticket, email gửi khách hàng): so lại là biết lịch sử có bị
@@ -311,15 +313,15 @@ Cần cài `nmap` trên PATH. Mỗi lần quét được lưu thành một *run*
 0 service nghĩa là "đã quét và không thấy gì", không bao giờ là "chưa quét". Run còn ghi
 phiên bản của từng scanner đã chạy.
 
-Database có số phiên bản schema. Mở một DB cũ thì ReconKit tự nâng cấp, sau khi sao lưu
-bản cũ ra `<db>.v<N>.bak`; DB do bản ReconKit mới hơn tạo ra thì từ chối mở.
+Database có số phiên bản schema. Mở một DB cũ thì ZuesScan tự nâng cấp, sau khi sao lưu
+bản cũ ra `<db>.v<N>.bak`; DB do bản ZuesScan mới hơn tạo ra thì từ chối mở.
 
 CVE được khớp theo CPE và **dải phiên bản** (dữ liệu kiểu NVD), sau khi tách version nmap
 báo về (`7.4p1 Debian 10+deb9u7` → bản upstream 7.4). Mỗi lỗi có **độ tin cậy**: `tentative`
 khi dịch vụ là gói của một distro (có thể đã được vá bằng backport mà không đổi số version),
 `firm` khi version upstream rõ ràng, `confirmed` chỉ khi có bài kiểm chạm vào lỗi thật.
 `--cve-db file.json` dùng file dữ liệu CVE khác seed đi kèm (định dạng như
-`reconkit/data/cve_seed.json`).
+`zues_scan/data/cve_seed.json`).
 
 ### Dữ liệu CVE thật: cache NVD
 
@@ -327,11 +329,11 @@ Seed đi kèm chỉ có vài CVE để chạy thử. Dữ liệu thật lấy t�
 
 ```bash
 export NVD_API_KEY=...        # không bắt buộc; có key thì tải nhanh gấp 10 lần
-reconkit cve sync                                        # lần đầu: cả NVD (lâu)
-reconkit cve sync --product cpe:2.3:a:openbsd:openssh    # hoặc chỉ vài sản phẩm
-reconkit cve status                                      # cache có gì, sync lúc nào
-reconkit cve show CVE-2024-6387
-reconkit scan 10.0.0.5 --scope scope.txt --cve-cache reconkit-cve.db
+zues cve sync                                        # lần đầu: cả NVD (lâu)
+zues cve sync --product cpe:2.3:a:openbsd:openssh    # hoặc chỉ vài sản phẩm
+zues cve status                                      # cache có gì, sync lúc nào
+zues cve show CVE-2024-6387
+zues scan 10.0.0.5 --scope scope.txt --cve-cache zues-cve.db
 ```
 
 Các lần `sync` sau chỉ tải những CVE NVD đã sửa từ lần trước. `sync` cũng tải catalog **CISA
@@ -354,22 +356,22 @@ Output gốc của scanner (XML của nmap) được giữ lại theo từng run
 SHA-256, kể cả khi lần quét thất bại. Lấy lại bằng:
 
 ```bash
-reconkit raw 1 --db reconkit.db                 # in ra màn hình (pipe được)
-reconkit raw 1 --db reconkit.db --out run1.xml  # ghi ra file
+zues raw 1 --db zues.db                 # in ra màn hình (pipe được)
+zues raw 1 --db zues.db --out run1.xml  # ghi ra file
 ```
 
 ## Log
 
 `-v` (tiến trình) / `-vv` (chi tiết) in log ra stderr; `--log-file scan.log` ghi log đầy đủ;
-`--log-format json` cho hệ thống gom log. Ví dụ: `reconkit scan 10.0.0.5 --scope scope.txt -v`.
+`--log-format json` cho hệ thống gom log. Ví dụ: `zues scan 10.0.0.5 --scope scope.txt -v`.
 
 ## Báo cáo & bản đồ bề mặt tấn công
 
 ```bash
-reconkit runs --db reconkit.db                          # danh sách các run, mới nhất trước
-reconkit report --db reconkit.db --html report.html     # báo cáo run mới nhất
-reconkit report --db reconkit.db --run 3 --html run3.html
-reconkit report --db reconkit.db --json run.json --sarif run.sarif   # dữ liệu / SARIF 2.1.0
+zues runs --db zues.db                          # danh sách các run, mới nhất trước
+zues report --db zues.db --html report.html     # báo cáo run mới nhất
+zues report --db zues.db --run 3 --html run3.html
+zues report --db zues.db --json run.json --sarif run.sarif   # dữ liệu / SARIF 2.1.0
 ```
 
 `report.html` là **một file duy nhất, mở offline** (không tải gì từ mạng): bản đồ
@@ -387,7 +389,7 @@ nó chỉ được hiển thị dưới dạng chữ, và Content-Security-Polic
 | Exit code | Ý nghĩa |
 |---|---|
 | 0 | Quét xong, kết quả đã lưu vào DB |
-| 1 | Không dùng được database (hỏng, không phải SQLite, hoặc schema mới hơn bản ReconKit này) — chưa quét gì |
+| 1 | Không dùng được database (hỏng, không phải SQLite, hoặc schema mới hơn bản ZuesScan này) — chưa quét gì |
 | 2 | Đầu vào sai: không thấy file scope / file cấu hình, có dòng không hợp lệ, profile hoặc thông số quét sai |
 | 3 | Từ chối (và được ghi vào audit trail): target nằm ngoài scope, tên miền trỏ tới IP ngoài scope, target bị denylist phủ kín, giấy phép đã hết hạn hoặc ngoài khung giờ cho phép |
 | 4 | Quét thất bại, lưu thành run `failed` **không có kết quả**: thiếu nmap, nmap lỗi / quá thời gian, không phân giải được tên, không host nào trả lời |
@@ -407,10 +409,10 @@ dịch vụ không thể bị biến thành "máy quét hộ" cho bất kỳ đ�
 
 ```toml
 [service]
-db = "/data/reconkit.db"
-cve_cache = "/data/reconkit-cve.db"     # tuỳ chọn: dữ liệu NVD cho bước CVE
+db = "/data/zues.db"
+cve_cache = "/data/zues-cve.db"     # tuỳ chọn: dữ liệu NVD cho bước CVE
 redis_url = "redis://localhost:6379/0"
-queue = "reconkit"
+queue = "zues"
 
 [[tokens]]                              # ai được dùng API (web, bước sau)
 name = "alice"
@@ -431,12 +433,12 @@ min_priority = "P2"                              # báo finding mới từ mức
 ```
 
 ```bash
-reconkit token --name alice --role operator     # in token MỘT lần + dòng [[tokens]] để dán vào file
+zues token --name alice --role operator     # in token MỘT lần + dòng [[tokens]] để dán vào file
 docker run -d -p 6379:6379 redis:7.4-alpine     # Redis cho hàng đợi
-reconkit worker --config service.toml           # chạy các lần quét trong hàng đợi (chạy nhiều worker được)
-reconkit scheduler --config service.toml        # mỗi phút xếp hàng các target đến hạn
-reconkit enqueue office-lan --config service.toml --operator alice   # quét ngay một target
-reconkit scheduler --config service.toml --once                      # một vòng rồi dừng (cron)
+zues worker --config service.toml           # chạy các lần quét trong hàng đợi (chạy nhiều worker được)
+zues scheduler --config service.toml        # mỗi phút xếp hàng các target đến hạn
+zues enqueue office-lan --config service.toml --operator alice   # quét ngay một target
+zues scheduler --config service.toml --once                      # một vòng rồi dừng (cron)
 ```
 
 - **Worker** chạy đúng `scanning.execute` mà lệnh `scan` dùng: cùng scope guard, cùng audit
@@ -462,17 +464,17 @@ reconkit scheduler --config service.toml --once                      # một vò
 ## Web API & dashboard
 
 ```bash
-reconkit web --config service.toml              # http://127.0.0.1:8000 — chỉ máy này
-reconkit web --config service.toml --host 0.0.0.0 --port 8000   # sau reverse proxy có TLS
+zues web --config service.toml              # http://127.0.0.1:8000 — chỉ máy này
+zues web --config service.toml --host 0.0.0.0 --port 8000   # sau reverse proxy có TLS
 ```
 
-Mở trình duyệt, dán token (`reconkit token`) vào ô đăng nhập. Dashboard (JavaScript thuần,
+Mở trình duyệt, dán token (`zues token`) vào ô đăng nhập. Dashboard (JavaScript thuần,
 không thư viện ngoài, không bước build) có:
 
 - **Overview**: số finding đang mở theo P1–P4, số *fix giả* / *xuất hiện lại*; các target trong
   `service.toml` với nút **Scan now** (chỉ vai trò `operator`); hàng đợi quét tự làm mới.
 - **Runs**: mỗi run mở **bản đồ bề mặt tấn công** của M1 nguyên vẹn (cùng trang với
-  `reconkit report --html`, giữ CSP riêng của nó), tải JSON hoặc SARIF.
+  `zues report --html`, giữ CSP riêng của nó), tải JSON hoặc SARIF.
 - **Findings**: theo mức ưu tiên, lọc theo trạng thái; trang chi tiết có lịch sử vòng đời và
   form quyết định (báo đã sửa / chấp nhận rủi ro có lý do + ngày xem lại / mở lại) — ghi vào
   audit trail dưới tên của token.
@@ -505,7 +507,7 @@ Bảo mật:
   cho tới khi sửa xong, không chạy tiếp bằng cấu hình cũ.
 - Trình duyệt giữ token trong cookie **HttpOnly** (script trong trang không đọc được),
   **SameSite=Strict**, `Secure` khi chạy HTTPS. Mọi request thay đổi dữ liệu đi bằng cookie còn
-  phải có header `X-ReconKit: 1` — trang web khác không gửi được header này (chống CSRF).
+  phải có header `X-ZuesScan: 1` — trang web khác không gửi được header này (chống CSRF).
 - Yêu cầu quét chỉ mang **tên** target; thêm bất kỳ trường nào khác (địa chỉ, scope…) là bị từ
   chối (422).
 - Dữ liệu quét được coi là không tin cậy: dashboard chỉ đưa dữ liệu vào trang dưới dạng chữ
@@ -532,13 +534,13 @@ Image và compose được làm cứng theo cách làm thật:
   (`docker/requirements.lock`, `docker/build.lock`, sinh lại bằng `sh docker/lock.sh` ngay
   trong image gốc); nmap lấy từ kho Debian có ký; **nuclei, subfinder và nuclei-templates** là
   file release ghim **phiên bản và SHA-256** lấy từ file checksums chính thức của từng bản
-  (`reconkit/data/tools.lock`, cũng là file `reconkit tools install` dùng) — sai một byte thì
+  (`zues_scan/data/tools.lock`, cũng là file `zues tools install` dùng) — sai một byte thì
   build dừng. Từ mỗi zip chỉ lấy đúng binary; templates
   bỏ phần không phải template và ghi phiên bản (`/opt/nuclei-templates`, chỉ đọc, thuộc root).
   Không tải gì từ nơi khác.
-- **Không chạy root**: user `reconkit` (uid 10001). nmap được `setcap cap_net_raw` — đúng một
+- **Không chạy root**: user `zues` (uid 10001). nmap được `setcap cap_net_raw` — đúng một
   quyền để mở raw socket (SYN scan, traceroute) mà không cần root.
-- **Ít quyền nhất**: mọi container ReconKit có root filesystem **chỉ đọc**, `cap_drop: ALL`,
+- **Ít quyền nhất**: mọi container ZuesScan có root filesystem **chỉ đọc**, `cap_drop: ALL`,
   `no-new-privileges`. Chỉ **worker** được trả lại `NET_RAW` (và phải tắt `no-new-privileges`,
   vì đó là cách duy nhất để tiến trình không phải root nhận capability của file nmap). Container
   web / scheduler **không chạy được nmap** dù có bị chiếm quyền.
@@ -554,17 +556,17 @@ gateway của Docker là hop đầu). Để quét LAN của máy chủ không qu
 Dữ liệu CVE thật trong Docker:
 
 ```bash
-docker compose run --rm -e NVD_API_KEY worker cve sync --cache /data/reconkit-cve.db
-# rồi bật cve_cache = "/data/reconkit-cve.db" trong deploy/service.toml
+docker compose run --rm -e NVD_API_KEY worker cve sync --cache /data/zues-cve.db
+# rồi bật cve_cache = "/data/zues-cve.db" trong deploy/service.toml
 ```
 
 ### Sao lưu & khôi phục
 
 ```bash
-reconkit backup --db reconkit.db --out-dir backups --keep 14     # ngoài Docker
-docker compose exec worker reconkit backup --db /data/reconkit.db --out-dir /data/backups --keep 14
+zues backup --db zues.db --out-dir backups --keep 14     # ngoài Docker
+docker compose exec worker zues backup --db /data/zues.db --out-dir /data/backups --keep 14
 docker compose cp worker:/data/backups ./backups                 # đưa ra ngoài volume!
-reconkit backup --verify backups/reconkit-20261123T042247Z.db
+zues backup --verify backups/zues-20261123T042247Z.db
 ```
 
 `backup` dùng API backup trực tuyến của SQLite nên **an toàn khi worker đang ghi** (chép file
@@ -572,22 +574,22 @@ DB thẳng thì có thể ra bản hỏng), mở DB nguồn ở chế độ ch�
 integrity_check`, chuỗi băm của audit trail, và ghi SHA-256 vào `<file>.sha256` (đọc được bằng
 `sha256sum -c`). Nó in **mã băm đầu chuỗi audit** — cất mã này ở nơi khác (ticket, email cho
 khách hàng) để sau này chứng minh lịch sử không bị viết lại. `--keep N` chỉ xoá các bản
-`reconkit-<thời gian>.db` cũ do chính nó tạo.
+`zues-<thời gian>.db` cũ do chính nó tạo.
 
-Khôi phục: `docker compose stop web worker scheduler` → `reconkit backup --verify <file>` →
-chép file vào volume làm `/data/reconkit.db` → `docker compose start`. Bản sao lưu nằm cùng
+Khôi phục: `docker compose stop web worker scheduler` → `zues backup --verify <file>` →
+chép file vào volume làm `/data/zues.db` → `docker compose start`. Bản sao lưu nằm cùng
 volume với DB thì không chống được hỏng đĩa: luôn `docker compose cp` ra nơi khác.
 
 ### nuclei, subfinder và templates trong image
 
 Image có sẵn nuclei, subfinder và một bộ nuclei-templates ghim (phiên bản trong
-`reconkit/data/tools.lock`); `nuclei = true` / `discover = true` trên target dùng chúng, và mỗi run ghi
+`zues_scan/data/tools.lock`); `nuclei = true` / `discover = true` trên target dùng chúng, và mỗi run ghi
 lại `nuclei 3.11.1 (templates 10.5.2)`. Templates mới ra hằng ngày, nên cập nhật bằng cách dựng
 lại image — có kiểm soát như mọi phụ thuộc khác:
 
 ```bash
-python -m reconkit.tools update             # bản mới nhất + SHA-256 từ file checksums của từng release
-git diff reconkit/data/tools.lock           # xem lại: hash đổi mà phiên bản không đổi = file đã bị thay
+python -m zues_scan.tools update             # bản mới nhất + SHA-256 từ file checksums của từng release
+git diff zues_scan/data/tools.lock           # xem lại: hash đổi mà phiên bản không đổi = file đã bị thay
 docker compose build && docker compose up -d
 ```
 
@@ -597,7 +599,7 @@ API key cho các nguồn của subfinder: đặt file provider config của subf
 
 ## Lab có lỗ hổng
 
-Một mạng thử nghiệm có lỗ hổng **thật** (phiên bản cũ có CVE), chạy cạnh dịch vụ ReconKit:
+Một mạng thử nghiệm có lỗ hổng **thật** (phiên bản cũ có CVE), chạy cạnh dịch vụ ZuesScan:
 
 ```bash
 sh lab/up.sh        # dựng dịch vụ + lab, in token operator MỘT lần → http://127.0.0.1:8000
@@ -620,7 +622,7 @@ sh lab/down.sh      # xoá sạch lab (cả database của nó)
   CVE-2021-41773 **xác nhận** lỗi (`confirmed`, bằng chứng là câu trả lời của máy chủ); OpenSSH
   7.5 bị xác nhận dính **Terrapin** qua template mạng. Với cấu hình mặc định của httpd 2.4.49,
   cùng template đó *không* khai thác được — phiên bản dính lỗi chưa chắc khai thác được, và
-  ReconKit giữ đúng mức `firm` khi chưa có bằng chứng.
+  ZuesScan giữ đúng mức `firm` khi chưa có bằng chứng.
 - `demo.sh`: báo đã sửa Apache và nginx, chấp nhận rủi ro OpenSSH (có lý do + ngày xem lại),
   rồi chỉ nâng cấp **nginx** lên 1.27.5 và quét lại → nginx **fixed** (đã xác minh), Apache
   **fake fix** (báo sửa mà vẫn còn — và nuclei vừa khai thác lại được) — kèm cảnh báo webhook
@@ -643,25 +645,25 @@ internal do một sidecar dùng chung network namespace thêm vào rồi thoát.
 
 ## Giới hạn đã biết
 
-ReconKit là bộ điều phối các công cụ mở, **không** thay được scanner thương mại (không có thư
+ZuesScan là bộ điều phối các công cụ mở, **không** thay được scanner thương mại (không có thư
 viện kiểm tra riêng; phát hiện chủ yếu theo phiên bản, trừ nuclei và quét có đăng nhập). Mọi
 điểm yếu đã biết, kèm hướng nâng cấp theo cách làm thật, nằm ở
 [`docs/KNOWN-GAPS.md`](docs/KNOWN-GAPS.md) — nổi bật: quét có đăng nhập mới có Debian; nuclei
 chưa có kênh OAST (interactsh) riêng; web chưa giới hạn đăng nhập sai và chưa phân quyền theo
 target; cảnh báo webhook không gửi lại khi lỗi; SQLite là giới hạn khi nhiều worker / người dùng.
 
-## Cho AI dùng ReconKit (MCP)
+## Cho AI dùng ZuesScan (MCP)
 
-`reconkit mcp` đưa ReconKit thành **công cụ cho AI agent** qua Model Context Protocol (stdio):
+`zues mcp` đưa ZuesScan thành **công cụ cho AI agent** qua Model Context Protocol (stdio):
 Claude Code, Claude Desktop hay một agent tự viết có thể đọc kết quả quét, phân tích finding, so
 các lần quét và **xin quét** — mà người dùng không phải tự gõ lệnh. Nó là client của dịch vụ
-ReconKit đang chạy (`reconkit web`), nên dùng đúng token, vai trò và audit trail như con người.
+ZuesScan đang chạy (`zues web`), nên dùng đúng token, vai trò và audit trail như con người.
 
 ```bash
-pip install 'reconkit[mcp]'                        # trên máy chạy agent
-reconkit token --name claude-agent --role operator # trên máy dịch vụ; dán khối [[tokens]] vào service.toml
-claude mcp add --env RECONKIT_URL=http://127.0.0.1:8000 --env RECONKIT_TOKEN=<token> \
-  --transport stdio reconkit -- reconkit mcp       # Claude Code (phạm vi local: token không vào repo)
+pip install 'zues-scan[mcp]'                        # trên máy chạy agent
+zues token --name claude-agent --role operator # trên máy dịch vụ; dán khối [[tokens]] vào service.toml
+claude mcp add --env ZUES_URL=http://127.0.0.1:8000 --env ZUES_TOKEN=<token> \
+  --transport stdio zues -- zues mcp       # Claude Code (phạm vi local: token không vào repo)
 ```
 
 Claude Desktop (`claude_desktop_config.json`):
@@ -669,10 +671,10 @@ Claude Desktop (`claude_desktop_config.json`):
 ```json
 {
   "mcpServers": {
-    "reconkit": {
-      "command": "reconkit",
+    "zues": {
+      "command": "zues",
       "args": ["mcp"],
-      "env": {"RECONKIT_URL": "http://127.0.0.1:8000", "RECONKIT_TOKEN": "<token>"}
+      "env": {"ZUES_URL": "http://127.0.0.1:8000", "ZUES_TOKEN": "<token>"}
     }
   }
 }
@@ -684,7 +686,7 @@ Claude Desktop (`claude_desktop_config.json`):
 | `request_scan` | xếp hàng quét một target **đã khai báo**, theo tên | token operator + **người dùng xác nhận** |
 | `claim_fixed`, `reopen_finding` | ghi quyết định về một finding | token operator + **người dùng xác nhận** |
 
-Quy tắc an toàn (đã kiểm bằng test và bằng một client MCP thật chạy `reconkit mcp` qua stdio
+Quy tắc an toàn (đã kiểm bằng test và bằng một client MCP thật chạy `zues mcp` qua stdio
 trên lab):
 
 - **Người xác nhận từng hành động.** Trước khi xếp hàng quét / ghi quyết định, client hỏi người
@@ -703,7 +705,7 @@ trên lab):
 
 ## Phát hành (người duy trì)
 
-Phiên bản nằm ở một chỗ: `reconkit/__init__.py` (`__version__`), gói Python đọc từ đó.
+Phiên bản nằm ở một chỗ: `zues_scan/__init__.py` (`__version__`), gói Python đọc từ đó.
 
 ```bash
 # 1. sửa __version__ và thêm mục "## [X.Y.Z] - ngày" vào CHANGELOG.md, merge vào main
@@ -715,15 +717,18 @@ Workflow `.github/workflows/release.yml` (mọi action ghim theo commit SHA vì 
 1. kiểm tag = `__version__` và CHANGELOG có mục của phiên bản đó;
 2. build wheel + sdist, cài thử wheel vào venv mới và chạy (`--version`, `tools list`, `plugins`);
 3. build image **linux/amd64 + linux/arm64**, kèm **SBOM** và **provenance**, đẩy lên
-   `ghcr.io/<owner>/reconkit:X.Y.Z` (và `X.Y`), **ký bằng cosign không cần khoá** (danh tính
+   `ghcr.io/<owner>/zues-scan:X.Y.Z` (và `X.Y`), **ký bằng cosign không cần khoá** (danh tính
    OIDC của chính workflow), quét bằng **Trivy** (kết quả ở tab Security), chạy `doctor` trong
    image;
 4. tạo GitHub Release: ghi chú lấy từ CHANGELOG, đính kèm wheel + sdist, kèm lệnh `cosign verify`.
 
 "Run workflow" bằng tay (không có tag) chạy y hệt nhưng **không phát hành gì** — để thử.
 
-PyPI: tên `reconkit` trên PyPI đã thuộc một dự án khác, nên chưa phát hành lên PyPI; cài bằng
+PyPI: tên gói `zues-scan` còn trống trên PyPI nhưng chưa phát hành lên đó; hiện cài bằng
 `pipx install git+https://github.com/B23DCAT011/reconkit@vX.Y.Z` hoặc từ file wheel của Release.
-Muốn lên PyPI thì cần chọn tên khác (vd `reconkit-scan`) và cấu hình *trusted publishing* trên
-PyPI — không cần lưu token nào trong repo.
+Muốn lên PyPI: tạo project `zues-scan` và cấu hình *trusted publishing* (PyPI tin danh tính OIDC
+của workflow này) — không cần lưu token nào trong repo.
+
+Repo GitHub vẫn tên `reconkit`; đổi tên repo trên GitHub (Settings → Repository name) là an toàn:
+GitHub tự chuyển hướng URL cũ, rồi cập nhật `git remote set-url origin` và các URL trong README.
 

@@ -1,4 +1,4 @@
-"""reconkit tools: nuclei, subfinder and templates installed by ReconKit — exactly the
+"""zues tools: nuclei, subfinder and templates installed by ZuesScan — exactly the
 locked files, or nothing — and found before anything on PATH."""
 
 from __future__ import annotations
@@ -14,9 +14,9 @@ from pathlib import Path
 
 import pytest
 
-from reconkit import cli, tools
-from reconkit.plugins import nuclei
-from reconkit.tools import Entry, ToolError
+from zues_scan import cli, tools
+from zues_scan.plugins import nuclei
+from zues_scan.tools import Entry, ToolError
 
 
 def _zip(files: dict[str, bytes]) -> bytes:
@@ -103,7 +103,7 @@ def test_install_takes_exactly_the_locked_files(tmp_path: Path) -> None:
     assert (tpl / "http" / "cves" / "2021" / "CVE-2021-41773.yaml").is_file()
     assert (tpl / ".nuclei-ignore").is_file()
     assert not (tpl / ".github").exists() and not (tpl / "README.md").exists()
-    assert (tpl / ".reconkit-version").read_text() == "10.5.2\n"
+    assert (tpl / ".zues-version").read_text() == "10.5.2\n"
     manifest = tools.installed(tmp_path)
     assert manifest["nuclei"]["sha256"] == hashlib.sha256(b"\x7fELF nuclei").hexdigest()
     assert manifest["nuclei-templates"]["version"] == "10.5.2"
@@ -145,11 +145,11 @@ def test_verify_notices_changes(tmp_path: Path) -> None:
     assert any(p.startswith("subfinder: ") and "is gone" in p for p in problems)
 
 
-# --- where ReconKit looks -----------------------------------------------------------------------
+# --- where ZuesScan looks -----------------------------------------------------------------------
 
 
-def test_reconkits_copy_comes_before_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("RECONKIT_TOOLS_DIR", str(tmp_path))
+def test_zues_own_copy_comes_before_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ZUES_TOOLS_DIR", str(tmp_path))
     monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
     assert tools.which("nuclei") == "/usr/bin/nuclei"
     assert tools.resolve("nuclei") == "nuclei"  # PATH finds it: the command stays "nuclei"
@@ -178,19 +178,19 @@ def test_platform_and_folder(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     monkeypatch.setenv("TARGETARCH", "arm64")
     monkeypatch.setattr(sys, "platform", "linux")
     assert tools.current_platform() == "linux-arm64"
-    monkeypatch.delenv("RECONKIT_TOOLS_DIR")
+    monkeypatch.delenv("ZUES_TOOLS_DIR")
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
-    assert tools.default_root() == tmp_path / "reconkit" / "tools"
+    assert tools.default_root() == tmp_path / "zues" / "tools"
 
 
 def test_installed_templates_are_used_by_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("RECONKIT_TOOLS_DIR", str(tmp_path))
+    monkeypatch.setenv("ZUES_TOOLS_DIR", str(tmp_path))
     assert nuclei.default_templates() is None
     tools.install(ENTRIES, tmp_path, "linux-amd64", ("nuclei-templates",), get=SERVED.__getitem__)
     assert nuclei.default_templates() == str(tmp_path / "nuclei-templates")
-    monkeypatch.setenv("RECONKIT_NUCLEI_TEMPLATES", "/opt/nuclei-templates")  # the image's wins
+    monkeypatch.setenv("ZUES_NUCLEI_TEMPLATES", "/opt/nuclei-templates")  # the image's wins
     assert nuclei.default_templates() == "/opt/nuclei-templates"
 
 

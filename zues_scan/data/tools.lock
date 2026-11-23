@@ -1,0 +1,16 @@
+# External tools ZuesScan installs (zues tools install, and the Docker image), pinned
+# by version and SHA-256 taken from each release's own checksums file. Regenerate with
+#     python -m zues_scan.tools update
+# and review the diff: a new hash for an unchanged version means the file was replaced.
+# tool version platform sha256 url
+nuclei 3.11.1 linux-amd64 ea63d4ae232808cd7c6bc00d0142428e231fab59dae01042246097d195835ab6 https://github.com/projectdiscovery/nuclei/releases/download/v3.11.1/nuclei_3.11.1_linux_amd64.zip
+nuclei 3.11.1 linux-arm64 8044e3d9768ba0a744b2872c1a87e813006f013da97ca9f50f7661a4203bec07 https://github.com/projectdiscovery/nuclei/releases/download/v3.11.1/nuclei_3.11.1_linux_arm64.zip
+nuclei 3.11.1 darwin-amd64 75c47ce11e9dbd4288a1c895ed85e3c4df9f4acb8237d6d178da6dccd1628f2a https://github.com/projectdiscovery/nuclei/releases/download/v3.11.1/nuclei_3.11.1_macOS_amd64.zip
+nuclei 3.11.1 darwin-arm64 7d7e291addd1fc29a9bf8d089afe878a9799b20229cbea2fb1693fc40fd4c5f0 https://github.com/projectdiscovery/nuclei/releases/download/v3.11.1/nuclei_3.11.1_macOS_arm64.zip
+nuclei 3.11.1 windows-amd64 bb6cb9ff8939b753f6fcab06fd30a15f5bc61d8382a597871334c007a85ff9d2 https://github.com/projectdiscovery/nuclei/releases/download/v3.11.1/nuclei_3.11.1_windows_amd64.zip
+subfinder 2.17.0 linux-amd64 a39c3e5c7a26ef3c430915c4d6cbf7716a00f26769a75e9405aba796142eba37 https://github.com/projectdiscovery/subfinder/releases/download/v2.17.0/subfinder_2.17.0_linux_amd64.zip
+subfinder 2.17.0 linux-arm64 24913d49dddc1d3a5e99a4a7580da5be980959b9415b96f52c4f7f4124392190 https://github.com/projectdiscovery/subfinder/releases/download/v2.17.0/subfinder_2.17.0_linux_arm64.zip
+subfinder 2.17.0 darwin-amd64 75bf5990b409c6fd1116c81cd64fbdfd2cfd5bfb1f43542035b42344cb9fdffa https://github.com/projectdiscovery/subfinder/releases/download/v2.17.0/subfinder_2.17.0_macOS_amd64.zip
+subfinder 2.17.0 darwin-arm64 012d6ff91ef932ac6d1a321fb5735cf1412168d163e6adbc6cbe5fc42fe03c3b https://github.com/projectdiscovery/subfinder/releases/download/v2.17.0/subfinder_2.17.0_macOS_arm64.zip
+subfinder 2.17.0 windows-amd64 a3fd612928d591fb31c1e59a2e06055e364421ba32251e553073f5673a2d3103 https://github.com/projectdiscovery/subfinder/releases/download/v2.17.0/subfinder_2.17.0_windows_amd64.zip
+nuclei-templates 10.5.2 any 016b7abbf931d4d1a851a5a568e44510dc61691dc8a5202e3b24e701515ec574 https://github.com/projectdiscovery/nuclei-templates/archive/refs/tags/v10.5.2.tar.gz

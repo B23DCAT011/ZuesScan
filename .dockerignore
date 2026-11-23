@@ -1,8 +1,8 @@
-# Only what the image build needs: pyproject.toml, README.md, reconkit/, docker/*.lock.
+# Only what the image build needs: pyproject.toml, README.md, zues_scan/, docker/*.lock.
 *
 !pyproject.toml
 !README.md
-!reconkit/
+!zues_scan/
 !docker/build.lock
 !docker/requirements.lock
 **/__pycache__

@@ -1,4 +1,4 @@
-"""`reconkit mcp`: ReconKit's tools for AI agents, through the real web API.
+"""`zues mcp`: ZuesScan's tools for AI agents, through the real web API.
 
 The MCP server runs in-process (mcp.Client) and calls the web app through FastAPI's test
 client, with an in-memory Redis: the same rules as for a person, plus a confirmation by
@@ -26,10 +26,10 @@ from mcp import Client  # noqa: E402
 from mcp.client.session import ClientRequestContext, ElicitationFnT  # noqa: E402
 from rq import Queue, SimpleWorker  # noqa: E402
 
-from reconkit import cli  # noqa: E402
-from reconkit.mcp_server import Api, build, clean  # noqa: E402
-from reconkit.schema import Service  # noqa: E402
-from reconkit.server.web import create_app  # noqa: E402
+from zues_scan import cli  # noqa: E402
+from zues_scan.mcp_server import Api, build, clean  # noqa: E402
+from zues_scan.schema import Service  # noqa: E402
+from zues_scan.server.web import create_app  # noqa: E402
 
 OPERATOR = "agent-operator-token-0123456789abcdefghijklmnop"
 VIEWER = "agent-viewer-token-0123456789abcdefghijklmnopq"
@@ -42,10 +42,10 @@ def sha(token: str) -> str:
 
 @pytest.fixture(autouse=True)
 def _lab(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("reconkit.scope.resolve_ipv4", lab_resolver)
-    monkeypatch.setattr("reconkit.scope.resolve_addresses", lab_resolver)
+    monkeypatch.setattr("zues_scan.scope.resolve_ipv4", lab_resolver)
+    monkeypatch.setattr("zues_scan.scope.resolve_addresses", lab_resolver)
     fake = FakePlugin([lab_asset(VSFTPD)])
-    monkeypatch.setattr("reconkit.plugins.registry.NmapPlugin", lambda **_: fake)
+    monkeypatch.setattr("zues_scan.plugins.registry.NmapPlugin", lambda **_: fake)
 
 
 class Service_:
@@ -54,7 +54,7 @@ class Service_:
         d = tmp_path.as_posix()
         config = tmp_path / "service.toml"
         config.write_text(
-            f'[service]\ndb = "{d}/reconkit.db"\nqueue = "mcp"\n\n'
+            f'[service]\ndb = "{d}/zues.db"\nqueue = "mcp"\n\n'
             f'[[tokens]]\nname = "claude-agent"\nsha256 = "{sha(OPERATOR)}"\nrole = "operator"\n\n'
             f'[[tokens]]\nname = "watcher"\nsha256 = "{sha(VIEWER)}"\nrole = "viewer"\n\n'
             f'[[targets]]\nname = "lab"\ntarget = "scanme.lab"\nscope = "{d}/scope.txt"\n'
@@ -186,7 +186,7 @@ def test_a_confirmed_scan_runs_as_the_agents_token(svc: Service_) -> None:
 
     assert not error and job["job"]["operator"] == "claude-agent"
     assert asked == [
-        "Queue a ReconKit scan of 'lab' (scanme.lab, profile quick, active checks: none)? It "
+        "Queue a ZuesScan scan of 'lab' (scanme.lab, profile quick, active checks: none)? It "
         "sends packets to those hosts, within their authorised scope."
     ]
     svc.work()
@@ -277,11 +277,11 @@ def test_results_say_their_strings_are_untrusted(svc: Service_) -> None:
 def test_the_command_needs_a_token_and_a_service(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.delenv("RECONKIT_TOKEN", raising=False)
+    monkeypatch.delenv("ZUES_TOKEN", raising=False)
     assert cli.main(["mcp"]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""  # stdout belongs to the protocol
-    assert "set RECONKIT_TOKEN" in captured.err
-    monkeypatch.setenv("RECONKIT_TOKEN", "x")
+    assert "set ZUES_TOKEN" in captured.err
+    monkeypatch.setenv("ZUES_TOKEN", "x")
     assert cli.main(["mcp", "--url", "http://127.0.0.1:9"]) == 2
-    assert "cannot reach ReconKit at http://127.0.0.1:9" in capsys.readouterr().err
+    assert "cannot reach ZuesScan at http://127.0.0.1:9" in capsys.readouterr().err

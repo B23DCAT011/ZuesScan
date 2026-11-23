@@ -4,8 +4,8 @@
 #
 #     sh docker/lock.sh
 #
-# requirements.lock - what runs in the image (reconkit[server] and its dependencies)
-# build.lock        - what builds ReconKit's own wheel in the build stage (setuptools)
+# requirements.lock - what runs in the image (zues-scan[server] and its dependencies)
+# build.lock        - what builds ZuesScan's own wheel in the build stage (setuptools)
 #
 # Review the diff before committing: a changed hash for an unchanged version means the
 # file on PyPI is not the one locked before.

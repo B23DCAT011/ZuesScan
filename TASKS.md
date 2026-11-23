@@ -1,4 +1,4 @@
-# Lộ trình công việc — ReconKit
+# Lộ trình công việc — ZuesScan
 
 Mục tiêu: một **sản phẩm chạy được thật**, đủ chuẩn để đưa vào portfolio xin việc. Không
 dùng lý do "chỉ là lab" để bỏ qua điểm yếu: chỗ nào đã nhìn ra thì sửa; đường tắt nào cố ý
@@ -38,7 +38,7 @@ format cũ), và lớp an toàn scope.
 | F6 ✅ | `fix/scope-resolve` | G4 (phần DNS) — phân giải 1 lần, kiểm mọi IP, quét bằng IP, `--exclude`, kiểm lại sau quét | Cần F2 + F5 (có danh sách host để kiểm lại) |
 | F7 ✅ | `refactor/storage-schema` | G5 + G14 + G15 — `finding.service_id`, `scan_run.status/error`, phiên bản tool theo từng scanner, index FK, cascade, `schema_version` + migration; lần quét thất bại được lưu thành run `failed` | Đổi schema DB trước khi có dữ liệu thật tích lũy |
 | F8 ✅ | `fix/fingerprint-identity` | G12 — fingerprint theo IP + port + protocol + CVE/rule id, có số công thức (`v2:`); orchestrator là nơi duy nhất đặt fingerprint | Phải ổn định trước `feat/diff` |
-| F9 ✅ | `feat/evidence` | G13 — plugin trả `ScanResult` kèm output gốc; lưu nén + SHA-256 theo run; `reconkit raw`; điền `evidence` | Cần F7 (schema) |
+| F9 ✅ | `feat/evidence` | G13 — plugin trả `ScanResult` kèm output gốc; lưu nén + SHA-256 theo run; `zues raw`; điền `evidence` | Cần F7 (schema) |
 
 ## Cột mốc M1 — Báo cáo HTML có bản đồ ✅
 
@@ -50,12 +50,12 @@ Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây we
       đi máy quét → router → dải mạng. Hop chỉ được *nhìn thấy*, không bị quét: probe luôn gửi
       tới host trong scope. Đã kiểm với nmap thật trên 127.0.0.1 (không có route, CLI giải
       thích); ✅ hop thật đã kiểm trên lab Docker có router (`feat/lab`: 10.66.1.254).
-- [x] `feat/report-html` — `reconkit report [--run <id>] --html <file>`: một file HTML duy nhất,
+- [x] `feat/report-html` — `zues report [--run <id>] --html <file>`: một file HTML duy nhất,
       nhúng sẵn dữ liệu (JSON) + Cytoscape.js 3.34.4 (vendored, ghim SHA-256), mở offline. Bản
       đồ đọc từ trái sang phải: máy quét → router → dải mạng ⊃ host ⊃ service → finding; bấm
       vào node / dòng bảng để xem chi tiết. Dữ liệu quét coi là không tin cậy: JSON được escape,
       trang chỉ ghi text, CSP chỉ cho chạy code có hash và cấm mọi kết nối mạng. Kèm
-      `reconkit runs` (danh sách run). Phần Python chỉ dùng thư viện chuẩn. (G18 — phần HTML)
+      `zues runs` (danh sách run). Phần Python chỉ dùng thư viện chuẩn. (G18 — phần HTML)
 
 ## Giai đoạn 2 — Mở rộng theo chuẩn thực tế
 
@@ -63,25 +63,25 @@ Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây we
       chuẩn hoá version (`7.4p1 Debian 10+deb9u7` → 7.4 + p1 + gói distro), alias vendor
       nmap ↔ NVD, `Finding.confidence` (`tentative` khi là gói của distro vì có backport).
       (G8, G10)
-- [x] `feat/nvd-source` — `reconkit cve sync` tải NVD API 2.0 về cache SQLite (phân trang,
+- [x] `feat/nvd-source` — `zues cve sync` tải NVD API 2.0 về cache SQLite (phân trang,
       tôn trọng rate limit, retry, lần sau chỉ tải phần thay đổi), `scan --cve-cache`. (G9)
 - [x] `feat/cve-priority` — CVSS score/vector, CWE, CISA KEV, FIRST EPSS trên mỗi finding (schema
       DB v8); xếp ưu tiên P1 (đang bị khai thác) → P4; bản đồ chỉ vẽ 5 lỗi gấp nhất mỗi cổng.
       (G11)
 - [x] `feat/scan-profiles` — profile `quick` / `standard` / `full` / `gentle`, file cấu hình TOML
       (`--config`), cờ ghi đè (`--ports`, `--timing`, `--max-rate`, `--timeout`…), lệnh
-      `reconkit profiles`; mỗi run lưu profile + thông số (schema DB v6). (G6, G7)
+      `zues profiles`; mỗi run lưu profile + thông số (schema DB v6). (G6, G7)
 - [x] `feat/ipv6` — phân giải cả AAAA, mọi địa chỉ phải trong scope, nmap `-6` chạy riêng cho
       nhóm IPv6, `--ipv4-only`, chặn quét dải IPv6 lớn hơn /112. (G22)
 - [x] `feat/audit-trail` — mỗi run lưu người chạy, engagement, file scope (đường dẫn + SHA-256
       + nội dung), kế hoạch quét đã duyệt; nhật ký audit dạng chuỗi băm (quét / từ chối / xóa),
-      `reconkit audit --verify`; scope có `@engagement`, `@expires`, `@window`. (G21)
+      `zues audit --verify`; scope có `@engagement`, `@expires`, `@window`. (G21)
 - [x] `feat/diff` — kho tài sản (`inv_host` / `inv_service` / `inv_finding`: lần thấy đầu /
       cuối, trạng thái) + lịch sử (`finding_event`), schema DB v11; vòng đời lỗi: mới → mở →
       báo sửa → **đã xác minh vá** / **fix giả** ⚠, biến mất, tái xuất hiện ⚠, chấp nhận rủi ro
-      (lý do + hạn xem lại); chỉ kết luận "đã hết" khi run thực sự nhìn vào. `reconkit
+      (lý do + hạn xem lại); chỉ kết luận "đã hết" khi run thực sự nhìn vào. `zues
       inventory`, `findings`, `finding`, `diff`. (D1)
-- [x] `feat/report-json-sarif` — `reconkit report --json` / `--sarif` (SARIF 2.1.0). (G18)
+- [x] `feat/report-json-sarif` — `zues report --json` / `--sarif` (SARIF 2.1.0). (G18)
 - [x] `feat/logging` — logger theo module, `-v` / `-vv`, `--log-file`, `--log-format json`. (G19)
 - [x] `feat/plugin-subfinder` — `scan --discover`: subfinder tìm subdomain (thụ động), scope có
       wildcard `*.example.com`; mỗi tên vẫn phải phân giải ra địa chỉ trong scope mới được quét.
@@ -95,10 +95,10 @@ Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây we
 ## Giai đoạn 3 — Dịch vụ chạy nền
 
 - [x] `feat/worker-queue` — `service.toml` (chỉ target đã khai mới quét được), hàng đợi
-      Redis + RQ, `reconkit worker` (fork trên Linux, chạy tại chỗ trên Windows), `reconkit
-      scheduler` (`every = "24h"`, khoá mỗi vòng), `reconkit enqueue`, `reconkit token`, cảnh
+      Redis + RQ, `zues worker` (fork trên Linux, chạy tại chỗ trên Windows), `zues
+      scheduler` (`every = "24h"`, khoá mỗi vòng), `zues enqueue`, `zues token`, cảnh
       báo webhook: fix giả / xuất hiện lại / finding mới ≥ `min_priority`. Còn lại: G23.
-- [x] `feat/web` — `reconkit web`: API JSON `/api/v1` (FastAPI) + dashboard JavaScript thuần
+- [x] `feat/web` — `zues web`: API JSON `/api/v1` (FastAPI) + dashboard JavaScript thuần
       (D5): target & hàng đợi (nút "Scan now"), danh sách run mở bản đồ M1 nguyên vẹn, finding
       theo mức ưu tiên với form quyết định, audit trail có kiểm chuỗi băm. Token Bearer cho
       script; trình duyệt dùng cookie HttpOnly + SameSite=Strict + header chống CSRF; vai trò
@@ -106,7 +106,7 @@ Mục tiêu: **nhìn thấy** bề mặt tấn công sớm, trước khi xây we
       mọi request. Còn lại: G23.
 - [x] `chore/docker` — `Dockerfile` (không root, nmap chỉ `cap_net_raw`, phụ thuộc ghim theo mã
       băm), `compose.yaml` (Redis + web + worker + scheduler, FS chỉ đọc, `cap_drop: ALL`),
-      `reconkit backup` (sao lưu trực tuyến có kiểm tra, `--verify`, `--keep`); CI build và
+      `zues backup` (sao lưu trực tuyến có kiểm tra, `--verify`, `--keep`); CI build và
       quét thử trong container. ✅ ảnh demo (`feat/lab`), nuclei/subfinder (`chore/docker-tools`).
 - [x] `feat/lab` — `lab/`: Apache 2.4.49, OpenSSH 7.5 (DMZ) và nginx 1.20.0 sau một router NAT
       (mạng internal), hai mạng cách ly (không Internet, không chạm host); `up.sh` / `demo.sh` /
@@ -124,39 +124,39 @@ thật (nuclei 3.11.1, templates 10.5.2, subfinder 2.17.0), sửa những gì ch
       KEV/CVSS. subfinder: provider config (`--subfinder-config`), home tạm; discovery:
       `--discover-limit`, phân giải song song, lọc wildcard DNS, ghi chú gộp.
 - [x] `chore/docker-tools` — nuclei, subfinder, templates trong image: ghim phiên bản + SHA-256
-      từ file checksums chính thức (nay: `reconkit/data/tools.lock`), cập nhật một lệnh, chỉ lấy
+      từ file checksums chính thức (nay: `zues_scan/data/tools.lock`), cập nhật một lệnh, chỉ lấy
       đúng binary, giải nén an toàn; CI kiểm phiên bản trong image khớp lock. Image 182 → 401 MB.
 - [x] `feat/lab-nuclei` — Apache trong lab cấu hình khai thác được (như vulhub) để nuclei xác
       nhận CVE-2021-41773; target lab bật nuclei với profile `lab`; profile có `check_rate` riêng
-      (request/giây của nuclei) tách khỏi `max_rate` (gói/giây của nmap); `reconkit finding`
+      (request/giây của nuclei) tách khỏi `max_rate` (gói/giây của nmap); `zues finding`
       hiện độ tin cậy; CI kiểm `confirmed`, Terrapin và phiên bản templates trong run.
 
 ## Giai đoạn 5 — Dễ cài, dễ mở rộng, cho AI dùng
 
-Mục tiêu: mang ReconKit sang máy khác mà cài nhanh, thêm / bớt công cụ không phải sửa code, và
-để một AI (qua MCP) dùng được ReconKit một cách an toàn.
+Mục tiêu: mang ZuesScan sang máy khác mà cài nhanh, thêm / bớt công cụ không phải sửa code, và
+để một AI (qua MCP) dùng được ZuesScan một cách an toàn.
 
-- [x] `feat/doctor` — `reconkit doctor [--config] [--json]`: công cụ, phiên bản, quyền raw socket
+- [x] `feat/doctor` — `zues doctor [--config] [--json]`: công cụ, phiên bản, quyền raw socket
       của nmap, templates, key của subfinder, dữ liệu CVE, gói dịch vụ, Redis; lệnh cài đúng cho
       từng hệ điều hành; không tự cài gói hệ thống. Tìm ra và sửa: image thiếu SSH client,
       `subfinder -version` ghi cấu hình vào `/data`.
-- [x] `feat/plugin-registry` — registry + entry points `reconkit.plugins`; `--scanner/--check/
+- [x] `feat/plugin-registry` — registry + entry points `zues_scan.plugins`; `--scanner/--check/
       --discoverer` và `scanners/checks/discoverers` trong `service.toml`; mỗi plugin khai
       `activity`, scope đặt trần `@activity` (mặc định `scan` → nuclei cần `@activity active`);
-      `reconkit plugins`; `reconkit.plugins.contract`; gói mẫu `examples/reconkit-exposed-git`;
+      `zues plugins`; `zues_scan.plugins.contract`; gói mẫu `examples/zues-exposed-git`;
       `docs/PLUGINS.md`; doctor kiểm cả plugin ngoài. Còn lại: G25.
-- [x] `feat/tools-install` — `reconkit tools list|install|verify|path`: nuclei, subfinder,
+- [x] `feat/tools-install` — `zues tools list|install|verify|path`: nuclei, subfinder,
       nuclei-templates ghim phiên bản + SHA-256 cho Linux / macOS (amd64, arm64) và Windows
       amd64, cài vào thư mục của người dùng, không cần admin; ghi hash của thứ đã cài để `verify`.
-      `reconkit/tools.py` + `reconkit/data/tools.lock` thay `docker/tools.*` (image dựng bằng
-      chính chúng). Plugin tìm công cụ: bản ReconKit cài → PATH → chỗ bộ cài nmap của Windows.
+      `zues_scan/tools.py` + `zues_scan/data/tools.lock` thay `docker/tools.*` (image dựng bằng
+      chính chúng). Plugin tìm công cụ: bản ZuesScan cài → PATH → chỗ bộ cài nmap của Windows.
       Đã thử thật trên Windows (cài, verify, doctor dùng được) và Linux (image).
-- [x] `chore/release` — `__version__` là nguồn duy nhất (0.2.0), `reconkit --version`,
+- [x] `chore/release` — `__version__` là nguồn duy nhất (0.2.0), `zues --version`,
       `CHANGELOG.md`; workflow Release theo tag: kiểm tag/version/changelog, wheel + sdist (cài thử),
       image amd64 + arm64 có SBOM + provenance, ký cosign keyless, quét Trivy, GitHub Release; chạy
-      tay = chạy thử không phát hành; action ghim SHA; `RECONKIT_IMAGE` cho compose. Chưa đẩy tag
+      tay = chạy thử không phát hành; action ghim SHA; `ZUES_IMAGE` cho compose. Chưa đẩy tag
       đầu tiên (việc phát hành do người duy trì quyết); PyPI chờ chọn tên.
-- [x] `feat/mcp` — `reconkit mcp` (SDK MCP 2.3, stdio, `reconkit[mcp]`): 12 tool qua web API;
+- [x] `feat/mcp` — `zues mcp` (SDK MCP 2.3, stdio, `zues-scan[mcp]`): 12 tool qua web API;
       `request_scan` / `claim_fixed` / `reopen_finding` cần người dùng xác nhận (elicitation qua
       `Resolve`, không phải tham số); không có tool chấp nhận rủi ro; chỉ target đã khai báo; dữ
       liệu quét làm sạch + đánh dấu không tin cậy. Thử thật qua stdio trên lab. Còn lại: G26.
