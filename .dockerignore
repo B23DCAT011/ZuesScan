@@ -1,11 +1,9 @@
-# Only what the image build needs: pyproject.toml, README.md, reconkit/, docker/ pins.
+# Only what the image build needs: pyproject.toml, README.md, reconkit/, docker/*.lock.
 *
 !pyproject.toml
 !README.md
 !reconkit/
 !docker/build.lock
 !docker/requirements.lock
-!docker/tools.lock
-!docker/tools.py
 **/__pycache__
 **/*.py[cod]

@@ -29,7 +29,7 @@ jobs:
       - run: pip install -e ".[dev,server,server-test]"
       - run: ruff check .
       - run: ruff format --check .
-      - run: mypy reconkit tests docker/tools.py examples/reconkit-exposed-git/reconkit_exposed_git
+      - run: mypy reconkit tests examples/reconkit-exposed-git/reconkit_exposed_git
 
   test:
     name: tests (${{ matrix.os }}, py${{ matrix.python }})
@@ -110,9 +110,9 @@ jobs:
           PY
       - name: nuclei, templates and subfinder are the locked versions
         run: |
-          nuclei=$(awk '$1 == "nuclei" { print $2; exit }' docker/tools.lock)
-          templates=$(awk '$1 == "nuclei-templates" { print $2; exit }' docker/tools.lock)
-          subfinder=$(awk '$1 == "subfinder" { print $2; exit }' docker/tools.lock)
+          nuclei=$(awk '$1 == "nuclei" && $3 == "linux-amd64" { print $2; exit }' reconkit/data/tools.lock)
+          templates=$(awk '$1 == "nuclei-templates" && $3 == "any" { print $2; exit }' reconkit/data/tools.lock)
+          subfinder=$(awk '$1 == "subfinder" && $3 == "linux-amd64" { print $2; exit }' reconkit/data/tools.lock)
           versions=$(docker run --rm --read-only --tmpfs /tmp --entrypoint python reconkit:ci -c '
           from reconkit.plugins.nuclei import NucleiPlugin, default_templates
           from reconkit.plugins.subfinder import SubfinderPlugin

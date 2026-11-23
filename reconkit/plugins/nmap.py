@@ -26,12 +26,12 @@ import errno
 import ipaddress
 import logging
 import re
-import shutil
 import subprocess
 import time
 from dataclasses import replace
 from xml.etree import ElementTree as ET
 
+from reconkit import tools
 from reconkit.plugins.base import ScanError, ScanResult
 from reconkit.profiles import BUILTIN, DEFAULT_PROFILE, ScanProfile
 from reconkit.schema import Asset, Hop, RawOutput, ScanTarget, Service
@@ -70,13 +70,13 @@ class NmapPlugin:
         return self.profile.traceroute
 
     def is_available(self) -> bool:
-        return shutil.which("nmap") is not None
+        return tools.which("nmap") is not None
 
     def version(self) -> str | None:
         """nmap's version as it reports it (`nmap --version`), e.g. "7.92"."""
         try:
             proc = subprocess.run(
-                ["nmap", "--version"],
+                [tools.resolve("nmap"), "--version"],
                 capture_output=True,
                 encoding="utf-8",
                 errors="replace",
@@ -94,7 +94,7 @@ class NmapPlugin:
         exclude = ["--exclude", ",".join(target.exclude)] if target.exclude else []
         ipv6 = ["-6"] if target.addresses and _version(target.addresses[0]) == 6 else []
         return [
-            "nmap",
+            tools.resolve("nmap"),
             *ipv6,
             *self.profile.nmap_args(),
             "-oX",

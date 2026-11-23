@@ -151,6 +151,8 @@ def test_scan_returns_assets_on_success(monkeypatch: pytest.MonkeyPatch) -> None
 
 def test_scan_wraps_missing_binary(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(shutil, "which", lambda _name: None)
+    # Nor in the place the Windows installer uses (found even when PATH is stale).
+    monkeypatch.setattr("reconkit.tools._windows_install", lambda _name: None)
     with pytest.raises(ScanError, match="not installed"):
         NmapPlugin().scan(LAB)
 

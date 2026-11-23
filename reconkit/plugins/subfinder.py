@@ -21,11 +21,11 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
+from reconkit import tools
 from reconkit.plugins.base import DiscoveryResult, ScanError
 from reconkit.schema import RawOutput
 from reconkit.scope import Activity
@@ -55,14 +55,14 @@ class SubfinderPlugin:
         return str(own) if own.is_file() else None
 
     def is_available(self) -> bool:
-        return shutil.which("subfinder") is not None
+        return tools.which("subfinder") is not None
 
     def version(self) -> str | None:
         try:
             # In a fresh home too: even `-version` writes a default config on first use.
             with tempfile.TemporaryDirectory(prefix="reconkit-subfinder-") as home:
                 proc = subprocess.run(
-                    ["subfinder", "-version"],
+                    [tools.resolve("subfinder"), "-version"],
                     capture_output=True,
                     encoding="utf-8",
                     errors="replace",
@@ -78,7 +78,7 @@ class SubfinderPlugin:
 
     def command(self, domain: str) -> list[str]:
         command = [
-            "subfinder",
+            tools.resolve("subfinder"),
             "-d",
             domain,
             "-oJ",

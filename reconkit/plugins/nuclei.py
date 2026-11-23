@@ -56,6 +56,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from reconkit import tools
 from reconkit.plugins.base import ScanError, ScanResult
 from reconkit.profiles import BUILTIN, DEFAULT_PROFILE, ScanProfile
 from reconkit.schema import Asset, Confidence, Finding, RawOutput, ScanTarget, Service, Severity
@@ -80,8 +81,9 @@ _TLS_PORTS = {443, 8443, 9443, 4443}
 
 
 def default_templates() -> str | None:
-    """The templates directory named by the environment, if any."""
-    return os.environ.get(TEMPLATES_ENV) or None
+    """The pinned templates to use: named by the environment (the Docker image), else the
+    copy `reconkit tools install` put in place, if any."""
+    return os.environ.get(TEMPLATES_ENV) or tools.managed_templates()
 
 
 def templates_version(directory: str) -> str | None:
@@ -132,7 +134,7 @@ class NucleiPlugin:
         self.clock: Callable[[], float] = time.monotonic  # replaceable in tests
 
     def is_available(self) -> bool:
-        return shutil.which("nuclei") is not None
+        return tools.which("nuclei") is not None
 
     def version(self) -> str | None:
         """The engine's version, and the templates' when they are pinned:
@@ -140,7 +142,7 @@ class NucleiPlugin:
         try:
             with tempfile.TemporaryDirectory(prefix="reconkit-nuclei-") as home:
                 proc = subprocess.run(
-                    ["nuclei", "-version"],
+                    [tools.resolve("nuclei"), "-version"],
                     capture_output=True,
                     encoding="utf-8",
                     errors="replace",
@@ -159,7 +161,7 @@ class NucleiPlugin:
 
     def command(self, vhost: str | None, network: bool = False) -> list[str]:
         command = [
-            "nuclei",
+            tools.resolve("nuclei"),
             "-jsonl",
             "-silent",
             "-nc",

@@ -28,7 +28,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from reconkit import __version__, doctor, logs, priority
+from reconkit import __version__, doctor, logs, priority, tools
 from reconkit import backup as backups
 from reconkit.audit import default_operator
 from reconkit.cve.cache import (
@@ -384,6 +384,74 @@ def _cmd_audit(args: argparse.Namespace) -> int:
     for problem in report.problems:
         print(f"PROBLEM: {problem}", file=sys.stderr)
     return 1
+
+
+def _cmd_tools(args: argparse.Namespace) -> int:
+    """nuclei, subfinder and the nuclei templates, installed by ReconKit itself."""
+    root = Path(args.root) if args.root else tools.default_root()
+    where = tools.current_platform()
+    try:
+        pinned = tools.for_platform(tools.read_lock(), where)
+    except (tools.ToolError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if args.tools_command == "path":
+        print(root / "bin")
+        return 0
+    if args.tools_command == "verify":
+        problems = tools.verify(root)
+        for problem in problems:
+            print(f"PROBLEM: {problem}", file=sys.stderr)
+        if not problems:
+            count = len(tools.installed(root))
+            print(f"{count} installed tool(s) unchanged since they were installed ({root})")
+        return 1 if problems else 0
+    if args.tools_command == "install":
+        chosen = tuple(args.tool) or tuple(t for t in tools.TOOLS if t in pinned)
+        unknown = [t for t in chosen if t not in tools.TOOLS]
+        if unknown:
+            known = ", ".join(tools.TOOLS)
+            print(f"error: unknown tool(s) {', '.join(unknown)} (known: {known})", file=sys.stderr)
+            return 2
+        try:
+            for line in tools.install(tools.read_lock(), root, where, chosen):
+                print(line)
+        except (tools.ToolError, OSError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            "ReconKit uses them from there (no PATH change needed); to run them by hand: "
+            f"add {root / 'bin'} to PATH"
+        )
+        return 0
+    # list
+    have = tools.installed(root)
+    rows = []
+    for tool in tools.TOOLS:
+        entry = pinned.get(tool)
+        used = tools.managed_templates(root) if tool == tools.TEMPLATES else tools.which(tool)
+        rows.append(
+            {
+                "tool": tool,
+                "pinned": entry.version if entry else None,
+                "installed": have.get(tool, {}).get("version"),
+                "used": used,
+            }
+        )
+    if args.json:
+        print(json.dumps({"platform": where, "root": str(root), "tools": rows}, indent=2))
+        return 0
+    print(f"platform {where}, ReconKit's tools in {root}\n")
+    print(f"{'TOOL':<17} {'PINNED':<8} {'INSTALLED':<10} USED")
+    for r in rows:
+        print(
+            f"{r['tool']:<17} {r['pinned'] or '-':<8} {r['installed'] or '-':<10} "
+            f"{r['used'] or '(none)'}"
+        )
+    missing = [str(r["tool"]) for r in rows if r["pinned"] and r["installed"] != r["pinned"]]
+    if missing:
+        print(f"\ninstall or update: reconkit tools install {' '.join(missing)}")
+    return 0
 
 
 def _cmd_plugins(args: argparse.Namespace) -> int:
@@ -1145,6 +1213,21 @@ def build_parser() -> argparse.ArgumentParser:
     delete.add_argument("--yes", action="store_true", help="confirm: the run cannot be restored")
     delete.add_argument("--operator", help="who deletes it (default: user@host)")
     delete.set_defaults(func=_cmd_delete)
+
+    tools_cmd = sub.add_parser(
+        "tools", help="install nuclei, subfinder and nuclei templates (pinned, no admin)"
+    )
+    tools_cmd.add_argument("--root", help="where to keep them (default: the user's data dir)")
+    tools_sub = tools_cmd.add_subparsers(dest="tools_command", required=True)
+    tools_list = tools_sub.add_parser("list", help="pinned, installed and used versions")
+    tools_list.add_argument("--json", action="store_true")
+    tools_install = tools_sub.add_parser(
+        "install", help="download the pinned releases, check their SHA-256, install them"
+    )
+    tools_install.add_argument("tool", nargs="*", help="nuclei, subfinder, nuclei-templates")
+    tools_sub.add_parser("verify", help="check that installed tools are unchanged")
+    tools_sub.add_parser("path", help="print the folder of the installed programs")
+    tools_cmd.set_defaults(func=_cmd_tools, json=False, tool=[])
 
     plugins_cmd = sub.add_parser("plugins", help="list the scanner, check and discovery plugins")
     plugins_cmd.add_argument("--json", action="store_true", help="machine-readable output")
