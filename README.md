@@ -34,7 +34,15 @@ Chạy thử toàn bộ trong 2 lệnh (cần Docker): `sh lab/up.sh` rồi `sh 
 ## Cài đặt trên một máy mới
 
 **Cách 1 — Docker** (có sẵn mọi thứ: nmap, nuclei, templates, subfinder, ssh): xem mục
-[Docker](#docker). Chỉ cần Docker.
+[Docker](#docker). Chỉ cần Docker; dùng image đã phát hành thì không phải build:
+
+```bash
+export RECONKIT_IMAGE=ghcr.io/b23dcat011/reconkit:0.2.0       # linux/amd64 + linux/arm64
+cosign verify $RECONKIT_IMAGE \
+  --certificate-identity-regexp 'https://github.com/B23DCAT011/reconkit/.github/workflows/release.yml@refs/tags/v.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com    # image do CI ký thật
+docker compose pull web worker scheduler && docker compose up -d --no-build
+```
 
 **Cách 2 — Python** (Python 3.11+, Linux / macOS / Windows):
 
@@ -641,3 +649,30 @@ viện kiểm tra riêng; phát hiện chủ yếu theo phiên bản, trừ nucl
 [`docs/KNOWN-GAPS.md`](docs/KNOWN-GAPS.md) — nổi bật: quét có đăng nhập mới có Debian; nuclei
 chưa có kênh OAST (interactsh) riêng; web chưa giới hạn đăng nhập sai và chưa phân quyền theo
 target; cảnh báo webhook không gửi lại khi lỗi; SQLite là giới hạn khi nhiều worker / người dùng.
+
+## Phát hành (người duy trì)
+
+Phiên bản nằm ở một chỗ: `reconkit/__init__.py` (`__version__`), gói Python đọc từ đó.
+
+```bash
+# 1. sửa __version__ và thêm mục "## [X.Y.Z] - ngày" vào CHANGELOG.md, merge vào main
+git tag vX.Y.Z && git push origin vX.Y.Z      # 2. đẩy tag: workflow Release làm phần còn lại
+```
+
+Workflow `.github/workflows/release.yml` (mọi action ghim theo commit SHA vì nó có quyền ghi):
+
+1. kiểm tag = `__version__` và CHANGELOG có mục của phiên bản đó;
+2. build wheel + sdist, cài thử wheel vào venv mới và chạy (`--version`, `tools list`, `plugins`);
+3. build image **linux/amd64 + linux/arm64**, kèm **SBOM** và **provenance**, đẩy lên
+   `ghcr.io/<owner>/reconkit:X.Y.Z` (và `X.Y`), **ký bằng cosign không cần khoá** (danh tính
+   OIDC của chính workflow), quét bằng **Trivy** (kết quả ở tab Security), chạy `doctor` trong
+   image;
+4. tạo GitHub Release: ghi chú lấy từ CHANGELOG, đính kèm wheel + sdist, kèm lệnh `cosign verify`.
+
+"Run workflow" bằng tay (không có tag) chạy y hệt nhưng **không phát hành gì** — để thử.
+
+PyPI: tên `reconkit` trên PyPI đã thuộc một dự án khác, nên chưa phát hành lên PyPI; cài bằng
+`pipx install git+https://github.com/B23DCAT011/reconkit@vX.Y.Z` hoặc từ file wheel của Release.
+Muốn lên PyPI thì cần chọn tên khác (vd `reconkit-scan`) và cấu hình *trusted publishing* trên
+PyPI — không cần lưu token nào trong repo.
+
