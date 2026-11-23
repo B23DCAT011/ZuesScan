@@ -73,3 +73,26 @@ jobs:
       - run: pip install -e ".[dev,server,server-test]"
       # The whole suite: the server tests run here, and the extras must not break the core.
       - run: pytest
+
+  # The image: builds from the pinned base and hash-locked dependencies, runs as an
+  # unprivileged user, and scans for real with nmap holding only NET_RAW.
+  docker:
+    name: docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t reconkit:ci .
+      - run: docker compose config --quiet
+      - name: smoke test
+        run: |
+          docker run --rm reconkit:ci --help > /dev/null
+          test "$(docker run --rm --entrypoint id reconkit:ci -u)" = 10001
+          docker network create lab
+          docker run -d --rm --name target --network lab redis:7.4-alpine
+          ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' target)
+          docker run --rm --network lab --read-only --tmpfs /tmp --cap-drop ALL \
+            --cap-add NET_RAW --entrypoint sh reconkit:ci -c "
+              echo $ip > /tmp/scope.txt
+              reconkit scan $ip --scope /tmp/scope.txt --db /tmp/r.db --profile full > /tmp/out
+              cat /tmp/out
+              grep -q '6379/tcp' /tmp/out && grep -q 'route:' /tmp/out"

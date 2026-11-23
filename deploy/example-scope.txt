@@ -1,0 +1,3 @@
+# Allowlist for the "example" target: one host / IP / CIDR per line, '!' to exclude.
+# Optional: @engagement, @expires, @window (see README "Giấy phép quét & audit trail").
+192.0.2.10

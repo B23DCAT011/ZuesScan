@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from reconkit import __version__, logs, priority
+from reconkit import backup as backups
 from reconkit.audit import default_operator
 from reconkit.cve.cache import (
     CacheError,
@@ -374,6 +375,38 @@ def _cmd_audit(args: argparse.Namespace) -> int:
     for problem in report.problems:
         print(f"PROBLEM: {problem}", file=sys.stderr)
     return 1
+
+
+def _cmd_backup(args: argparse.Namespace) -> int:
+    """Back up the database, or check a backup before restoring it."""
+    try:
+        if args.verify:
+            check = backups.verify(args.verify)
+            removed: list[str] = []
+        else:
+            made = backups.backup(args.db, args.out_dir, keep=args.keep)
+            check, removed = made.check, made.removed
+    except backups.BackupError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2 if "not found" in str(exc) or "--keep" in str(exc) else 1
+    except OSError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    size = f"{check.size / 1024:.0f} KiB"
+    what = "backup checked" if args.verify else "backup written"
+    print(f"{what}: {check.path} ({size}, {check.runs} run(s), schema v{check.schema_version})")
+    print(f"sha256: {check.sha256}")
+    if check.audit_head is not None:
+        print(f"audit trail: {check.audit_events} event(s), head {check.audit_head}")
+        if not args.verify:
+            print("  keep that head hash somewhere else: it proves this history later")
+    else:
+        print("audit trail: not checked (the backup has another schema version)")
+    for name in removed:
+        print(f"removed old backup: {name}")
+    for problem in check.problems:
+        print(f"PROBLEM: {problem}", file=sys.stderr)
+    return 0 if check.ok else 1
 
 
 def _cmd_delete(args: argparse.Namespace) -> int:
@@ -1010,6 +1043,15 @@ def build_parser() -> argparse.ArgumentParser:
     delete.add_argument("--yes", action="store_true", help="confirm: the run cannot be restored")
     delete.add_argument("--operator", help="who deletes it (default: user@host)")
     delete.set_defaults(func=_cmd_delete)
+
+    backup = sub.add_parser(
+        "backup", help="back up the database (safe while scans run), or check a backup"
+    )
+    backup.add_argument("--db", default="reconkit.db", help="SQLite database path")
+    backup.add_argument("--out-dir", default="backups", help="where to write the backup")
+    backup.add_argument("--keep", type=int, help="keep only the N newest backups there")
+    backup.add_argument("--verify", metavar="FILE", help="check a backup instead of making one")
+    backup.set_defaults(func=_cmd_backup)
 
     token = sub.add_parser("token", help="make an API token for the service (service.toml)")
     token.add_argument("--name", required=True, help="who it is for (recorded as operator)")

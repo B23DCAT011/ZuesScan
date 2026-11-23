@@ -22,6 +22,7 @@ Npcap on Windows); without them, or for a local target, nmap reports no route.
 
 from __future__ import annotations
 
+import errno
 import ipaddress
 import logging
 import re
@@ -36,6 +37,17 @@ from reconkit.profiles import BUILTIN, DEFAULT_PROFILE, ScanProfile
 from reconkit.schema import Asset, Hop, RawOutput, ScanTarget, Service
 
 log = logging.getLogger(__name__)
+
+# nmap was told it may open raw sockets (root, NMAP_PRIVILEGED, a file capability) but
+# the system said no: say how to give it that right instead of leaving "QUITTING!".
+_NO_RAW_SOCKET = re.compile(
+    r"Failed to open device|Operation not permitted|requires root|socket troubles",
+    re.IGNORECASE,
+)
+RAW_SOCKET_HINT = (
+    " (nmap may not open raw sockets here: run it as root or give it CAP_NET_RAW; in "
+    "Docker, the scanning container needs --cap-add NET_RAW and no-new-privileges off)"
+)
 
 
 class NmapPlugin:
@@ -157,15 +169,18 @@ class NmapPlugin:
             ) from exc
         except subprocess.CalledProcessError as exc:
             stderr = (exc.stderr or "").strip() or None
+            hint = RAW_SOCKET_HINT if stderr and _NO_RAW_SOCKET.search(stderr) else ""
             raise ScanError(
-                f"nmap exited with code {exc.returncode} scanning {asked}",
+                f"nmap exited with code {exc.returncode} scanning {asked}{hint}",
                 plugin=self.name,
                 stderr=stderr,
                 output=self._raw(command, exc.stdout or "", exc.stderr or ""),
             ) from exc
         except OSError as exc:
-            # The binary vanished or is not executable between the check and the call.
-            raise ScanError(f"could not start nmap: {exc}", plugin=self.name) from exc
+            # The binary vanished or is not executable between the check and the call;
+            # or it carries a file capability this process may not have (EPERM).
+            hint = RAW_SOCKET_HINT if exc.errno == errno.EPERM else ""
+            raise ScanError(f"could not start nmap: {exc}{hint}", plugin=self.name) from exc
 
         log.debug(
             "nmap finished in %.1f s, %d bytes of XML",
