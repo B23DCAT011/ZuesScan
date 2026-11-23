@@ -53,6 +53,7 @@ cột mốc M1 (giao diện đầu tiên) chỉ bắt đầu sau F9.
 | D6 | Hàng đợi (GĐ 3) | **Redis + RQ** | Đơn giản, đủ cho vài worker |
 | D7 | Traceroute | **Có**, plugin nmap bật `--traceroute` theo profile | Cần cho các hop trên bản đồ; đổi lại quét lâu hơn một chút |
 | D8 | Lộ trình | **Chèn M1 sau F9** | Xem `TASKS.md` |
+| D9 | Mở rộng công cụ (2026-11-23) | **Registry + entry points `reconkit.plugins`; mỗi plugin khai `activity`, scope đặt trần `@activity` (mặc định `scan`)** | Thêm công cụ = cài một gói, không sửa lõi; được khai thác hay không thuộc về giấy phép, không thuộc về cờ dòng lệnh. Xem `docs/PLUGINS.md` |
 
 Ràng buộc chung: lõi vẫn **không phụ thuộc thư viện ngoài**. Thư viện web và hàng đợi đặt
 trong gói tuỳ chọn `reconkit[server]`.

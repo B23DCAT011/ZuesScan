@@ -380,6 +380,17 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     - subfinder chỉ thụ động (không brute-force DNS); không có API key thì ít nguồn; lọc wildcard
       chỉ dựa trên một tên ngẫu nhiên (zone có nhiều mức wildcard có thể lọt).
 
+- [ ] **G25. Plugin của bên thứ ba chạy với toàn quyền của ReconKit.** (từ `feat/plugin-registry`)
+  - ✅ Đã có: registry + entry points; gói hỏng bị bỏ qua và báo; không được trùng tên plugin dựng
+    sẵn; mỗi plugin khai `activity`, scope đặt trần `@activity` (mặc định `scan`), vượt trần bị
+    từ chối trước khi gửi gì và ghi vào audit; plugin khai thấp hơn spec của chính nó bị từ chối;
+    bộ kiểm tra hợp đồng `reconkit.plugins.contract`.
+  - Còn lại: plugin chạy **trong cùng tiến trình** — đọc được DB, file credentials, token; và
+    `activity` là **lời khai** của plugin, một plugin độc có thể nói dối. Thực tế: chỉ cài từ
+    nguồn tin cậy, ghim phiên bản + hash như các phụ thuộc khác; danh sách plugin được phép trong
+    cấu hình dịch vụ; chạy plugin ở tiến trình / container riêng chỉ nhận đúng địa chỉ cần quét
+    (như cách worker đã tách khỏi web).
+
 ## Mức 3 — Hoàn thiện sản phẩm / portfolio
 
 - [x] **G17. Chưa có CI.** Sửa: GitHub Actions chạy pytest + ruff + mypy cho mọi PR. (F1, `chore/ci`)
