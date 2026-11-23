@@ -375,6 +375,8 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       "đã thử, không khai thác được" như một quan sát.
     - Templates mới ra hằng ngày: bản ghim cần cập nhật định kỳ (dựng lại image). Template tự
       viết phải được ký (`nuclei -sign`) mới chạy dưới `-dut`.
+    - `reconkit tools install`: bản macOS (amd64, arm64) có trong lock nhưng chưa được chạy thử
+      trên một máy Mac thật (Windows và Linux đã thử). Chưa có bản Windows arm64 của nuclei.
     - Rate mặc định 50 req/s: một web server ~4 phút; dải lớn cần `max_rate` cao hơn hoặc
       `timeout` dài hơn trong profile.
     - subfinder chỉ thụ động (không brute-force DNS); không có API key thì ít nguồn; lọc wildcard
@@ -431,7 +433,8 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     + traceroute với user thường chỉ giữ `NET_RAW`. Đã chạy thử cả stack: scheduler → worker →
     API → backup trong lúc chạy.
   - ✅ **`chore/docker-tools`**: nuclei, subfinder, nuclei-templates trong image, ghim phiên bản
-    + SHA-256 từ file checksums chính thức (`docker/tools.lock`, `docker/tools.py update`); CI
+    + SHA-256 từ file checksums chính thức (nay là `reconkit/data/tools.lock`,
+    `python -m reconkit.tools update`; cũng dùng cho `reconkit tools install`); CI
     kiểm phiên bản trong image khớp lock. Lưu ý: file checksums lấy cùng nơi với file nhị phân
     (tin lần đầu); ProjectDiscovery chưa ký release bằng cosign/GPG để kiểm độc lập.
   - Còn lại: chưa **quét lỗ hổng chính image** (Trivy/Grype trong CI)

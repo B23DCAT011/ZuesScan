@@ -31,6 +31,43 @@ Chạy thử toàn bộ trong 2 lệnh (cần Docker): `sh lab/up.sh` rồi `sh 
 [Lab](#lab-có-lỗ-hổng). Lộ trình: [`TASKS.md`](TASKS.md) · Thiết kế:
 [`docs/THIET-KE.md`](docs/THIET-KE.md) · Giới hạn: [`docs/KNOWN-GAPS.md`](docs/KNOWN-GAPS.md).
 
+## Cài đặt trên một máy mới
+
+**Cách 1 — Docker** (có sẵn mọi thứ: nmap, nuclei, templates, subfinder, ssh): xem mục
+[Docker](#docker). Chỉ cần Docker.
+
+**Cách 2 — Python** (Python 3.11+, Linux / macOS / Windows):
+
+```bash
+pipx install git+https://github.com/B23DCAT011/reconkit       # hoặc: pip install --user ...
+reconkit doctor               # máy có gì, thiếu gì, và lệnh cài đúng cho hệ điều hành này
+sudo apt install nmap         # (ví dụ) gói hệ thống: ReconKit chỉ in lệnh, không tự cài
+reconkit tools install        # nuclei + subfinder + nuclei-templates: không cần admin
+reconkit doctor               # "ready to scan"
+```
+
+Chia việc như vậy là có chủ ý:
+
+| Công cụ | Ai cài | Vì sao |
+|---|---|---|
+| nmap, ssh (và Npcap trên Windows) | **người dùng**, bằng trình quản lý gói của hệ thống (`reconkit doctor` in đúng lệnh) | cần quyền admin, cài driver / capability; một công cụ bảo mật không được tự leo quyền; Npcap bản miễn phí không được đóng gói phân phối kèm |
+| nuclei, subfinder, nuclei-templates | **ReconKit** (`reconkit tools install`) | một file chạy được, giấy phép MIT; cài vào thư mục của người dùng, không cần admin |
+
+`reconkit tools install` tải **đúng** bản đã ghim trong `reconkit/data/tools.lock` cho nền tảng
+này (Linux / macOS amd64 + arm64, Windows amd64), từ chối file có SHA-256 khác, chỉ lấy đúng file
+chạy trong mỗi zip, giải nén templates an toàn, rồi ghi SHA-256 của những gì đã cài:
+
+```bash
+reconkit tools list           # bản ghim, bản đã cài, và chương trình ReconKit sẽ dùng
+reconkit tools verify         # có gì bị sửa từ lúc cài không
+reconkit tools path           # thư mục chứa nuclei / subfinder (thêm vào PATH nếu muốn gọi tay)
+```
+
+ReconKit tìm công cụ theo thứ tự: bản nó đã cài → PATH → chỗ bộ cài nmap của Windows đặt (nên
+nmap vừa cài xong vẫn dùng được dù terminal đang mở chưa thấy PATH mới). Templates đã cài được
+dùng tự động, và mỗi run ghi `nuclei 3.11.1 (templates 10.5.2)`. Image Docker được dựng bằng
+đúng file lock và đúng code này.
+
 ## Cài đặt (dev)
 
 ```bash
@@ -487,7 +524,8 @@ Image và compose được làm cứng theo cách làm thật:
   (`docker/requirements.lock`, `docker/build.lock`, sinh lại bằng `sh docker/lock.sh` ngay
   trong image gốc); nmap lấy từ kho Debian có ký; **nuclei, subfinder và nuclei-templates** là
   file release ghim **phiên bản và SHA-256** lấy từ file checksums chính thức của từng bản
-  (`docker/tools.lock`) — sai một byte thì build dừng. Từ mỗi zip chỉ lấy đúng binary; templates
+  (`reconkit/data/tools.lock`, cũng là file `reconkit tools install` dùng) — sai một byte thì
+  build dừng. Từ mỗi zip chỉ lấy đúng binary; templates
   bỏ phần không phải template và ghi phiên bản (`/opt/nuclei-templates`, chỉ đọc, thuộc root).
   Không tải gì từ nơi khác.
 - **Không chạy root**: user `reconkit` (uid 10001). nmap được `setcap cap_net_raw` — đúng một
@@ -535,13 +573,13 @@ volume với DB thì không chống được hỏng đĩa: luôn `docker compose
 ### nuclei, subfinder và templates trong image
 
 Image có sẵn nuclei, subfinder và một bộ nuclei-templates ghim (phiên bản trong
-`docker/tools.lock`); `nuclei = true` / `discover = true` trên target dùng chúng, và mỗi run ghi
+`reconkit/data/tools.lock`); `nuclei = true` / `discover = true` trên target dùng chúng, và mỗi run ghi
 lại `nuclei 3.11.1 (templates 10.5.2)`. Templates mới ra hằng ngày, nên cập nhật bằng cách dựng
 lại image — có kiểm soát như mọi phụ thuộc khác:
 
 ```bash
-python docker/tools.py update        # bản mới nhất + SHA-256 từ file checksums của từng release
-git diff docker/tools.lock           # xem lại: hash đổi mà phiên bản không đổi = file đã bị thay
+python -m reconkit.tools update             # bản mới nhất + SHA-256 từ file checksums của từng release
+git diff reconkit/data/tools.lock           # xem lại: hash đổi mà phiên bản không đổi = file đã bị thay
 docker compose build && docker compose up -d
 ```
 
