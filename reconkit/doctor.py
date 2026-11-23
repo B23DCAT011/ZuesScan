@@ -299,12 +299,13 @@ def check_server_extra(missing: list[str]) -> Check:
 
 
 def check_service(config_path: str) -> list[Check]:
-    """service.toml, its database and its Redis."""
-    try:
-        from reconkit.server import queue
-        from reconkit.server.config import ConfigError, load_config
-    except ImportError as exc:
-        return [Check("service", ERROR, f"cannot load the service: {exc}", required=True)]
+    """service.toml, its database and its Redis.
+
+    The configuration is checked even without the server extra (it is plain TOML): a
+    file can be prepared and checked on a machine that will not run the service.
+    """
+    from reconkit.server.config import ConfigError, load_config
+
     try:
         config = load_config(config_path)
     except ConfigError as exc:
@@ -321,6 +322,19 @@ def check_service(config_path: str) -> list[Check]:
             checks.append(Check("database", OK, str(db)))
         except sqlite3.Error as exc:
             checks.append(Check("database", ERROR, f"{db}: {exc}", required=True))
+    try:
+        from reconkit.server import queue
+    except ImportError as exc:
+        checks.append(
+            Check(
+                "redis",
+                ERROR,
+                f"cannot check Redis: the server extra is not installed ({exc})",
+                "pip install 'reconkit[server]'",
+                required=True,
+            )
+        )
+        return checks
     try:
         queue.connect(config).ping()
         checks.append(Check("redis", OK, queue.safe_url(config.redis_url)))
