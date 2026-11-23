@@ -169,5 +169,14 @@ jobs:
           if docker compose -p zues-lab exec -T apache bash -c "$probe"; then
             echo "a lab target reached the Internet"; exit 1
           fi
+      # When a check above fails, show why without anyone re-running the lab: the demo's
+      # findings and finding details, the runs and the worker's last log lines (no secret
+      # in them: the admin token went to /dev/null in lab/up.sh).
+      - name: what the lab saw (on failure)
+        if: failure()
+        run: |
+          sed -n '/== what the scans say now/,$p' demo.txt | head -80
+          docker compose -p zues-lab exec -T worker zues runs --db /data/zues.db || true
+          docker compose -p zues-lab logs --no-color --tail 80 worker || true
       - if: always()
         run: sh lab/down.sh
