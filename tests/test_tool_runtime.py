@@ -416,3 +416,28 @@ def test_the_image_sets_the_templates_by_environment(
     argv = ["scan", "10.0.0.5", "--scope", str(scope), "--db", str(tmp_path / "r.db"), "--nuclei"]
     cli.main(argv)
     assert made[0]["templates"] == str(templates)
+
+
+# --- check_rate: requests of active checks, apart from nmap's packets ---------------------------
+
+
+def test_check_rate_is_its_own_setting() -> None:
+    from reconkit.profiles import BUILTIN, ProfileError, override
+
+    full = BUILTIN["full"]
+    assert NucleiPlugin(full).rate == 50  # neither set: the cautious default
+    assert NucleiPlugin(override(full, {"max_rate": 200})).rate == 200  # as before
+    fast_checks = override(full, {"check_rate": 300})
+    assert NucleiPlugin(fast_checks).rate == 300
+    assert fast_checks.max_rate is None  # nmap is not slowed down by it
+    assert "checks max 300 req/s" in fast_checks.summary()
+    with pytest.raises(ProfileError, match="check_rate must be a whole number 1-10000"):
+        override(full, {"check_rate": 0})
+
+
+def test_the_lab_profile_scans_fast_without_capping_nmap() -> None:
+    from reconkit.profiles import load_profiles
+
+    lab = load_profiles(Path(__file__).parent.parent / "lab" / "profiles.toml")["lab"]
+    assert (lab.ports, lab.traceroute, lab.max_rate, lab.check_rate) == ("-", True, None, 300)
+    assert "--max-rate" not in lab.nmap_args()

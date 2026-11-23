@@ -20,7 +20,8 @@ Example config:
     [profiles.nightly]
     base = "full"          # start from a built-in profile
     timing = 3
-    max_rate = 300         # packets per second, at most
+    max_rate = 300         # packets per second, at most (nmap)
+    check_rate = 20        # requests per second, at most (nuclei and other active checks)
     host_timeout = 1800    # give up on one host after 30 minutes
     timeout = 14400        # give up on the whole scan after 4 hours
 """
@@ -79,7 +80,11 @@ class ScanProfile:
     # Treat every address as up (-Pn): finds hosts that ignore ping, but a range scan
     # then probes every address, which is much slower.
     assume_up: bool = False
-    max_rate: int | None = None  # packets per second, at most
+    max_rate: int | None = None  # packets per second, at most (nmap)
+    # Requests per second of active checks (nuclei), else max_rate, else 50. Kept apart
+    # from max_rate: packets of a port scan and HTTP requests are not the same load, and
+    # capping one to suit the other made a full-port lab scan 30 times slower.
+    check_rate: int | None = None
     max_retries: int | None = None  # retransmissions per probe
     host_timeout: int | None = None  # seconds before nmap gives up on one host
     timeout: int = 900  # seconds before ReconKit stops the whole scan
@@ -97,6 +102,7 @@ class ScanProfile:
         _check_range(self.name, "timing", self.timing, 0, 5)
         _check_range(self.name, "version_intensity", self.version_intensity, 0, 9)
         _check_range(self.name, "max_rate", self.max_rate, 1, 1_000_000)
+        _check_range(self.name, "check_rate", self.check_rate, 1, 10_000)
         _check_range(self.name, "max_retries", self.max_retries, 0, 50)
         _check_range(self.name, "host_timeout", self.host_timeout, 1, 7 * 86400)
         _check_range(self.name, "timeout", self.timeout, 1, 7 * 86400)
@@ -146,6 +152,8 @@ class ScanProfile:
             parts.append("assume up (-Pn)")
         if self.max_rate is not None:
             parts.append(f"max {self.max_rate} pkt/s")
+        if self.check_rate is not None:
+            parts.append(f"checks max {self.check_rate} req/s")
         if self.traceroute:
             parts.append("traceroute")
         parts.append(f"timeout {_duration(self.timeout)}")
@@ -216,6 +224,7 @@ _TYPES: dict[str, tuple[type, ...]] = {
     "traceroute": (bool,),
     "assume_up": (bool,),
     "max_rate": (int,),
+    "check_rate": (int,),
     "max_retries": (int,),
     "host_timeout": (int,),
     "timeout": (int,),

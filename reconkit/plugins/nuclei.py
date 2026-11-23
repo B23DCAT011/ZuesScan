@@ -24,7 +24,8 @@ Safe defaults, because a scan must not harm or leak:
 * `-ni`: no interactsh. Out-of-band checks would make targets call a public
   ProjectDiscovery server, sending engagement data outside.
 * `-etags dos,fuzz,intrusive,bruteforce`: no template that floods, fuzzes or tries
-  passwords; `-rl`: requests per second capped (the profile's max rate, else 50).
+  passwords; `-rl`: requests per second capped (the profile's check_rate, else its
+  max_rate, else 50).
   Code, headless, file and DAST templates are never enabled (`-code`, `-headless`,
   `-lfa`, `-dast` are not passed).
 * `-dut`: only templates whose signature checks out (ProjectDiscovery signs its
@@ -124,7 +125,7 @@ class NucleiPlugin:
     ) -> None:
         self.profile = profile or BUILTIN[DEFAULT_PROFILE]
         self.timeout = timeout or self.profile.timeout  # for all of this check's runs
-        self.rate = self.profile.max_rate or DEFAULT_RATE
+        self.rate = self.profile.check_rate or self.profile.max_rate or DEFAULT_RATE
         self.templates = templates
         self.clock: Callable[[], float] = time.monotonic  # replaceable in tests
 

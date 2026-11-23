@@ -5,6 +5,8 @@
 #   3. really fix only nginx (1.20.0 -> 1.27.5), then scan again
 #   4. nginx is "fixed"; Apache is a "fake fix" - claimed fixed, still there (and a webhook
 #      alert, if [notify] has one). Everything is in the audit trail and on the dashboard.
+# The lab targets run with nuclei: the Apache flaw and Terrapin on the SSH server are
+# "confirmed" (a check exploited them), not only inferred from version numbers.
 set -eu
 cd "$(dirname "$0")/.."
 export MSYS_NO_PATHCONV=1
@@ -43,6 +45,9 @@ wait_runs $((before + 2))
 
 echo "== what the scans say now"
 rk findings --db "$DB" --all
+echo
+echo "== the fake fix, in detail: nuclei exploited it again after the fix was claimed"
+rk finding "$APACHE" --db "$DB"
 echo
 echo "nginx: fixed (verified by the scan). Apache: FAKE FIX (claimed fixed, still there)."
 echo "See them on http://127.0.0.1:8000 (Findings), with the history of each decision."

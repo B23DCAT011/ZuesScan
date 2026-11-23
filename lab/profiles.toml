@@ -1,0 +1,7 @@
+# Scan profiles of the lab. Its targets are containers on the same machine, so the
+# active checks can go much faster than anything aimed at a real network.
+[profiles.lab]
+base = "full"            # all ports + traceroute, nmap at full speed
+description = "all ports + traceroute, fast checks: the local lab only"
+check_rate = 300         # nuclei requests per second (default 50)
+timeout = 1800
