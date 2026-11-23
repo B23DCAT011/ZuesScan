@@ -305,7 +305,7 @@
         el("td", null, action)
       );
     });
-    return table(["Name", "Target", "Profile", "Schedule", "Last scan (UTC)", "Engagement", "Checks", ""], rows, "No target in service.toml.");
+    return table(["Name", "Target", "Profile", "Schedule", "Last scan (UTC)", "Engagement", "Checks", ""], rows, "No target yet: an admin adds them in Settings.");
   }
 
   function scan(name, button) {

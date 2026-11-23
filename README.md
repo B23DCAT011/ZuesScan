@@ -35,8 +35,20 @@ Chạy thử toàn bộ trong 2 lệnh (cần Docker): `sh lab/up.sh` rồi `sh 
 
 ## Cài đặt trên một máy mới
 
-**Cách 1 — Docker** (có sẵn mọi thứ: nmap, nuclei, templates, subfinder, ssh): xem mục
-[Docker](#docker). Chỉ cần Docker; dùng image đã phát hành thì không phải build:
+**Cách 1 — Docker, 3 lệnh** (có sẵn mọi thứ: nmap, nuclei, templates, subfinder, dnsx, naabu,
+httpx, ssh; không phải sửa file nào):
+
+```bash
+git clone https://github.com/B23DCAT011/reconkit && cd reconkit
+docker compose up -d --build                                # Redis, web, worker, scheduler
+docker compose exec web zues user add tôi --role admin      # in token đăng nhập MỘT lần
+```
+
+Mở http://127.0.0.1:8000, dán token, vào **Settings**: thêm scope (được quét gì), thêm target
+và chọn tool, rồi **Scan now** — hoặc đặt lịch. Đã thử đúng các bước này trên volume trống: từ
+`up` tới run đầu tiên được lưu, không có `service.toml`.
+
+Khi đã có bản phát hành, dùng image dựng sẵn thay vì build (chỉ cần `compose.yaml`):
 
 ```bash
 export ZUES_IMAGE=ghcr.io/b23dcat011/zues-scan:0.2.0       # linux/amd64 + linux/arm64
@@ -617,12 +629,22 @@ Bảo mật:
 Cả dịch vụ (Redis, web, worker, scheduler) chạy bằng Docker Compose:
 
 ```bash
-cp deploy/service.example.toml deploy/service.toml       # sửa targets, scope (deploy/ được mount vào /config)
 docker compose up -d --build
-docker compose run --rm --no-deps web token --name alice --role operator   # dán khối [[tokens]] vào deploy/service.toml
-# mở http://127.0.0.1:8000 — sửa service.toml có hiệu lực ngay, không cần khởi động lại
+docker compose exec web zues user add tôi --role admin   # rồi cấu hình mọi thứ trong Settings
 docker compose up -d --scale worker=3                    # thêm worker
 docker compose logs -f worker
+```
+
+Không có `service.toml`, dịch vụ đọc cài đặt từ biến môi trường (compose đã đặt sẵn):
+`ZUES_DB`, `ZUES_REDIS_URL`, và tuỳ chọn `ZUES_QUEUE`, `ZUES_CVE_CACHE`, `ZUES_WEBHOOK`,
+`ZUES_NOTIFY_MIN_PRIORITY`; target, scope và token nằm trong database (dashboard). Muốn quản lý
+bằng file như trước (vd cấu hình qua git, credentials SSH): đặt file vào `deploy/` (được mount
+vào `/config`) và `ZUES_CONFIG=/config/service.toml` — target của file và của dashboard dùng
+song song; sửa file có hiệu lực ngay, không cần khởi động lại:
+
+```bash
+cp deploy/service.example.toml deploy/service.toml
+ZUES_CONFIG=/config/service.toml docker compose up -d
 ```
 
 Image và compose được làm cứng theo cách làm thật:
@@ -654,7 +676,7 @@ Dữ liệu CVE thật trong Docker:
 
 ```bash
 docker compose run --rm -e NVD_API_KEY worker cve sync --cache /data/zues-cve.db
-# rồi bật cve_cache = "/data/zues-cve.db" trong deploy/service.toml
+# rồi đặt ZUES_CVE_CACHE=/data/zues-cve.db (hoặc cve_cache = ... trong service.toml)
 ```
 
 ### Sao lưu & khôi phục

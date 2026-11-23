@@ -184,4 +184,8 @@ Mục tiêu: mang ZuesScan sang máy khác mà cài nhanh, thêm / bớt công c
       Thử thật bằng Chrome headless: thêm scope, target, target ngoài scope bị từ chối kèm lý do,
       tạo token, trang Edit điền sẵn. Sửa: trang cũ trả lời muộn vẽ đè trang mới; `pattern` không
       hợp lệ ở chế độ regex `v` của trình duyệt.
+- [x] `feat/easy-install` — không bắt buộc `service.toml`: cài đặt từ biến môi trường `ZUES_*`,
+      target / scope / token từ dashboard; compose chạy ngay (`up -d` → `zues user add` →
+      Settings); lab giữ file qua `ZUES_CONFIG`. Thử thật trên volume trống: admin → scope →
+      target → Scan now → run được lưu.
 

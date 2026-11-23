@@ -14,15 +14,21 @@
 # the host stays reachable through the bridge's address. Checked on Engine 28.
 services:
   worker:
+    environment:
+      ZUES_CONFIG: /config/service.toml   # the lab's own file
     networks:
       default: { gw_priority: 1 }  # its default route stays the normal network's
       lab-dmz: {}
     volumes:
       - ./lab:/config:ro          # lab/service.toml and lab/lab-scope.txt
   web:
+    environment:
+      ZUES_CONFIG: /config/service.toml   # the lab's own file
     volumes:
       - ./lab:/config:ro
   scheduler:
+    environment:
+      ZUES_CONFIG: /config/service.toml   # the lab's own file
     volumes:
       - ./lab:/config:ro
     depends_on:

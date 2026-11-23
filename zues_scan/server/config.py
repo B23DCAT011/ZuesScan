@@ -36,6 +36,7 @@ target by its `name`; it never brings its own address, scope file or options.
 from __future__ import annotations
 
 import json
+import os
 import re
 import tomllib
 from dataclasses import dataclass, field, replace
@@ -134,7 +135,42 @@ def parse_every(text: str) -> timedelta:
     return delta
 
 
-def load_config(path: str | Path) -> ServiceConfig:
+ENVIRONMENT = "(environment)"  # the "path" of a configuration read from the environment
+
+
+def config_path(given: str | None) -> str:
+    """The configuration to use: `--config`, else $ZUES_CONFIG, else the environment."""
+    return given or os.environ.get("ZUES_CONFIG") or ENVIRONMENT
+
+
+def from_environment() -> ServiceConfig:
+    """A service without service.toml: its settings from ZUES_* variables (the Docker
+    image sets them), its targets, scopes and tokens from the dashboard (`zues user add`
+    makes the first admin)."""
+    env = os.environ
+    min_priority = env.get("ZUES_NOTIFY_MIN_PRIORITY", "P2")
+    if min_priority not in ("P1", "P2", "P3", "P4"):
+        raise ConfigError("ZUES_NOTIFY_MIN_PRIORITY must be P1, P2, P3 or P4")
+    webhook = env.get("ZUES_WEBHOOK") or None
+    if webhook is not None and not webhook.startswith(("https://", "http://")):
+        raise ConfigError("ZUES_WEBHOOK must be an http(s) URL")
+    config = ServiceConfig(
+        path=ENVIRONMENT,
+        db=env.get("ZUES_DB") or "zues.db",
+        redis_url=env.get("ZUES_REDIS_URL") or "redis://localhost:6379/0",
+        queue=env.get("ZUES_QUEUE") or "zues",
+        cve_cache=env.get("ZUES_CVE_CACHE") or None,
+        notify=Notify(webhook=webhook, min_priority=min_priority),
+    )
+    return with_dashboard(config)
+
+
+def load_config(path: str | Path | None = None) -> ServiceConfig:
+    """service.toml at `path` (plus the dashboard's configuration); without a path, or
+    with $ZUES_CONFIG's, see `config_path`; ENVIRONMENT: `from_environment()`."""
+    path = config_path(str(path) if path is not None else None)
+    if path == ENVIRONMENT:
+        return from_environment()
     try:
         with Path(path).open("rb") as handle:
             data = tomllib.load(handle)
