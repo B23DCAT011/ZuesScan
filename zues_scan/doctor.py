@@ -491,7 +491,34 @@ def check_plugins(policy: Any = None) -> list[Check]:
             checks.append(
                 Check(f"plugin {spec.name}", OK, f"{spec.kind}, {spec.activity} ({spec.source})")
             )
+    if any(spec.source != "built-in" for spec in loaded.plugins.values()):
+        checks.append(check_confinement())
     return checks
+
+
+def check_confinement(system: str | None = None, version: int | None = None) -> Check:
+    """Can plugins from other packages be kept from the service's files (Landlock)?"""
+    from zues_scan.plugins import landlock
+
+    system = system or platform.system()
+    version = landlock.abi() if version is None else version
+    if version:
+        return Check(
+            "plugin confinement",
+            OK,
+            f"Landlock v{version}: plugins from other packages read only the system, Python "
+            "and their own files, and write only a temporary folder",
+        )
+    where = "this kernel has no Landlock" if system == "Linux" else f"not available on {system}"
+    return Check(
+        "plugin confinement",
+        WARN,
+        f"{where}: plugins from other packages run in their own process, but can read "
+        "every file the service can (its database included)",
+        "Linux 5.13+ with Landlock enabled (lsm=...,landlock), e.g. the service's container"
+        if system == "Linux"
+        else "run the service in its Linux container (docker compose)",
+    )
 
 
 # --- output --------------------------------------------------------------------------------------
