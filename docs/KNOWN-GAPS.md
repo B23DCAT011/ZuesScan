@@ -430,11 +430,24 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     sẵn; mỗi plugin khai `activity`, scope đặt trần `@activity` (mặc định `scan`), vượt trần bị
     từ chối trước khi gửi gì và ghi vào audit; plugin khai thấp hơn spec của chính nó bị từ chối;
     bộ kiểm tra hợp đồng `zues_scan.plugins.contract`.
-  - Còn lại: plugin chạy **trong cùng tiến trình** — đọc được DB, file credentials, token; và
-    `activity` là **lời khai** của plugin, một plugin độc có thể nói dối. Thực tế: chỉ cài từ
-    nguồn tin cậy, ghim phiên bản + hash như các phụ thuộc khác; danh sách plugin được phép trong
-    cấu hình dịch vụ; chạy plugin ở tiến trình / container riêng chỉ nhận đúng địa chỉ cần quét
-    (như cách worker đã tách khỏi web).
+  - ✅ Dịch vụ chỉ nạp plugin được ghim (`feat/plugin-allowlist`, D14): `[[plugins]]` trong
+    service.toml hoặc `ZUES_PLUGINS`, mỗi mục là gói + phiên bản + SHA-256 các file trong RECORD
+    (`zues plugins --pin NAME` in ra); kiểm từ file trên đĩa **trước khi import** — chưa ghim, sai
+    phiên bản, một file bị sửa / xoá, entry point trỏ sang module của gói khác, cài editable → không
+    nạp, code không chạy, `zues doctor` báo. `activity` cho cổng scope là mức người vận hành ghi;
+    plugin khai cao hơn thì bị từ chối. Thử thật trong container Linux: chưa ghim → target dừng với
+    lý do; ghim → quét, finding `confirmed`; sửa một byte → bị từ chối, đoạn code thêm vào không chạy.
+  - Còn lại:
+    - Plugin được ghim vẫn chạy **trong cùng tiến trình**: đọc được DB, file credentials, token,
+      biến môi trường (`ZUES_WEBHOOK_SECRET`…). Pin bảo đảm đó là code đã đọc, không bảo đảm nó vô
+      hại. Thực tế: chạy plugin ở tiến trình riêng với môi trường sạch, chỉ nhận đúng địa chỉ cần
+      quét (bước tiếp theo); mạnh hơn nữa là user / container riêng, chỉ có mạng tới mục tiêu.
+    - Phụ thuộc của plugin (gói khác nó import) và file `.pth` của gói khác không nằm trong pin:
+      ghim chúng khi dựng image (`pip install --require-hashes`, như `tools.lock` với công cụ).
+    - Kiểm pin lúc nạp, không theo dõi sau đó: một file bị sửa giữa lúc kiểm và lúc import (cửa sổ
+      rất ngắn) không bị bắt — người sửa được site-packages của dịch vụ thì đã có quyền của nó.
+    - `zues scan` ở dòng lệnh mặc định vẫn nạp mọi plugin đã cài (cài là đã quyết định); đặt
+      `ZUES_PLUGINS` để áp cùng chính sách.
 
 - [ ] **G26. AI agent qua MCP: giới hạn còn lại.** (từ `feat/mcp`)
   - ✅ Đã có: `zues mcp` (stdio, client của web API), 12 tool; xếp hàng quét / ghi quyết định

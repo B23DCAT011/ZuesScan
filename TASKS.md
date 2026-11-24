@@ -241,4 +241,8 @@ rồi độ tin cậy, rồi tiện dụng.
       tên (Settings, `zues user`, service.toml, API); chỉ thấy / làm trên target đó (run, finding,
       host, job, quét, MCP), còn lại 404; audit chỉ cho token không giới hạn; run ghi
       `target_name` (schema 19), run cũ được gán khi khởi động. Thử trên Chrome headless.
+- [x] `feat/plugin-allowlist` (G25, D14) — dịch vụ chỉ nạp plugin bên thứ ba được ghim (`[[plugins]]`
+      / `ZUES_PLUGINS`: gói, phiên bản, SHA-256 các file đã cài, `activity` do người vận hành ghi),
+      kiểm trước khi import; `zues plugins --pin NAME` / `--config`; doctor báo; Settings cho thấy
+      plugin bị bỏ và vì sao. Thử thật trong container Linux (chưa ghim / ghim / sửa một byte).
 

@@ -26,6 +26,15 @@ profile = "standard"
 # every = "24h"                          # scheduled scan
 # engagement = "PT-2026-001"
 
+# Third-party plugins load only when pinned here (built-ins always do). Install the
+# package in the image, review its code, then paste what `zues plugins --pin NAME` prints:
+# [[plugins]]
+# name = "exposed-git"
+# package = "zues-exposed-git"
+# version = "0.1.0"
+# sha256 = "<64 hex characters>"         # of the files the package installed
+# activity = "active"                    # what you judged it does: the scope gate uses this
+
 # [notify]
 # webhook = "https://hooks.slack.com/services/..."
 # min_priority = "P2"
