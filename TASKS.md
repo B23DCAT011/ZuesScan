@@ -226,4 +226,9 @@ rồi độ tin cậy, rồi tiện dụng.
 - [x] `feat/token-expiry` (G23, G30) — token có hạn dùng (schema 17, mặc định 90 ngày, `expires` trong
       service.toml), hết hạn thì từ chối rõ ràng + phiên kết thúc, cảnh báo một tuần trước hạn;
       Rotate trên Settings / `zues user rotate` / API. Thử trên Chrome headless.
+- [x] `fix/core-tests-token` — test xoay vòng token import web server trong job core (không có
+      FastAPI): mọi job core của 0538e6a hỏng. Bài học cũ được áp lại: chạy container sạch.
+- [x] `fix/nuclei-network-timeouts` (G24) — job lab chập chờn được tìm ra nguyên nhân: template
+      mạng của nuclei dùng timeout của HTTP; sshd chậm → lỡ Terrapin 4/10 lần; nay 30 s / 3 lần
+      thử (5/5). CI báo kiểm tra nào hỏng + bảng finding thành annotation công khai.
 
