@@ -362,8 +362,10 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       reverse proxy có TLS (cookie tự bật `Secure` khi proxy báo `X-Forwarded-Proto: https`).
     - Phân quyền mới có hai vai trò cho toàn bộ dịch vụ; chưa có quyền theo từng target /
       engagement (vd khách hàng A chỉ thấy target của A).
-    - Danh sách finding / run chưa phân trang (giới hạn số dòng); chưa có trang so sánh hai run
-      trên web (đã có ở CLI `zues diff` và mục "Changes" của báo cáo).
+    - ✅ Phân trang + so sánh run (`feat/web-compare`): runs theo khoá (`before`), findings theo
+      trang (`X-Total-Count`); `/runs/{id}/diff`, trang Compare, tool MCP `compare_runs`. Còn lại:
+      findings sắp theo mức ưu tiên tính trong Python nên mỗi trang vẫn đọc cả danh sách (ổn tới
+      vài chục nghìn finding; lớn hơn thì cần cột ưu tiên được lưu và đánh index).
     - Không có Swagger UI (`/docs` tải script từ CDN, trái CSP); schema OpenAPI vẫn ở
       `/api/v1/openapi.json` để nhập vào công cụ khác.
     - ✅ SQLite dùng WAL (`feat/sqlite-wal`): đọc dài không chặn lưu run (có test đối chứng: chế độ

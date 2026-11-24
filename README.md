@@ -585,7 +585,10 @@ không thư viện ngoài, không bước build) có:
 - **Overview**: số finding đang mở theo P1–P4, số *fix giả* / *xuất hiện lại*; các target trong
   `service.toml` với nút **Scan now** (chỉ vai trò `operator`); hàng đợi quét tự làm mới.
 - **Runs**: mỗi run mở **bản đồ bề mặt tấn công** của M1 nguyên vẹn (cùng trang với
-  `zues report --html`, giữ CSP riêng của nó), tải JSON hoặc SARIF.
+  `zues report --html`, giữ CSP riêng của nó), tải JSON hoặc SARIF; **Changes** cho thấy run đó
+  khác gì run trước của cùng target, hoặc tick hai run bất kỳ rồi **Compare**: host mới / mất,
+  cổng mở / đóng, phiên bản đổi, finding xuất hiện / biến mất (như `zues diff`), kèm cảnh báo khi
+  hai run không so được (khác profile, khác dữ liệu CVE). Từng trang 50 run (**Older runs**).
 - **Findings**: theo mức ưu tiên, lọc theo trạng thái; trang chi tiết có lịch sử vòng đời và
   form quyết định (báo đã sửa / chấp nhận rủi ro có lý do + ngày xem lại / mở lại) — ghi vào
   audit trail dưới tên của token.
@@ -643,6 +646,8 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/v1/runs/3/sarif
 |---|---|---|
 | `GET /api/v1/me`, `targets`, `jobs`, `jobs/{id}`, `runs`, `runs/{id}`, `findings`, `findings/{id}`, `hosts`, `audit` | viewer | đọc |
 | `GET /api/v1/runs/{id}/report.html`, `/sarif` | viewer | báo cáo HTML (bản đồ) / SARIF 2.1.0 |
+| `GET /api/v1/runs/{id}/diff[?against=<id>]` | viewer | khác gì so với run trước đó của cùng target (hoặc run `against`) |
+| `GET /api/v1/runs?limit=&before=<id>`, `GET /api/v1/findings?limit=&offset=` | viewer | từng trang (findings có `X-Total-Count`) |
 | `POST /api/v1/scans` `{"target": "<tên>"}` | operator | xếp hàng quét một target **đã khai** |
 | `POST /api/v1/findings/{id}/decision` `{"action": "claim_fixed" \| "accept" \| "reopen", "note", "until"}` | operator | quyết định |
 | `GET /api/v1/admin/config` | admin | scope, target, token, plugin, profile — mọi thứ trang Settings cần |

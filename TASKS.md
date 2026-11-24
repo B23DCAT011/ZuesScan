@@ -217,4 +217,7 @@ rồi độ tin cậy, rồi tiện dụng.
       giờ IANA / độ lệch, ≥ 5 phút) trong service.toml, API, dashboard; scheduler giữ mốc lịch nên
       `every` không còn trôi theo thời gian chờ; lỡ nhiều mốc thì bù một lần. Thử trên Chrome
       headless (lưu, từ chối `*/2`, trang Edit, Overview).
+- [x] `feat/web-compare` (G23) — so sánh hai run trên web (Changes / Compare, API `/runs/{id}/diff`,
+      tool MCP `compare_runs`), phân trang runs (`before`) và findings (`limit` / `offset`,
+      `X-Total-Count`); `diff.previous_run` dùng chung cho CLI, web, MCP. Thử trên Chrome headless.
 
