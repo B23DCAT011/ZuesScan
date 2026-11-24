@@ -421,7 +421,13 @@ thác hằng ngày; nên xét bằng chứng khai thác trước, mức tác đ�
 hoàn toàn trên cache: không có thông tin nào về mục tiêu bị gửi ra ngoài.
 
 Output gốc của scanner (XML của nmap) được giữ lại theo từng run làm bằng chứng, kèm mã băm
-SHA-256, kể cả khi lần quét thất bại. Lấy lại bằng:
+SHA-256, kể cả khi lần quét thất bại. Riêng request / response mà nuclei gửi để **xác nhận** một
+lỗi được **che bớt trước khi lưu và băm**: giá trị `Authorization`, `Cookie` / `Set-Cookie` (giữ
+tên cookie) và các header mang token / secret / session; những gì giống bí mật trong mọi chuỗi
+(`password=…`, JWT, khoá AWS, private key PEM, hash trong `/etc/shadow`, mật khẩu trong URL); thân
+response chỉ giữ 2 KB đầu. Phần còn lại vẫn cho thấy đã gửi gì và máy trả lời gì (đủ chứng minh
+finding), nhưng database không giữ hộ bí mật của khách hàng. Kết quả nào không có gì để che thì
+giữ nguyên từng byte. Lấy lại bằng:
 
 ```bash
 zues raw 1 --db zues.db                 # in ra màn hình (pipe được)

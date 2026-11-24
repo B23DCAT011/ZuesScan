@@ -56,7 +56,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from zues_scan import tools
+from zues_scan import redact, tools
 from zues_scan.plugins.base import ScanError, ScanResult
 from zues_scan.profiles import BUILTIN, DEFAULT_PROFILE, ScanProfile
 from zues_scan.schema import Asset, Confidence, Finding, RawOutput, ScanTarget, Service, Severity
@@ -314,13 +314,15 @@ class NucleiPlugin:
                 ) from exc
             except OSError as exc:
                 raise ScanError(f"could not start nuclei: {exc}", plugin=self.name) from exc
-        # The input list is part of what was run: keep it with the command.
+        # The input list is part of what was run: keep it with the command. The exchanges
+        # are kept masked (credentials, session cookies, secrets) and responses cut: what
+        # proves the finding stays, the target's secrets do not (redact, G24).
         raw = RawOutput(
             plugin=self.name,
             format="nuclei-jsonl",
             command=(*command, "<", *inputs),
-            content=stdout,
-            stderr=stderr.strip(),
+            content=redact.nuclei_jsonl(stdout),
+            stderr=redact.text(stderr.strip()),
         )
         return raw, finished
 

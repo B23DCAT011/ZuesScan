@@ -402,9 +402,12 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       quét lại trước khi kết luận.
     - **Không interactsh** → template phát hiện qua kênh ngoài (OAST: Log4Shell mù, SSRF mù…)
       không chạy. Thực tế: tự dựng máy chủ interactsh trong mạng của mình (`-iserver`, `-itoken`).
-    - nuclei lưu **request/response đầy đủ** làm bằng chứng — có thể chứa dữ liệu của mục tiêu
-      (vd nội dung `/etc/passwd` khi xác nhận LFI). DB vốn là dữ liệu nhạy cảm, nhưng chưa có
-      che bớt (redaction) hay tuỳ chọn `-or`.
+    - ✅ Bằng chứng của nuclei được che trước khi lưu (`feat/evidence-redaction`,
+      `zues_scan/redact.py`): header đăng nhập / phiên, mẫu bí mật (mật khẩu, JWT, khoá AWS, PEM,
+      hash shadow, mật khẩu trong URL), thân response cắt còn 2 KB. Còn lại: che theo mẫu là cố
+      gắng tốt nhất — bí mật có hình dạng lạ vẫn lọt; chưa có tuỳ chọn "giữ nguyên" cho cuộc kiểm
+      thử cần bằng chứng đầy đủ (nên đi kèm mã hoá DB); output của các tool khác (nmap script,
+      httpx) chưa qua bước che (hiện không chứa request / response).
     - nuclei **không thấy** lỗi thì finding theo phiên bản vẫn giữ nguyên độ tin cậy (đúng: nhiều
       lỗi phụ thuộc cấu hình, như CVE-2021-41773 cần `Require all granted`), nhưng chưa ghi lại
       "đã thử, không khai thác được" như một quan sát.
