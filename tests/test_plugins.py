@@ -348,6 +348,7 @@ def site(tmp_path: Path) -> Iterator[tuple[int, Path]]:
     thread.start()
     yield server.server_address[1], tmp_path
     server.shutdown()
+    server.server_close()
 
 
 def test_the_example_plugin_finds_an_exposed_repository(
