@@ -155,6 +155,7 @@ def test_the_tools_and_what_they_do_not_offer(svc: Service_) -> None:
         "get_job",
         "list_runs",
         "get_run",
+        "compare_runs",
         "list_findings",
         "get_finding",
         "audit_status",
@@ -285,3 +286,16 @@ def test_the_command_needs_a_token_and_a_service(
     monkeypatch.setenv("ZUES_TOKEN", "x")
     assert cli.main(["mcp", "--url", "http://127.0.0.1:9"]) == 2
     assert "cannot reach ZuesScan at http://127.0.0.1:9" in capsys.readouterr().err
+
+
+def test_an_agent_asks_what_changed(svc: Service_) -> None:
+    for _ in range(2):
+        call(svc.api(OPERATOR), "request_scan", {"target": "lab"}, user())
+        svc.work()
+
+    error, diff = call(svc.api(VIEWER), "compare_runs", {"run_id": 2})
+
+    assert not error and diff["empty"] is True and diff["before"]["id"] == 1
+    assert "untrusted data" in diff["note"]
+    error, text = call(svc.api(VIEWER), "compare_runs", {"run_id": 1})
+    assert error and "no earlier run" in text

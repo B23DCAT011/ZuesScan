@@ -271,6 +271,17 @@ def build(api: Api) -> MCPServer:
         )
 
     @server.tool(
+        description="What changed between two runs of a target: hosts, open ports, software "
+        "versions and findings that appeared or went away, with caveats when the runs are not "
+        "comparable (different profiles, CVE data). `against` defaults to the run of the same "
+        f"target just before `run_id`. {UNTRUSTED}"
+    )
+    def compare_runs(run_id: int, against: int | None = None) -> dict[str, Any]:
+        params = {} if against is None else {"against": int(against)}
+        diff = call(lambda: api.get(f"/runs/{int(run_id)}/diff", **params))
+        return dict(clean({**diff, "note": UNTRUSTED}))
+
+    @server.tool(
         description="Findings across all runs, most urgent first. By default the active ones "
         "(new, open, fix claimed, fake fix, reappeared); `status` picks others (fixed, gone, "
         f"accepted ...), `all` returns every one. {UNTRUSTED}"

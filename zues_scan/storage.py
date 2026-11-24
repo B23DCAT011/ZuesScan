@@ -1598,8 +1598,9 @@ class Storage:
             run.assets.append(asset)
         return run
 
-    def list_runs(self, limit: int | None = None) -> list[RunSummary]:
-        """The stored runs, newest first, with how much each one found."""
+    def list_runs(self, limit: int | None = None, before: int | None = None) -> list[RunSummary]:
+        """The stored runs, newest first, with how much each one found; with `before`, only
+        those older than run #before (the next page: ids never move, unlike an offset)."""
         rows = self._conn.execute(
             "SELECT r.id, r.target, r.status, r.started_at, r.finished_at, "
             "  (SELECT COUNT(*) FROM asset a WHERE a.run_id = r.id) AS hosts, "
@@ -1607,8 +1608,8 @@ class Storage:
             "   WHERE a.run_id = r.id) AS services, "
             "  (SELECT COUNT(*) FROM finding f JOIN asset a ON a.id = f.asset_id "
             "   WHERE a.run_id = r.id) AS findings "
-            "FROM scan_run r ORDER BY r.id DESC LIMIT ?",
-            (-1 if limit is None else limit,),
+            "FROM scan_run r WHERE r.id < ? ORDER BY r.id DESC LIMIT ?",
+            (2**63 - 1 if before is None else before, -1 if limit is None else limit),
         ).fetchall()
         return [
             RunSummary(

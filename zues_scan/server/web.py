@@ -5,7 +5,7 @@
     POST /api/v1/session                 sign in with a token: opens a session (cookie)
     DELETE /api/v1/session               sign out: ends it on the server
     GET  /api/v1/me | targets | jobs | runs | findings | hosts | audit   (viewer)
-    GET  /api/v1/runs/{id}[/report.html|/sarif]                          (viewer)
+    GET  /api/v1/runs/{id}[/report.html|/sarif|/diff]                    (viewer)
     POST /api/v1/scans  {"target": "<name in service.toml>"}             (operator)
     POST /api/v1/findings/{id}/decision  {"action": "claim_fixed", ...}  (operator)
     GET|PUT|DELETE /api/v1/admin/...     settings and sessions           (admin)
@@ -56,6 +56,7 @@ from rq.exceptions import NoSuchJobError
 from rq.job import Job
 
 from zues_scan import __version__, priority
+from zues_scan.diff import diff_runs, previous_run
 from zues_scan.inventory import ACTIVE, Status
 from zues_scan.inventory_store import FindingRow, InventoryError
 from zues_scan.plugins import registry as plugin_registry
@@ -527,10 +528,14 @@ def job(
 
 @api.get("/runs")
 def runs(
-    who: Viewer, config: Config, limit: Annotated[int, Query(ge=1, le=1000)] = 100
+    who: Viewer,
+    config: Config,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    before: Annotated[int | None, Query(ge=1)] = None,
 ) -> list[dict[str, Any]]:
+    """Newest first; the next page: `before` = the last id of this one."""
     with opened(config) as store:
-        return [dataclasses.asdict(r) for r in store.list_runs(limit)] if store else []
+        return [dataclasses.asdict(r) for r in store.list_runs(limit, before)] if store else []
 
 
 def _model(config: ServiceConfig, run_id: int) -> dict[str, Any]:
@@ -556,6 +561,36 @@ def run_report(run_id: int, who: Viewer, config: Config) -> HTMLResponse:
     )
 
 
+@api.get("/runs/{run_id}/diff")
+def run_diff(
+    run_id: int,
+    who: Viewer,
+    config: Config,
+    against: Annotated[int | None, Query(ge=1)] = None,
+) -> dict[str, Any]:
+    """What run #run_id shows differently from run #against (default: the run of the same
+    target just before it)."""
+    with opened(config) as store:
+        if store is None:
+            raise HTTPException(404, f"no run #{run_id}")
+        if against is None:
+            pair = previous_run(store.list_runs(), run_id)
+            if pair is None:
+                raise HTTPException(
+                    404, f"no earlier run of the same target to compare run #{run_id} with"
+                )
+            against = pair[0]
+        before, after = store.load_run(against), store.load_run(run_id)
+        summaries = {r.id: r for r in store.list_runs() if r.id in (against, run_id)}
+    if before is None or after is None:
+        raise HTTPException(404, f"no run #{against if before is None else run_id}")
+    return {
+        "before": dataclasses.asdict(summaries[against]),
+        "after": dataclasses.asdict(summaries[run_id]),
+        **diff_runs(before, after).as_dict(),
+    }
+
+
 @api.get("/runs/{run_id}/sarif")
 def run_sarif(run_id: int, who: Viewer, config: Config) -> JSONResponse:
     return JSONResponse(
@@ -578,14 +613,20 @@ def _finding(row: FindingRow) -> dict[str, Any]:
 def findings(
     who: Viewer,
     config: Config,
+    response: Response,
     status: Annotated[list[Status] | None, Query()] = None,
     all: bool = False,  # noqa: A002 - the query parameter's name
+    limit: Annotated[int | None, Query(ge=1, le=1000)] = None,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[dict[str, Any]]:
+    """Most urgent first; `limit` / `offset` for a page, `X-Total-Count` for how many."""
     statuses = None if all else {str(s) for s in (status or ACTIVE)}
     with opened(config) as store:
         rows = store.inventory_findings(statuses) if store else []
     rows.sort(key=lambda r: priority.sort_key(r.as_finding()))
-    return [_finding(r) for r in rows]
+    response.headers["X-Total-Count"] = str(len(rows))
+    page = rows[offset : None if limit is None else offset + limit]
+    return [_finding(r) for r in page]
 
 
 @api.get("/findings/{finding_id}")
