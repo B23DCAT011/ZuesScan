@@ -1154,6 +1154,11 @@
           " every 30m / 6h / 1d, or cron: minute hour day month weekday [time zone], at least 5 minutes apart")),
       el("label", null, "Engagement (recorded with every run)", engagement),
       groups,
+      cfg.plugins_left_out.length ? el("p", { class: "muted small" },
+        "Installed on the server but not loaded (only plugins pinned in the service " +
+        "configuration load): ", cfg.plugins_left_out.map(function (p, i) {
+          return el("span", null, i ? "; " : "", el("strong", null, p.name), " — " + p.reason);
+        })) : null,
       el("label", null, "Names considered at most, with discovery (default 1000)", limit),
       el("label", { class: "plugin" }, ipv4, " IPv4 only (do not look up IPv6 addresses)"),
       el("p", { class: "muted small" },

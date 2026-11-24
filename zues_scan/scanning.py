@@ -34,7 +34,7 @@ from zues_scan.orchestrator import (
 from zues_scan.plugins import registry as plugin_registry
 from zues_scan.plugins.base import CheckPlugin, ScanError
 from zues_scan.plugins.nuclei import default_templates as nuclei_templates_default
-from zues_scan.plugins.registry import PluginContext, PluginError
+from zues_scan.plugins.registry import PluginContext, PluginError, Policy
 from zues_scan.plugins.ssh_packages import CredentialError, load_credentials
 from zues_scan.plugins.subfinder import CONFIG_ENV as SUBFINDER_CONFIG_ENV
 from zues_scan.profiles import DEFAULT_PROFILE, ProfileError, ScanProfile, load_profiles, override
@@ -74,6 +74,9 @@ class ScanSpec:
     alerts: AlertPolicy | None = None
     # The configured target being scanned (service jobs): recorded with the run.
     target_name: str | None = None
+    # Which third-party plugins may load (the service's [[plugins]]); None: ZUES_PLUGINS
+    # when it is set, else every installed one (a person's own CLI).
+    plugins: Policy | None = None
 
 
 @dataclass
@@ -118,7 +121,11 @@ def execute(spec: ScanSpec) -> Outcome:
     if spec.credentials:
         check_names.append("ssh-packages")
     discovery_names = list(spec.discoverers) or (["subfinder"] if spec.discover else [])
-    registry = plugin_registry.load()
+    try:
+        policy = spec.plugins if spec.plugins is not None else plugin_registry.policy_from_env()
+    except PluginError as exc:
+        return Outcome(2, messages=[f"error: {exc}"])
+    registry = plugin_registry.load(policy=policy)
     notes = [f"warning: {problem}" for problem in registry.problems]
 
     with contextlib.ExitStack() as stack:

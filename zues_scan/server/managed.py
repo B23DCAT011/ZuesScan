@@ -268,7 +268,7 @@ def save_target(
     if target.every is not None and target.every > timedelta(days=90):
         raise ManagedError("every: at most 90d between scheduled scans")
     scope = read_scope(target.scope, target.scope_text or "")
-    registry = plugin_registry.load()
+    registry = plugin_registry.load(policy=config.plugins)
     plugins: list[tuple[str, Any]] = []
     try:
         for names, kind in (
