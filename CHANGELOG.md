@@ -6,6 +6,11 @@ section of a version as its release notes, so every tag needs one.
 
 ## [Unreleased]
 
+### Added
+- Every change of a scope, target or token — in the dashboard or with `zues user` — raises a
+  `config_changed` alert (who, what), queued in the same transaction as its audit event: one
+  admin can widen what may be scanned, and now the others know at once.
+
 ### Security
 - Tokens expire. A token made in the dashboard or with `zues user add` is accepted for 90
   days by default (30 days, 1 year, up to 2 years, or `never` for a monitored service
