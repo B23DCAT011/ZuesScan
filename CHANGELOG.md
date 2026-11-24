@@ -6,19 +6,22 @@ section of a version as its release notes, so every tag needs one.
 
 ## [Unreleased]
 
-### Fixed
-- nuclei missed network flaws on busy servers: its network checks (SSH, TLS handshakes) ran
-  with the HTTP settings, 10 s per request and one retry. Against a CPU-starved SSH server it
-  missed Terrapin (CVE-2023-48795) on 4 of 10 runs — the lab's CI job failed twice that way.
-  The network run now waits 30 s with 3 retries (5 of 5); web checks keep 10 s / 1, and the
-  check's overall time budget is unchanged.
-
-### Added
-- Every change of a scope, target or token — in the dashboard or with `zues user` — raises a
-  `config_changed` alert (who, what), queued in the same transaction as its audit event: one
-  admin can widen what may be scanned, and now the others know at once.
-
 ### Security
+- The dashboard's sessions are held by the server: the cookie carries only a random
+  session key (its SHA-256 is stored, never the key, never the token). A session ends when
+  its owner signs out (on the server: a copied cookie stops working), after 30 minutes
+  without use (the page's own refresh does not count), 8 hours after signing in, when its
+  token is revoked or re-issued, or when an admin ends it. Database schema 15.
+- Failed sign-ins are braked: 10 wrong tokens (sign-in form or `Authorization: Bearer`)
+  within 15 minutes lock the address out for 15 minutes (429 with Retry-After, even for a
+  right token). Counted in Redis, in the process when Redis is down; logged
+  (`auth.locked`) and audited.
+- Evidence is masked before it is stored and hashed: the requests and responses nuclei
+  keeps when it confirms a flaw no longer carry the target's credentials and secrets
+  (`Authorization`, `Cookie` / `Set-Cookie` values, headers named after tokens, secrets or
+  sessions; `password=`-style pairs, bearer tokens and JWTs, AWS keys, PEM private keys,
+  `/etc/shadow` hashes, passwords in URLs), and a response body is cut to 2 KB with a note.
+  A match with nothing to mask is kept byte for byte. `zues_scan/redact.py`.
 - Tokens expire. A token made in the dashboard or with `zues user add` is accepted for 90
   days by default (30 days, 1 year, up to 2 years, or `never` for a monitored service
   account; schema 17); `service.toml` tokens take an optional `expires = 2027-06-30`. An
@@ -28,55 +31,10 @@ section of a version as its release notes, so every tag needs one.
   `POST /api/v1/admin/tokens/{name}/rotate` give a new value under the same name and role;
   the old value, and every session opened with it, stop working at once. Audited.
 
-### Changed
-- `zues user add` takes `--expires` (default 90d); `zues user list` shows when each token
-  expires.
-
-### Security
-- Evidence is masked before it is stored and hashed: the requests and responses nuclei
-  keeps when it confirms a flaw no longer carry the target's credentials and secrets
-  (`Authorization`, `Cookie` / `Set-Cookie` values, headers named after tokens, secrets or
-  sessions; `password=`-style pairs, bearer tokens and JWTs, AWS keys, PEM private keys,
-  `/etc/shadow` hashes, passwords in URLs), and a response body is cut to 2 KB with a note.
-  A match with nothing to mask is kept byte for byte. `zues_scan/redact.py`.
-
 ### Added
-- Compare runs in the dashboard: a run's **Changes** (against the run of the same target
-  before it) or any two runs ticked in Runs: hosts that appeared or went away, ports opened
-  or closed, software versions that changed, findings that appeared or went away, with the
-  caveats `zues diff` gives when runs are not comparable. API:
-  `GET /api/v1/runs/{id}/diff[?against=<id>]`; MCP tool `compare_runs`.
-- Pages: `GET /api/v1/runs?before=<id>` (the dashboard's **Older runs**) and
-  `GET /api/v1/findings?limit=&offset=` with `X-Total-Count` (**Show more**). Without them the
-  answers are what they were.
-
-### Added
-- `cron` schedules for targets, instead of `every`: `cron = "0 2 * * sat Asia/Ho_Chi_Minh"`
-  — the five crontab fields (lists, ranges, steps, month and day names; day of month OR day
-  of week when both are set), with an optional time zone (IANA name with daylight saving
-  time, `UTC` or `+07:00`). At least 5 minutes between scans. In service.toml, the API and
-  the dashboard (the Schedule box takes `24h` or a cron line). `zues-scan[server]` installs
-  `tzdata` on Windows, which has no time zone data of its own.
-
-### Fixed
-- Scheduled scans drifted: a target was due `every` after its last scan *started* (or was
-  queued), so a scan that waited 40 minutes in the queue moved every later one by 40
-  minutes. The scheduler now keeps each target's slot: due at the last slot + `every`,
-  whenever the scan actually ran; several missed slots are made up with one scan.
-
-### Changed
-- The database uses write-ahead logging: a long read (the dashboard, a report) no longer
-  holds back the save of a run, and saves no longer block readers; a busy database is
-  waited on for 15 seconds (was 5). Set when a database is created or migrated, and by
-  `web`, `worker` and `scheduler` at start (e.g. after a restore) — never by merely opening
-  one, so reading a backup leaves it byte for byte as hashed. Backups are written as one
-  self-contained file. `zues doctor` reports a database that is not in WAL mode. Restoring:
-  delete the old `zues.db-wal` / `zues.db-shm` first (README).
-- `zues doctor` checks the service that `$ZUES_CONFIG` or the `ZUES_*` variables describe
-  when no `--config` is given: in the image (`docker compose exec web zues doctor`) it now
-  checks the database and Redis too.
-
-### Added
+- Settings → **Sessions**: who is signed in, from where, since when, until when; **End**
+  ends a session. API: `GET /api/v1/admin/sessions`, `DELETE /api/v1/admin/sessions/{id}`.
+- Audit kind `auth`: signed in, signed out, session ended (by whom), address locked out.
 - Alerts are no longer lost: they wait in the database (`alert_outbox`, schema 16) until the
   webhook takes them. A scan's alerts are saved in the same transaction as its run; the
   worker sends them right away and the scheduler retries what failed at every round (after
@@ -95,36 +53,56 @@ section of a version as its release notes, so every tag needs one.
   `POST /api/v1/admin/alerts/test`, `POST /api/v1/admin/alerts/{id}/retry`.
 - compose.yaml passes ZUES_WEBHOOK, ZUES_WEBHOOK_SECRET, ZUES_NOTIFY_MIN_PRIORITY and
   ZUES_NOTIFY_FAILED_SCANS (e.g. from a `.env` file): the three-command install can alert.
+- `cron` schedules for targets, instead of `every`: `cron = "0 2 * * sat Asia/Ho_Chi_Minh"`
+  — the five crontab fields (lists, ranges, steps, month and day names; day of month OR day
+  of week when both are set), with an optional time zone (IANA name with daylight saving
+  time, `UTC` or `+07:00`). At least 5 minutes between scans. In service.toml, the API and
+  the dashboard (the Schedule box takes `24h` or a cron line). `zues-scan[server]` installs
+  `tzdata` on Windows, which has no time zone data of its own.
+- Compare runs in the dashboard: a run's **Changes** (against the run of the same target
+  before it) or any two runs ticked in Runs: hosts that appeared or went away, ports opened
+  or closed, software versions that changed, findings that appeared or went away, with the
+  caveats `zues diff` gives when runs are not comparable. API:
+  `GET /api/v1/runs/{id}/diff[?against=<id>]`; MCP tool `compare_runs`.
+- Pages: `GET /api/v1/runs?before=<id>` (the dashboard's **Older runs**) and
+  `GET /api/v1/findings?limit=&offset=` with `X-Total-Count` (**Show more**). Without them the
+  answers are what they were.
+- Every change of a scope, target or token — in the dashboard or with `zues user` — raises a
+  `config_changed` alert (who, what), queued in the same transaction as its audit event: one
+  admin can widen what may be scanned, and now the others know at once.
 
 ### Changed
+- `DELETE /api/v1/session` with the session cookie needs the `X-ZuesScan: 1` header, like
+  every other change made with the cookie.
 - `zues scheduler --once` also sends the alerts that are due, and says how many.
 - The webhook is posted without following redirects (a redirect would drop the POST's body).
+- The database uses write-ahead logging: a long read (the dashboard, a report) no longer
+  holds back the save of a run, and saves no longer block readers; a busy database is
+  waited on for 15 seconds (was 5). Set when a database is created or migrated, and by
+  `web`, `worker` and `scheduler` at start (e.g. after a restore) — never by merely opening
+  one, so reading a backup leaves it byte for byte as hashed. Backups are written as one
+  self-contained file. `zues doctor` reports a database that is not in WAL mode. Restoring:
+  delete the old `zues.db-wal` / `zues.db-shm` first (README).
+- `zues doctor` checks the service that `$ZUES_CONFIG` or the `ZUES_*` variables describe
+  when no `--config` is given: in the image (`docker compose exec web zues doctor`) it now
+  checks the database and Redis too.
+- `zues user add` takes `--expires` (default 90d); `zues user list` shows when each token
+  expires.
 
 ### Fixed
 - The scheduler read its configuration once, at start: a target added or changed in the
   dashboard (or in service.toml) was never scheduled until the scheduler restarted — the
   three-command install's "add a target, every 24h" did not scan. It now re-reads the
   configuration at every round; an invalid one schedules nothing until it is fixed.
-
-### Security
-- The dashboard's sessions are held by the server: the cookie carries only a random
-  session key (its SHA-256 is stored, never the key, never the token). A session ends when
-  its owner signs out (on the server: a copied cookie stops working), after 30 minutes
-  without use (the page's own refresh does not count), 8 hours after signing in, when its
-  token is revoked or re-issued, or when an admin ends it. Database schema 15.
-- Failed sign-ins are braked: 10 wrong tokens (sign-in form or `Authorization: Bearer`)
-  within 15 minutes lock the address out for 15 minutes (429 with Retry-After, even for a
-  right token). Counted in Redis, in the process when Redis is down; logged
-  (`auth.locked`) and audited.
-
-### Added
-- Settings → **Sessions**: who is signed in, from where, since when, until when; **End**
-  ends a session. API: `GET /api/v1/admin/sessions`, `DELETE /api/v1/admin/sessions/{id}`.
-- Audit kind `auth`: signed in, signed out, session ended (by whom), address locked out.
-
-### Changed
-- `DELETE /api/v1/session` with the session cookie needs the `X-ZuesScan: 1` header, like
-  every other change made with the cookie.
+- Scheduled scans drifted: a target was due `every` after its last scan *started* (or was
+  queued), so a scan that waited 40 minutes in the queue moved every later one by 40
+  minutes. The scheduler now keeps each target's slot: due at the last slot + `every`,
+  whenever the scan actually ran; several missed slots are made up with one scan.
+- nuclei missed network flaws on busy servers: its network checks (SSH, TLS handshakes) ran
+  with the HTTP settings, 10 s per request and one retry. Against a CPU-starved SSH server it
+  missed Terrapin (CVE-2023-48795) on 4 of 10 runs — the lab's CI job failed twice that way.
+  The network run now waits 30 s with 3 retries (5 of 5); web checks keep 10 s / 1, and the
+  check's overall time budget is unchanged.
 
 ## [0.2.0] - 2026-11-24
 
