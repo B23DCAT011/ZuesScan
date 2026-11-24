@@ -446,12 +446,27 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       import; câu trả lời được đọc từng trường như dữ liệu không tin cậy. Code của gói không bao giờ
       chạy trong tiến trình của ZuesScan. Thử thật: test trên Windows + Linux (container sạch), job
       quét với exposed-git trong container Linux → finding `confirmed`.
-    - Còn lại của tiến trình riêng: **cùng user hệ điều hành** — plugin đọc được file mà dịch vụ
-      đọc được nếu đoán ra đường dẫn (vd `/data/zues.db` của image), kết nối được tới mọi nơi. Thực
-      tế: user riêng (cần quyền root để đổi user) hoặc container riêng chỉ mount thư mục tạm và chỉ
-      có mạng tới mục tiêu; trên Linux có thể tự giới hạn bằng Landlock / seccomp mà không cần root.
-      Chưa giới hạn bộ nhớ / CPU (RLIMIT_AS làm hỏng công cụ viết bằng Go như nuclei — cần cgroup).
-      Mỗi lời gọi tốn một lần khởi động Python (~0,3–1 s): không đáng kể so với một lần quét.
+    - ✅ Trên Linux, tiến trình con **tự giới hạn bằng Landlock** trước khi import plugin
+      (`feat/plugin-landlock`, D16, không cần root): nó và mọi chương trình nó chạy chỉ đọc được hệ
+      thống (`/usr`, `/lib`…, vài file cần thiết của `/etc` — không cả `/etc`), Python, gói của
+      ZuesScan, gói của plugin, công cụ của ZuesScan, templates / wordlist của lần quét; chỉ ghi
+      được thư mục tạm của nó. Database, cấu hình dịch vụ, credentials, CVE cache nằm ngoài → "permission
+      denied"; Landlock còn chặn ptrace nên `/proc/<pid của dịch vụ>/environ` cũng không đọc được.
+      Kernel có Landlock mà giới hạn hỏng thì lời gọi hỏng, không chạy tiếp mà không giới hạn.
+      `zues doctor` báo. Thử thật: test trên Linux (container, Landlock v1) — đọc DB, ghi cạnh DB,
+      đọc environ của dịch vụ, `cat` DB từ chương trình con đều bị từ chối; job exposed-git vẫn tìm
+      ra finding `confirmed`.
+    - Còn lại của tiến trình riêng:
+      - **Mạng không bị giới hạn**: plugin kết nối được tới mọi nơi (kể cả Redis của dịch vụ nếu cùng
+        mạng). Landlock ABI 4 chỉ giới hạn được theo cổng TCP, không theo địa chỉ; thực tế: network
+        namespace / container riêng chỉ có đường tới mục tiêu, hoặc egress firewall.
+      - Windows, macOS, kernel không có Landlock: không giới hạn file (doctor cảnh báo) — chạy dịch vụ
+        trong container Linux của nó.
+      - `no_new_privs` (Landlock cần): chương trình plugin chạy không nhận được file capability (vd
+        quyền raw socket của nmap trong image) — plugin của gói khác không dùng được SYN scan;
+        nmap dựng sẵn không bị ảnh hưởng (chạy trong tiến trình của ZuesScan).
+      - Chưa giới hạn bộ nhớ / CPU (RLIMIT_AS làm hỏng công cụ viết bằng Go như nuclei — cần cgroup).
+      - Mỗi lời gọi tốn một lần khởi động Python (~0,3–1 s): không đáng kể so với một lần quét.
     - Phụ thuộc của plugin (gói khác nó import) và file `.pth` của gói khác không nằm trong pin:
       ghim chúng khi dựng image (`pip install --require-hashes`, như `tools.lock` với công cụ).
     - Kiểm pin lúc nạp, không theo dõi sau đó: một file bị sửa giữa lúc kiểm và lúc import (cửa sổ

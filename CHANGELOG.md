@@ -7,6 +7,17 @@ section of a version as its release notes, so every tag needs one.
 ## [Unreleased]
 
 ### Security
+- On Linux, the process that runs a plugin from another package confines itself with
+  Landlock (kernel 5.13+, no root needed) before importing it (D16): from then on it, and
+  every program it starts, reads only the system (/usr, /lib, ..., a few files of /etc —
+  not /etc as a whole), Python, ZuesScan's and the plugin's own packages, ZuesScan's tools
+  and the scan's templates and wordlist, and writes only its temporary folder. The
+  database, the service configuration, credentials and the CVE cache are out of reach, and
+  so is the service's own process (Landlock also blocks ptrace: /proc/<pid>/environ). Where
+  the kernel has Landlock but the confinement fails, the call fails instead of running
+  unconfined. `zues doctor` says whether plugins are confined on this machine. Programs a
+  confined plugin starts cannot gain privileges (no_new_privs): file capabilities such as
+  the image's raw sockets for nmap do not apply to them (the built-in nmap is unaffected).
 - Plugins from other packages run in processes of their own (D15): their code never runs
   in ZuesScan's process, not even to read their spec. Each call (spec, availability and
   version, scan, check, discover) is a child process `python -I -m zues_scan.plugins.process`

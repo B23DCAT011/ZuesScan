@@ -17,7 +17,7 @@ import pytest
 from conftest import FakePlugin, lab_asset, lab_resolver
 from test_plugin_pins import MODULE, Site, pinned
 
-from zues_scan.plugins import process, registry
+from zues_scan.plugins import landlock, process, registry
 from zues_scan.plugins.base import ScanError, ScanResult
 from zues_scan.plugins.registry import PluginContext, Policy
 from zues_scan.plugins.wire import WireError, decode, encode
@@ -81,11 +81,31 @@ class Probe:
             return ScanResult(notes=[object()])
         if what == "sleep":
             child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
-            with open(plan.hostname, "w") as f:
-                f.write(str(child.pid))
+            print(f"grandchild {child.pid}", file=sys.stderr, flush=True)
             time.sleep(120)
         if what == "big":
             return ScanResult(notes=["x" * 100_000])
+        if what == "files":
+            secret, facts = plan.hostname, {}
+
+            def attempt(name, action):
+                try:
+                    action()
+                    facts[name] = "ok"
+                except Exception as exc:
+                    facts[name] = type(exc).__name__
+
+            attempt("read the database", lambda: open(secret).read())
+            attempt("write beside it", lambda: open(secret + ".new", "w").write("x"))
+            attempt("write at home", lambda: open("scratch.txt", "w").write("x"))
+            attempt("read os-release", lambda: open("/etc/os-release").read())
+            attempt("read ZuesScan's environment",
+                    lambda: open(f"/proc/{os.getppid()}/environ", "rb").read())
+            attempt("cat the database",
+                    lambda: subprocess.run(["cat", secret], check=True, capture_output=True))
+            attempt("run a program", lambda: subprocess.run([sys.executable, "-c", "pass"],
+                                                            check=True))
+            return ScanResult(notes=[json.dumps(facts)])
         found = []
         for asset in assets:
             finding = Finding(asset=asset.host, ip=asset.ip, title="probe finding",
@@ -273,17 +293,17 @@ def _alive(pid: int) -> bool:
 
 
 def test_out_of_time_it_is_stopped_with_what_it_started(
-    probe: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    probe: Site, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(process, "GRACE", 3.0)
     plugin = built(probe, timeout=1)
     plugin.is_available()  # the probe has its own, longer limit
-    pid_file = tmp_path / "grandchild.pid"
     started = time.monotonic()
-    with pytest.raises(ScanError, match="no answer within 4 s: stopped"):
-        ask(plugin, "sleep", str(pid_file))
+    with pytest.raises(ScanError, match="no answer within 4 s: stopped") as caught:
+        ask(plugin, "sleep")
     assert time.monotonic() - started < 30
-    grandchild = int(pid_file.read_text())
+    # What it printed before it was stopped is kept (stderr), here the program it started.
+    grandchild = int((caught.value.stderr or "").split("grandchild ")[1].split()[0])
     deadline = time.monotonic() + 10
     while _alive(grandchild) and time.monotonic() < deadline:
         time.sleep(0.2)
@@ -325,6 +345,65 @@ def test_its_spec_is_read_once_per_pinned_release(
     assert calls == ["probe"]  # the web server lists plugins on every Settings page
     registry.load(probe.entries)  # no pin, no digest: read again, never cached
     assert calls == ["probe", "probe"]
+
+
+# --- confined on Linux (Landlock) ------------------------------------------------------------
+
+needs_landlock = pytest.mark.skipif(landlock.abi() == 0, reason="needs Linux with Landlock")
+
+
+@needs_landlock
+def test_on_linux_it_reads_and_writes_only_what_it_was_given(
+    probe: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ZUES_WEBHOOK_SECRET", "s3cret-of-the-service")
+    database = tmp_path / "zues.db"  # next to the package's folder, not inside it
+    database.write_text("every finding", encoding="utf-8")
+    plugin = built(probe)
+    [note] = ask(plugin, "files", str(database)).notes
+
+    assert json.loads(note) == {
+        "read the database": "PermissionError",
+        "write beside it": "PermissionError",
+        "write at home": "ok",
+        "read os-release": "ok",
+        "read ZuesScan's environment": "PermissionError",
+        "cat the database": "CalledProcessError",  # what it starts is confined too
+        "run a program": "ok",
+    }
+    assert plugin.confined == landlock.abi()
+    assert not (tmp_path / "zues.db.new").exists()
+
+
+def test_what_a_confined_plugin_may_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    ref = process.Ref("probe", "zues_probe:PLUGIN", roots=(str(tmp_path / "site-packages"),))
+    templates = tmp_path / "templates"
+    paths = process.readable(ref, {"nuclei_templates": str(templates), "dns_wordlist": None})
+
+    assert os.path.realpath(tmp_path / "site-packages") in paths
+    assert os.path.realpath(templates) in paths
+    assert os.path.realpath(Path(process.__file__).parent.parent) in paths  # zues_scan
+    assert os.path.realpath(tmp_path) not in paths  # the working folder, where zues.db is
+    assert os.path.realpath(Path.home()) not in paths
+    assert os.path.realpath("/etc") not in paths and os.path.realpath("/etc/resolv.conf") in paths
+
+
+def test_doctor_says_whether_plugins_are_confined() -> None:
+    from zues_scan import doctor
+
+    assert doctor.check_confinement("Linux", 3).status == doctor.OK
+    linux = doctor.check_confinement("Linux", 0)
+    assert linux.status == doctor.WARN and "this kernel has no Landlock" in linux.detail
+    windows = doctor.check_confinement("Windows", 0)
+    assert "not available on Windows" in windows.detail and "container" in (windows.hint or "")
+
+
+def test_without_landlock_confine_changes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(landlock, "abi", lambda: 0)
+    assert landlock.confine(["/usr"], ["/tmp"]) == 0
+    assert landlock.handled(1) == (1 << 13) - 1
+    assert landlock.handled(5) & landlock.IOCTL_DEV and landlock.handled(3) & landlock.TRUNCATE
 
 
 # --- end to end -------------------------------------------------------------------------------

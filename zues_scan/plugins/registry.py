@@ -550,11 +550,14 @@ def _package_spec(entry: Any, pin: Pin | None, digest: str | None, in_process: b
     key = (entry.name, entry.value, digest) if digest is not None else None
     if key is not None and key in _DESCRIBED:
         return _DESCRIBED[key]
+    dist = getattr(entry, "dist", None)
+    root = getattr(dist, "locate_file", None)
     ref = process.Ref(
         entry.name,
         entry.value,
         pin.wire() if pin is not None else None,
         tuple(p for p in sys.path if p),
+        (os.path.abspath(str(root(""))),) if root is not None else (),
     )
     try:
         facts = process.describe(ref)

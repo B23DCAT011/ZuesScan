@@ -18,8 +18,15 @@ plugin, the child checks the package against its pin again, from the files on di
 Its reply is untrusted input: decoded field by field (`wire.decode`), then held to the same
 rules as any plugin's (the orchestrator drops hosts outside the scope).
 
-What it still can: what the operating system lets the service's user do — read a file
-whose path it guesses, connect anywhere. That needs a user or a container of its own (see
+On Linux, the child then confines itself with Landlock (`landlock`, no root needed)
+before importing the plugin: it — and every program it starts — can read only the system,
+Python, its own package, ZuesScan's tools and the scan's templates and wordlist, and write
+only its temporary folder. The database, the service configuration and credentials are out
+of reach, and so is the service's own process (/proc/<pid>/environ). If the kernel has
+Landlock but the confinement fails, the call fails: it never goes on unconfined.
+
+What it still can: connect anywhere; and where the kernel has no Landlock (or on Windows
+and macOS), read any file the service's user can. That needs a container of its own (see
 KNOWN-GAPS G25).
 
 Each call is a fresh process: a plugin keeps no state from one call to the next.
@@ -33,8 +40,10 @@ import json
 import os
 import shutil
 import signal
+import site
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import threading
 import traceback
@@ -43,7 +52,9 @@ from dataclasses import dataclass
 from importlib import metadata
 from typing import Any, TypeVar
 
+import zues_scan
 from zues_scan import tools
+from zues_scan.plugins import landlock
 from zues_scan.plugins.base import DiscoveryResult, ScanError, ScanResult
 from zues_scan.plugins.wire import WireError, decode, encode
 from zues_scan.profiles import ScanProfile
@@ -72,6 +83,34 @@ _PASSED_ENV = (
     "NMAP_PRIVILEGED",
 )
 KINDS = ("scanner", "check", "discovery")
+# What a confined plugin may read besides Python, its package and the scan's files: the
+# system's programs and libraries, and what programs need from /etc to resolve names,
+# verify certificates and know users and time — not /etc as a whole, where a service's
+# configuration may live.
+_SYSTEM = ("/usr", "/lib", "/lib32", "/lib64", "/libx32", "/bin", "/sbin", "/proc", "/sys")
+_ETC = (
+    "resolv.conf",
+    "hosts",
+    "host.conf",
+    "nsswitch.conf",
+    "gai.conf",
+    "services",
+    "protocols",
+    "passwd",
+    "group",
+    "localtime",
+    "timezone",
+    "ssl",
+    "ca-certificates",
+    "ca-certificates.conf",
+    "pki",
+    "crypto-policies",
+    "ld.so.cache",
+    "ld.so.conf",
+    "ld.so.conf.d",
+    "os-release",
+    "mime.types",
+)
 T = TypeVar("T")
 
 
@@ -84,6 +123,26 @@ class Ref:
     value: str
     pin: dict[str, str] | None = None
     sys_path: tuple[str, ...] = ()
+    roots: tuple[str, ...] = ()  # where its package is installed (readable when confined)
+
+
+def readable(ref: Ref, args: dict[str, Any]) -> list[str]:
+    """What a confined child may read: the system, Python (prefixes, stdlib, site
+    folders), ZuesScan's own package, the plugin's package, ZuesScan's tools, and the
+    scan's nuclei templates and DNS wordlist. Not the working directory, HOME, /etc as a
+    whole, the database's or the configuration's folder."""
+    paths: list[str | None] = [*_SYSTEM, *(f"/etc/{name}" for name in _ETC)]
+    paths += [sys.prefix, sys.base_prefix, sys.exec_prefix]
+    paths.append(os.path.dirname(os.path.realpath(sys.executable)))
+    folders = sysconfig.get_paths()
+    paths += [folders.get(k) for k in ("stdlib", "platstdlib", "purelib", "platlib", "scripts")]
+    with contextlib.suppress(AttributeError):  # some virtualenvs' site has no such function
+        paths += site.getsitepackages()
+    paths.append(os.path.dirname(os.path.abspath(zues_scan.__file__)))
+    paths += ref.roots
+    paths.append(str(tools.default_root()))
+    paths += [args.get("nuclei_templates"), args.get("dns_wordlist")]
+    return sorted({os.path.realpath(p) for p in paths if p})
 
 
 # --- the parent side ----------------------------------------------------------------------------
@@ -100,6 +159,7 @@ def call(ref: Ref, op: str, args: dict[str, Any], timeout: float, plugin: str) -
         "args": args,
     }
     home = tempfile.mkdtemp(prefix="zues-plugin-")
+    request["confine"] = {"read": readable(ref, args), "write": [home, "/dev"]}
     try:
         reply, stderr, code, trouble = _run(
             json.dumps(request).encode("utf-8"), home, timeout, plugin
@@ -266,6 +326,7 @@ def describe(ref: Ref) -> dict[str, Any]:
         "summary": spec.summary[:200],
         "binary": spec.binary,
         "needs": tuple(n[:100] for n in spec.needs[:10]),
+        "confined": spec.confined,
     }
 
 
@@ -277,6 +338,7 @@ class _Described:
     summary: str
     binary: str | None
     needs: tuple[str, ...]
+    confined: int  # the Landlock version the child ran under; 0: not confined
 
 
 class ProcessPlugin:
@@ -321,6 +383,13 @@ class ProcessPlugin:
             return None
         version = probed.get("version")
         return version[:100] if isinstance(version, str) else None
+
+    @property
+    def confined(self) -> int | None:
+        """The Landlock version its calls run under (0: not confined); None: unknown."""
+        probed = self._probe()
+        value = None if isinstance(probed, ScanError) else probed.get("confined")
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
 
     def _broken(self) -> None:
         if isinstance(self._probed, ScanError):
@@ -404,6 +473,11 @@ def _serve(request: Any) -> Any:
     if not isinstance(request, dict) or request.get("protocol") != PROTOCOL:
         raise RuntimeError("not a request of this version of ZuesScan")
     sys.path[:] = [str(p) for p in request["sys_path"]]
+    rules = request.get("confine") or {}
+    try:  # before anything of the plugin is imported: its code runs confined, or not at all
+        confined = landlock.confine(rules.get("read", ()), rules.get("write", ()))
+    except OSError as exc:
+        raise RuntimeError(f"the plugin's process could not be confined: {exc}") from None
     spec = _load(registry, request["entry"], request.get("pin"))
     op, args = request["op"], request.get("args") or {}
     if op == "describe":
@@ -414,6 +488,7 @@ def _serve(request: Any) -> Any:
             "summary": spec.summary,
             "binary": spec.binary,
             "needs": list(spec.needs),
+            "confined": confined,
         }
     ctx = registry.PluginContext(
         profile=decode(ScanProfile, args["profile"], "profile"),
@@ -426,7 +501,11 @@ def _serve(request: Any) -> Any:
     if getattr(plugin, "activity", spec.activity) != spec.activity:
         raise registry.PluginError("its activity differs from what it declares")
     if op == "probe":
-        return {"available": bool(plugin.is_available()), "version": _version(plugin)}
+        return {
+            "available": bool(plugin.is_available()),
+            "version": _version(plugin),
+            "confined": confined,
+        }
     if op == "scan":
         result = plugin.scan(decode(ScanTarget, args["target"], "target"))
         expected: type[Any] = ScanResult
