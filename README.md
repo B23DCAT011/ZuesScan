@@ -742,8 +742,15 @@ khách hàng) để sau này chứng minh lịch sử không bị viết lại. 
 `zues-<thời gian>.db` cũ do chính nó tạo.
 
 Khôi phục: `docker compose stop web worker scheduler` → `zues backup --verify <file>` →
-chép file vào volume làm `/data/zues.db` → `docker compose start`. Bản sao lưu nằm cùng
-volume với DB thì không chống được hỏng đĩa: luôn `docker compose cp` ra nơi khác.
+**xoá `/data/zues.db-wal` và `/data/zues.db-shm` nếu còn** (nhật ký ghi của DB cũ: để lại thì
+SQLite áp nó lên bản vừa khôi phục) → chép file vào volume làm `/data/zues.db` → `docker compose
+start` (dịch vụ tự bật lại WAL cho DB). Bản sao lưu nằm cùng volume với DB thì không chống được
+hỏng đĩa: luôn `docker compose cp` ra nơi khác.
+
+Database dùng **write-ahead logging (WAL)**: web (đọc, ghi phiên) và worker (lưu run) không phải
+chờ nhau — một lần đọc dài không còn giữ chân việc lưu run. WAL cần đĩa cục bộ (volume Docker là
+được; **không** đặt DB trên ổ mạng NFS / SMB) — `zues doctor` báo nếu DB không ở WAL. Bản sao lưu
+luôn là **một file duy nhất** (chế độ thường), và chỉ đọc nó bằng ZuesScan không làm đổi mã băm.
 
 ### nuclei, subfinder, dnsx và templates trong image
 

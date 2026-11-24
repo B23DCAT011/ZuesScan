@@ -364,8 +364,12 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       trên web (đã có ở CLI `zues diff` và mục "Changes" của báo cáo).
     - Không có Swagger UI (`/docs` tải script từ CDN, trái CSP); schema OpenAPI vẫn ở
       `/api/v1/openapi.json` để nhập vào công cụ khác.
-    - SQLite dùng chế độ journal mặc định: web đọc trong lúc worker ghi thì phải chờ nhau (tối đa
-      5 giây). Nhiều worker + web đông người dùng: bật WAL hoặc chuyển sang PostgreSQL.
+    - ✅ SQLite dùng WAL (`feat/sqlite-wal`): đọc dài không chặn lưu run (có test đối chứng: chế độ
+      cũ thì lưu hỏng "database is locked"); chờ ghi tối đa 15 giây; bản backup vẫn là một file;
+      dịch vụ bật lại WAL khi khởi động (vd sau khôi phục); `zues doctor` báo. Còn lại: người ghi
+      vẫn lần lượt từng người — nhiều worker lưu run lớn cùng lúc, hoặc nhiều máy dùng chung một
+      DB, thì cần PostgreSQL (repository đã tách SQL sau các phương thức của `Storage`). WAL không
+      chạy trên ổ mạng.
   - ✅ Webhook được ký (HMAC-SHA256 + timestamp, `[notify] secret` / `ZUES_WEBHOOK_SECRET`). URL
     webhook vẫn là bí mật (log chỉ ghi tên host) — đừng commit `service.toml` hay `.env` thật.
 
