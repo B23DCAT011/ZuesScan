@@ -7,6 +7,15 @@ section of a version as its release notes, so every tag needs one.
 ## [Unreleased]
 
 ### Security
+- Two people for a scope change (`[service] scope_approval = true` or
+  `ZUES_SCOPE_APPROVAL=on`, set by whoever runs the server): a scope saved or deleted in the
+  dashboard becomes a proposal, with a reason, that another admin approves (applied in the
+  same transaction as its audit event), rejects (with a note) or its proposer withdraws.
+  Nobody approves their own proposal, nor with a token whose value the proposer has seen
+  (made or rotated, through any chain of tokens): a new admin rotates their token first.
+  A proposal made against a scope that changed since is not approved. Settings shows what
+  waits, with a line diff. Schema 18. API: `GET /api/v1/admin/proposals`,
+  `POST /api/v1/admin/proposals/{id}/approve|reject|withdraw`.
 - The dashboard's sessions are held by the server: the cookie carries only a random
   session key (its SHA-256 is stored, never the key, never the token). A session ends when
   its owner signs out (on the server: a copied cookie stops working), after 30 minutes

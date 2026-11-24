@@ -504,7 +504,10 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     - **Admin mở rộng được giấy phép quét** (theo yêu cầu của chủ dự án: sửa được cả scope trên
       giao diện). Lớp bảo vệ: số người giữ token admin, audit trail, và ✅ cảnh báo webhook cho
       **mọi** thay đổi scope / target / token (`feat/config-alerts`, cùng transaction với audit).
-      Còn thiếu: duyệt hai người cho thay đổi scope (một người đề xuất, người khác chấp thuận).
+      ✅ Duyệt hai người cho thay đổi scope (`feat/scope-approval`, schema 18, D12) khi bật
+      `scope_approval`. Còn lại: tắt mặc định (một admin không có người thứ hai); target và token
+      admin mới không cần duyệt (target vẫn bị scope giới hạn; token admin mới không duyệt được
+      thay đổi của người tạo ra nó); chưa có số người duyệt > 2 hay nhóm người duyệt riêng.
     - ✅ Token có hạn dùng + Rotate (`feat/token-expiry`). Còn lại: chưa có đăng nhập SSO /
       OIDC; chưa ép đổi token admin theo chu kỳ (hạn dùng là trần, không phải chính sách riêng).
     - Target trên dashboard chưa dùng được credentials SSH hay file profile riêng (cố ý: không

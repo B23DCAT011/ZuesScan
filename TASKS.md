@@ -233,4 +233,8 @@ rồi độ tin cậy, rồi tiện dụng.
       thử (5/5). CI báo kiểm tra nào hỏng + bảng finding thành annotation công khai.
 - [x] `feat/config-alerts` (G30) — mọi thay đổi scope / target / token (dashboard, `zues user`) gửi
       cảnh báo `config_changed` (ai, làm gì), cùng transaction với sự kiện audit.
+- [x] `feat/scope-approval` (G30, D12) — hai người cho thay đổi scope khi bật `scope_approval`:
+      đề xuất (lý do) → admin khác duyệt / từ chối, người đề xuất rút; không tự duyệt, không duyệt
+      bằng token người đề xuất từng thấy giá trị; đề xuất cũ không duyệt được; diff trong Settings.
+      Thử trên Chrome headless (đề xuất, bị chặn trước khi Rotate, duyệt, audit).
 
