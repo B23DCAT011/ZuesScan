@@ -520,7 +520,10 @@ zues scheduler --config service.toml --once                      # một vòng r
 - **Scheduler**: một target đến hạn khi cả lần quét gần nhất (cùng target **và** cùng profile —
   quét nhanh mỗi giờ không làm lần quét đầy đủ mỗi ngày tưởng là đã xong) lẫn lần xếp hàng gần
   nhất (ghi trong Redis) đều cũ hơn `every`. Mỗi vòng giữ một khoá ngắn trong Redis, nên lỡ chạy
-  hai scheduler cũng không xếp trùng một lần quét; khởi động lại scheduler cũng vậy.
+  hai scheduler cũng không xếp trùng một lần quét; khởi động lại scheduler cũng vậy. Mỗi vòng
+  đọc lại cấu hình: target thêm / sửa trên dashboard hay trong `service.toml` được lên lịch
+  ngay, không cần khởi động lại; cấu hình hỏng thì không xếp gì (ghi log mỗi vòng) cho tới
+  khi sửa xong. Chỉ đổi Redis URL / tên queue mới phải khởi động lại.
 - **Cảnh báo** (webhook) chỉ gửi khi bức tranh thay đổi: **fix giả** (đã báo sửa mà vẫn còn),
   finding **xuất hiện lại**, và finding **mới** có mức ưu tiên từ `min_priority` trở lên. Payload
   có `text` cho Slack và cả danh sách có cấu trúc (`items`) cho hệ thống khác. Không gửi được thì

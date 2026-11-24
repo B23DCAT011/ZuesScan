@@ -6,6 +6,12 @@ section of a version as its release notes, so every tag needs one.
 
 ## [Unreleased]
 
+### Fixed
+- The scheduler read its configuration once, at start: a target added or changed in the
+  dashboard (or in service.toml) was never scheduled until the scheduler restarted — the
+  three-command install's "add a target, every 24h" did not scan. It now re-reads the
+  configuration at every round; an invalid one schedules nothing until it is fixed.
+
 ### Security
 - The dashboard's sessions are held by the server: the cookie carries only a random
   session key (its SHA-256 is stored, never the key, never the token). A session ends when
