@@ -249,4 +249,10 @@ rồi độ tin cậy, rồi tiện dụng.
       (kể cả đọc spec): JSON qua stdin / stdout, môi trường sạch, thư mục tạm, không DB / credentials,
       hết giờ thì giết cả nhóm, kiểm lại pin trước khi import, trả lời đọc như dữ liệu không tin cậy
       (`zues_scan/plugins/wire.py`). Thử: Windows + Linux, job exposed-git trong container.
+- [x] `fix/example-plugin-close` — ví dụ exposed-git đóng response 404; server web của test đóng
+      socket (ResourceWarning).
+- [x] `feat/plugin-landlock` (G25, D16) — trên Linux, tiến trình con của plugin tự giới hạn bằng
+      Landlock trước khi import (không cần root): đọc hệ thống / Python / gói / công cụ / templates,
+      ghi thư mục tạm; DB, cấu hình, environ của dịch vụ → bị từ chối, cả với chương trình nó chạy;
+      giới hạn hỏng → lời gọi hỏng; doctor báo. Thử trong container Linux (Landlock v1).
 

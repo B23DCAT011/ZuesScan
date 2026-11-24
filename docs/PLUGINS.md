@@ -104,6 +104,10 @@ trên stdin, trả lời trên stdout:
 - **Giới hạn**: thời gian = `timeout` của profile + 60 s; hết giờ thì cả nhóm tiến trình bị giết
   (kể cả công cụ nó đã khởi động); trả lời tối đa 128 MiB; giữ 64 KiB cuối của stderr.
 - **Trước khi import**, tiến trình con kiểm lại gói theo pin (nếu dịch vụ ghim nó), từ file trên đĩa.
+- **Trên Linux, nó tự giới hạn bằng Landlock** (kernel 5.13+, không cần root): từ đó nó và mọi
+  chương trình nó chạy chỉ **đọc** được hệ thống, Python, gói của ZuesScan và của chính plugin,
+  công cụ của ZuesScan, templates / wordlist của lần quét; chỉ **ghi** được thư mục tạm của nó.
+  Database, cấu hình, credentials: "permission denied". `zues doctor` cho biết máy có giới hạn không.
 - **Câu trả lời là dữ liệu không tin cậy**: đọc từng trường theo kiểu của schema (trường lạ, sai
   kiểu, thiếu → lỗi), rồi qua cùng các kiểm tra như mọi plugin (host ngoài scope bị bỏ).
 - Lỗi của plugin (exception, `sys.exit`, kết quả sai kiểu) thành `ScanError` có lý do; `ScanError`
@@ -116,6 +120,9 @@ Với người viết plugin, điều này có nghĩa:
 - `PluginContext` chỉ có `profile`, `nuclei_templates`, `dns_wordlist` — không có credentials hay
   CVE cache.
 - Mọi thứ trong `ScanResult` phải là kiểu của `zues_scan.schema` (dataclass, không phải dict).
+- Dữ liệu riêng của plugin nằm **trong gói của nó** (đọc được); file tạm ghi vào thư mục làm việc
+  (= `HOME`, bị xoá sau lời gọi). Chương trình nó chạy không nhận được quyền đặc biệt (setuid, file
+  capability) — vd nmap của image không SYN scan được từ một plugin của gói khác.
 
 ## Kiểm tra hợp đồng trong test của plugin
 
@@ -184,10 +191,10 @@ báo lỗi; target dùng nó dừng với lý do rõ ràng thay vì quét thiế
 
 ## Giới hạn
 
-Tiến trình riêng tách plugin khỏi **bộ nhớ và môi trường** của ZuesScan, không khỏi **hệ điều
-hành**: nó vẫn chạy dưới cùng user, nên đọc được file mà user đó đọc được nếu đoán ra đường dẫn
-(vd database ở `/data/zues.db` trong image), và kết nối được tới bất cứ đâu. Muốn chặn cả hai cần
-user / container riêng chỉ có mạng tới mục tiêu. Pin bảo đảm đó đúng là code bạn đã đọc, không
+Tiến trình riêng tách plugin khỏi **bộ nhớ và môi trường** của ZuesScan; Landlock (Linux) tách
+nó khỏi **file** của dịch vụ. Còn lại: nó **kết nối được tới bất cứ đâu** (cần network namespace /
+container riêng chỉ có đường tới mục tiêu), và trên Windows / macOS / kernel không có Landlock nó
+đọc được file mà dịch vụ đọc được. Pin bảo đảm đó đúng là code bạn đã đọc, không
 bảo đảm code đó vô hại. Phụ thuộc của plugin (gói khác nó import) không nằm trong pin — ghim
 chúng khi dựng image (`pip install --require-hashes`). Xem G25 trong
 [`KNOWN-GAPS.md`](KNOWN-GAPS.md).
