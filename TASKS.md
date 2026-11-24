@@ -237,4 +237,8 @@ rồi độ tin cậy, rồi tiện dụng.
       đề xuất (lý do) → admin khác duyệt / từ chối, người đề xuất rút; không tự duyệt, không duyệt
       bằng token người đề xuất từng thấy giá trị; đề xuất cũ không duyệt được; diff trong Settings.
       Thử trên Chrome headless (đề xuất, bị chặn trước khi Rotate, duyệt, audit).
+- [x] `feat/target-permissions` (G23, D13) — token viewer / operator giới hạn vào target theo mẫu
+      tên (Settings, `zues user`, service.toml, API); chỉ thấy / làm trên target đó (run, finding,
+      host, job, quét, MCP), còn lại 404; audit chỉ cho token không giới hạn; run ghi
+      `target_name` (schema 19), run cũ được gán khi khởi động. Thử trên Chrome headless.
 

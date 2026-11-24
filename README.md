@@ -639,6 +639,19 @@ Target trên dashboard **không** trỏ được tới file trên máy chủ (cr
 những thứ đó vẫn chỉ khai trong `service.toml`. Target / token trong `service.toml` hiện ra
 nhưng chỉ đọc; trùng tên thì file thắng (mục dashboard bị bỏ và báo lại).
 
+**Quyền theo target** (nhiều khách hàng trên một dịch vụ): một token viewer / operator có thể
+bị giới hạn vào một số target theo tên hoặc mẫu (`acme-*`) — ô *Targets* khi tạo token và nút
+*Limit* trong Settings, `zues user add NAME --targets 'acme-*'`, `zues user targets NAME
+'acme-*'` (không mẫu nào: mọi target), hay `targets = ["acme-*"]` trong `service.toml`. Token đó
+chỉ thấy và chỉ làm được trên target của mình: danh sách target, yêu cầu quét, job, run (báo
+cáo, SARIF, so sánh), finding và host (những host mà run của chính target đó tìm thấy), cả qua
+MCP; mọi thứ khác trả **404 như thể không tồn tại** — tên target, số run, host của khách khác
+không lộ ra. Audit trail ghi mọi target nên chỉ dành cho token không giới hạn. Token admin luôn
+thấy mọi target (admin sửa được cả target và token). Đổi giới hạn có hiệu lực ở request kế tiếp,
+kể cả phiên đang mở. Mỗi run ghi tên target đã quét (`target_name`); run cũ được gán khi `zues web`
+khởi động nếu đúng một target quét địa chỉ đó với profile đó, không thì chỉ token không giới hạn
+mới thấy.
+
 **Hai người cho một thay đổi scope** (`[service] scope_approval = true` hoặc
 `ZUES_SCOPE_APPROVAL=on` — do người chạy máy chủ đặt, dashboard không tắt được): scope là giấy
 phép quét, nên khi bật, sửa / xoá scope trên dashboard chỉ là **đề xuất** (kèm lý do). Một admin
@@ -684,7 +697,8 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/v1/runs/3/sarif
 | `GET /api/v1/admin/config` | admin | scope, target, token, plugin, profile — mọi thứ trang Settings cần |
 | `PUT` / `DELETE /api/v1/admin/scopes/{tên}` `{"text": "<nội dung file scope>"}` | admin | sửa / xoá scope |
 | `PUT` / `DELETE /api/v1/admin/targets/{tên}` `{"target", "scope", "profile", "every", "scanners", "checks", "discoverers", ...}` | admin | sửa / xoá target |
-| `POST /api/v1/admin/tokens` `{"name", "role"}`, `DELETE /api/v1/admin/tokens/{tên}` | admin | tạo token (trả về **một lần**) / thu hồi |
+| `POST /api/v1/admin/tokens` `{"name", "role", "valid_days", "targets"}`, `DELETE /api/v1/admin/tokens/{tên}` | admin | tạo token (trả về **một lần**) / thu hồi |
+| `PUT /api/v1/admin/tokens/{tên}/targets` `{"targets": ["acme-*"] \| null}`, `POST …/rotate` | admin | giới hạn token vào một số target / cấp giá trị mới |
 | `GET /api/v1/admin/sessions`, `DELETE /api/v1/admin/sessions/{id}` | admin | ai đang đăng nhập (từ đâu, lúc nào) / kết thúc một phiên |
 | `POST` / `DELETE /api/v1/session` | — | đăng nhập (mở phiên) / đăng xuất (kết thúc phiên ở server) |
 | `GET /healthz` | — | kiểm tra sống (config, DB, Redis) cho Docker |
@@ -868,9 +882,9 @@ ZuesScan là bộ điều phối các công cụ mở, **không** thay được 
 viện kiểm tra riêng; phát hiện chủ yếu theo phiên bản, trừ nuclei và quét có đăng nhập). Mọi
 điểm yếu đã biết, kèm hướng nâng cấp theo cách làm thật, nằm ở
 [`docs/KNOWN-GAPS.md`](docs/KNOWN-GAPS.md) — nổi bật: quét có đăng nhập mới có Debian; nuclei
-chưa có kênh OAST (interactsh) riêng; web chưa phân quyền theo target và chưa có xác thực hai
-lớp; cảnh báo mới chỉ có webhook (chưa email); SQLite là giới hạn khi nhiều worker / người
-dùng.
+chưa có kênh OAST (interactsh) riêng; web chưa có xác thực hai lớp / SSO; plugin bên thứ ba
+chạy chung tiến trình; cảnh báo mới chỉ có webhook (chưa email); SQLite là giới hạn khi nhiều
+worker / người dùng.
 
 ## Cho AI dùng ZuesScan (MCP)
 
