@@ -852,6 +852,7 @@ def _cmd_user(args: argparse.Namespace) -> int:
     actor = f"{default_operator()} (zues user)"
     try:
         with Storage(config.db) as store:
+            store.config_alerts = bool(config.notify.webhook)  # as in the dashboard
             if args.user_command == "list":
                 print(f"{'NAME':<24} {'ROLE':<9} {'SOURCE':<10} EXPIRES (UTC)")
                 for t in sorted(config.tokens, key=lambda t: t.name):

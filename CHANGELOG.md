@@ -13,6 +13,11 @@ section of a version as its release notes, so every tag needs one.
   The network run now waits 30 s with 3 retries (5 of 5); web checks keep 10 s / 1, and the
   check's overall time budget is unchanged.
 
+### Added
+- Every change of a scope, target or token — in the dashboard or with `zues user` — raises a
+  `config_changed` alert (who, what), queued in the same transaction as its audit event: one
+  admin can widen what may be scanned, and now the others know at once.
+
 ### Security
 - Tokens expire. A token made in the dashboard or with `zues user add` is accepted for 90
   days by default (30 days, 1 year, up to 2 years, or `never` for a monitored service

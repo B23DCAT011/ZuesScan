@@ -770,8 +770,10 @@ def _every_text(seconds: int | None) -> str | None:
 
 @contextmanager
 def _writable(config: ServiceConfig) -> Iterator[Storage]:
-    """The database, created if needed (an admin may configure before the first scan)."""
+    """The database, created if needed (an admin may configure before the first scan);
+    with a webhook, every change of the configuration also raises an alert."""
     with Storage(config.db) as store:
+        store.config_alerts = bool(config.notify.webhook)
         yield store
 
 

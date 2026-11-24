@@ -855,7 +855,7 @@
   var ALERT_KINDS = {
     run: "findings", scan_failed: "scans failing", scan_recovered: "scans work again",
     not_started: "scan not started", job_failed: "job failed", locked_out: "locked out",
-    token_expiring: "token expiring", test: "test",
+    token_expiring: "token expiring", config_changed: "settings changed", test: "test",
   };
 
   function settingsAlerts(alerts) {
@@ -891,7 +891,8 @@
         "Alerts wait in the database until the webhook takes them: retried after 1, 2, 4 … minutes " +
         "(at most an hour apart), given up after 24 hours. New findings from " + alerts.min_priority +
         ", fake fixes, reappeared findings, scans failing " + alerts.failed_scans + " times in a row, " +
-        "scans not started, failed jobs and sign-in lock-outs raise one."));
+        "scans not started, failed jobs, sign-in lock-outs, tokens about to expire and every change " +
+        "made on this page raise one."));
   }
 
   function sendTest(button) {

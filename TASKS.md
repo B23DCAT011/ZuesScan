@@ -231,4 +231,6 @@ rồi độ tin cậy, rồi tiện dụng.
 - [x] `fix/nuclei-network-timeouts` (G24) — job lab chập chờn được tìm ra nguyên nhân: template
       mạng của nuclei dùng timeout của HTTP; sshd chậm → lỡ Terrapin 4/10 lần; nay 30 s / 3 lần
       thử (5/5). CI báo kiểm tra nào hỏng + bảng finding thành annotation công khai.
+- [x] `feat/config-alerts` (G30) — mọi thay đổi scope / target / token (dashboard, `zues user`) gửi
+      cảnh báo `config_changed` (ai, làm gì), cùng transaction với sự kiện audit.
 

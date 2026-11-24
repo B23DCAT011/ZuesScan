@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -341,3 +342,35 @@ def test_a_session_ends_when_its_token_expires(svc: App, monkeypatch: pytest.Mon
     monkeypatch.setattr(sessions, "now", lambda: later)
 
     assert browser.get("/api/v1/me").status_code == 401
+
+
+def test_every_settings_change_raises_an_alert_with_its_audit_event(svc: App) -> None:
+    root = svc.client(ROOT)
+    root.put("/api/v1/admin/scopes/before", json={"text": SCOPE})  # no webhook yet: nothing
+    with Storage(svc.db) as store:
+        assert store.alert_rows() == []
+    svc.rewrite(config_text(svc.dir.as_posix(), TOKENS + ADMIN) + NOTIFY)
+
+    root.put("/api/v1/admin/scopes/lab2", json={"text": SCOPE})
+    root.put("/api/v1/admin/targets/web", json={"target": "scanme.lab", "scope": "lab2"})
+    made = root.post("/api/v1/admin/tokens", json={"name": "carol", "role": "admin"}).json()
+    root.post("/api/v1/admin/tokens/carol/rotate", json={})
+    root.delete("/api/v1/admin/targets/web")
+
+    with Storage(svc.db) as store:
+        rows = list(reversed(store.alert_rows()))
+    texts = [json.loads(r["payload"])["text"] for r in rows]
+    assert [r["kind"] for r in rows] == ["config_changed"] * 5
+    assert texts == [
+        "ZuesScan: root: scope saved — scope lab2: what may be scanned changed; see the audit "
+        "trail",
+        "ZuesScan: root: target added — target web: what is scanned, how or when changed; see "
+        "the audit trail",
+        "ZuesScan: root: token created — token carol (role admin): who may use ZuesScan changed; "
+        "see the audit trail",
+        "ZuesScan: root: token rotated — token carol: who may use ZuesScan changed; see the audit "
+        "trail",
+        "ZuesScan: root: target deleted — target web: what is scanned, how or when changed; see "
+        "the audit trail",
+    ]
+    assert made["token"] not in repr(rows) and sha(made["token"]) not in repr(rows)

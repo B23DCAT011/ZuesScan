@@ -548,7 +548,10 @@ zues scheduler --config service.toml --once                      # một vòng r
   run); quét một target **hỏng `failed_scans` lần liền** (một lần, không phải mỗi lần hỏng) và khi
   nó **chạy lại được**; lần quét **không bắt đầu được** (scope từ chối — vd uỷ quyền đã hết hạn;
   một lần mỗi ngày); **job hỏng** mà không lưu được run (exception, quá giờ, worker chết; một lần
-  mỗi 6 giờ); địa chỉ **bị khoá** đăng nhập (một lần mỗi giờ); và cảnh báo **thử** từ Settings.
+  mỗi 6 giờ); địa chỉ **bị khoá** đăng nhập (một lần mỗi giờ); token **sắp hết hạn** (một tuần
+  trước); **mọi thay đổi cấu hình** trên dashboard hay bằng `zues user` (scope, target, token —
+  ai làm, làm gì; ghi cùng transaction với sự kiện audit: một admin mở rộng giấy phép quét thì
+  người khác biết ngay); và cảnh báo **thử** từ Settings.
   Payload có `text` cho Slack và các trường có cấu trúc (`kind`, `items`, …) cho hệ thống khác.
 - **Không mất cảnh báo (outbox):** cảnh báo của một run được ghi vào database **trong cùng
   transaction** với run, rồi mới gửi — worker gửi ngay sau khi quét, gửi hỏng thì scheduler gửi

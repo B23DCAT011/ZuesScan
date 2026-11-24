@@ -502,9 +502,9 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     động lại. Nay đọc lại mỗi vòng; có test cho cả target thêm giữa chừng và cấu hình hỏng.
   - Còn lại:
     - **Admin mở rộng được giấy phép quét** (theo yêu cầu của chủ dự án: sửa được cả scope trên
-      giao diện). Lớp bảo vệ còn lại là số người giữ token admin và audit trail. Nên có: duyệt
-      hai người cho thay đổi scope (một người đề xuất, người khác chấp thuận), và thông báo
-      webhook mỗi lần scope đổi.
+      giao diện). Lớp bảo vệ: số người giữ token admin, audit trail, và ✅ cảnh báo webhook cho
+      **mọi** thay đổi scope / target / token (`feat/config-alerts`, cùng transaction với audit).
+      Còn thiếu: duyệt hai người cho thay đổi scope (một người đề xuất, người khác chấp thuận).
     - ✅ Token có hạn dùng + Rotate (`feat/token-expiry`). Còn lại: chưa có đăng nhập SSO /
       OIDC; chưa ép đổi token admin theo chu kỳ (hạn dùng là trần, không phải chính sách riêng).
     - Target trên dashboard chưa dùng được credentials SSH hay file profile riêng (cố ý: không
