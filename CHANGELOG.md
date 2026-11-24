@@ -7,6 +7,18 @@ section of a version as its release notes, so every tag needs one.
 ## [Unreleased]
 
 ### Security
+- Plugins from other packages run in processes of their own (D15): their code never runs
+  in ZuesScan's process, not even to read their spec. Each call (spec, availability and
+  version, scan, check, discover) is a child process `python -I -m zues_scan.plugins.process`
+  that receives the call as JSON: the approved addresses or hosts, the scan profile, the
+  paths of the nuclei templates and DNS wordlist — and nothing else: no ZUES_* variable
+  (database, Redis, webhook secret, tokens), no database, CVE cache, SSH credentials or
+  subfinder keys, an empty temporary folder as its working directory and HOME. It runs
+  under the profile's time limit plus 60 s, after which its whole process group is killed
+  (the tools it started too); its reply is capped at 128 MiB and decoded field by field as
+  untrusted input. A pinned package is checked against its pin again in the child, right
+  before it is imported. A plugin's crash, `sys.exit` or wrong result type becomes a scan
+  error with the reason; its own ScanError comes back whole (message, stderr, output).
 - A service loads third-party plugins only when its configuration pins them (D14):
   `[[plugins]]` in service.toml or `ZUES_PLUGINS`, each with its package, version, the
   SHA-256 of the files that package installed (its RECORD) and the `activity` its operator

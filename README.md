@@ -134,7 +134,9 @@ activity = "active"                  # mức bạn đánh giá; plugin khai cao 
 ```
 
 `zues plugins --config service.toml` và `zues doctor` cho thấy dịch vụ nạp gì và vì sao một
-plugin không được nạp. `zues scan` ở dòng lệnh của bạn vẫn nạp mọi plugin đã cài (cài là đã
+plugin không được nạp. Plugin của gói khác **chạy ở tiến trình riêng** (D15): môi trường sạch (không
+biến `ZUES_*`), thư mục tạm rỗng, không database / credentials / API key, giới hạn thời gian giết
+cả các công cụ nó khởi động — code của gói không bao giờ chạy trong tiến trình của ZuesScan. `zues scan` ở dòng lệnh của bạn vẫn nạp mọi plugin đã cài (cài là đã
 quyết định), trừ khi đặt `ZUES_PLUGINS` (`none` = chỉ plugin dựng sẵn).
 
 **Scanner thứ hai: naabu** (`--scanner naabu`). Ba bước: nmap dò host sống (`-sn`), naabu quét

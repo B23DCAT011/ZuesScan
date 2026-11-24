@@ -438,10 +438,20 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     plugin khai cao hơn thì bị từ chối. Thử thật trong container Linux: chưa ghim → target dừng với
     lý do; ghim → quét, finding `confirmed`; sửa một byte → bị từ chối, đoạn code thêm vào không chạy.
   - Còn lại:
-    - Plugin được ghim vẫn chạy **trong cùng tiến trình**: đọc được DB, file credentials, token,
-      biến môi trường (`ZUES_WEBHOOK_SECRET`…). Pin bảo đảm đó là code đã đọc, không bảo đảm nó vô
-      hại. Thực tế: chạy plugin ở tiến trình riêng với môi trường sạch, chỉ nhận đúng địa chỉ cần
-      quét (bước tiếp theo); mạnh hơn nữa là user / container riêng, chỉ có mạng tới mục tiêu.
+    - ✅ Plugin của gói khác chạy ở **tiến trình riêng** (`feat/plugin-process`, D15): mỗi lời gọi
+      (đọc spec, probe, scan / check / discover) là một tiến trình con nhận JSON, môi trường sạch
+      (không `ZUES_*`: DB, Redis, secret webhook, token), thư mục tạm rỗng làm HOME, không có DB /
+      CVE cache / credentials SSH / API key subfinder; giới hạn thời gian (giết cả nhóm tiến trình,
+      kể cả công cụ nó khởi động), trả lời ≤ 128 MiB; kiểm lại pin trong tiến trình con trước khi
+      import; câu trả lời được đọc từng trường như dữ liệu không tin cậy. Code của gói không bao giờ
+      chạy trong tiến trình của ZuesScan. Thử thật: test trên Windows + Linux (container sạch), job
+      quét với exposed-git trong container Linux → finding `confirmed`.
+    - Còn lại của tiến trình riêng: **cùng user hệ điều hành** — plugin đọc được file mà dịch vụ
+      đọc được nếu đoán ra đường dẫn (vd `/data/zues.db` của image), kết nối được tới mọi nơi. Thực
+      tế: user riêng (cần quyền root để đổi user) hoặc container riêng chỉ mount thư mục tạm và chỉ
+      có mạng tới mục tiêu; trên Linux có thể tự giới hạn bằng Landlock / seccomp mà không cần root.
+      Chưa giới hạn bộ nhớ / CPU (RLIMIT_AS làm hỏng công cụ viết bằng Go như nuclei — cần cgroup).
+      Mỗi lời gọi tốn một lần khởi động Python (~0,3–1 s): không đáng kể so với một lần quét.
     - Phụ thuộc của plugin (gói khác nó import) và file `.pth` của gói khác không nằm trong pin:
       ghim chúng khi dựng image (`pip install --require-hashes`, như `tools.lock` với công cụ).
     - Kiểm pin lúc nạp, không theo dõi sau đó: một file bị sửa giữa lúc kiểm và lúc import (cửa sổ

@@ -245,4 +245,8 @@ rồi độ tin cậy, rồi tiện dụng.
       / `ZUES_PLUGINS`: gói, phiên bản, SHA-256 các file đã cài, `activity` do người vận hành ghi),
       kiểm trước khi import; `zues plugins --pin NAME` / `--config`; doctor báo; Settings cho thấy
       plugin bị bỏ và vì sao. Thử thật trong container Linux (chưa ghim / ghim / sửa một byte).
+- [x] `feat/plugin-process` (G25, D15) — plugin của gói khác chạy ở tiến trình con cho mỗi lời gọi
+      (kể cả đọc spec): JSON qua stdin / stdout, môi trường sạch, thư mục tạm, không DB / credentials,
+      hết giờ thì giết cả nhóm, kiểm lại pin trước khi import, trả lời đọc như dữ liệu không tin cậy
+      (`zues_scan/plugins/wire.py`). Thử: Windows + Linux, job exposed-git trong container.
 
