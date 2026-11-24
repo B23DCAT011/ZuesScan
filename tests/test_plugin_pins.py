@@ -61,10 +61,12 @@ class Site:
         entry: str = "zues_probe:PLUGIN",
         record: bool = True,
         editable: bool = False,
+        source: str | None = None,
     ) -> None:
         package = self.root / MODULE
         package.mkdir(exist_ok=True)
-        (package / "__init__.py").write_text(SOURCE.format(activity=activity), encoding="utf-8")
+        code = source if source is not None else SOURCE.format(activity=activity)
+        (package / "__init__.py").write_text(code, encoding="utf-8")
         self.info.mkdir(exist_ok=True)
         files = {
             "METADATA": "Metadata-Version: 2.1\nName: zues-probe\nVersion: 1.0.0\n",
@@ -143,7 +145,7 @@ def test_a_pinned_plugin_loads_with_the_activity_its_operator_granted(site: Site
     exact = registry.load(site.entries, pinned(site, "scan"))
     assert exact.get("probe", "check").activity is Activity.SCAN and exact.declared == {}
     [plugin] = exact.build(["probe"], "check", PluginContext())
-    assert type(plugin).__name__ == "Probe"  # nothing to wrap
+    assert type(plugin).__name__ == "ProcessPlugin"  # nothing to wrap: it runs in a child
 
 
 def test_a_plugin_that_claims_more_than_it_was_granted_is_left_out(site: Site) -> None:
