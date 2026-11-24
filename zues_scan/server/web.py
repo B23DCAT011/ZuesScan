@@ -43,6 +43,7 @@ from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
+from fnmatch import fnmatchcase
 from importlib import resources
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -58,7 +59,7 @@ from rq.job import Job
 
 from zues_scan import __version__, priority
 from zues_scan.diff import diff_runs, previous_run
-from zues_scan.inventory import ACTIVE, Status
+from zues_scan.inventory import ACTIVE, Status, host_key
 from zues_scan.inventory_store import FindingRow, InventoryError
 from zues_scan.plugins import registry as plugin_registry
 from zues_scan.profiles import BUILTIN as BUILTIN_PROFILES
@@ -183,6 +184,13 @@ class Caller:
     name: str
     role: str
     session: int | None = None  # the session's id when signed in with the browser
+    # The targets this caller may see and act on (name patterns); None: every target.
+    targets: tuple[str, ...] | None = None
+
+    def sees(self, target_name: str | None) -> bool:
+        return self.targets is None or (
+            target_name is not None and any(fnmatchcase(target_name, p) for p in self.targets)
+        )
 
 
 def match_token(config: ServiceConfig, token: str) -> Token | None:
@@ -302,7 +310,7 @@ def _session_caller(request: Request, config: ServiceConfig) -> Caller | None:
                 store.touch_session(session.id, stamp(at))
             except sqlite3.Error as exc:  # busy: the next request touches it instead
                 log.warning("could not record the use of session #%d: %s", session.id, exc)
-    return Caller(token.name, token.role, session=session.id)
+    return Caller(token.name, token.role, session=session.id, targets=token.targets)
 
 
 def caller(request: Request, config: Annotated[ServiceConfig, Depends(current_config)]) -> Caller:
@@ -315,7 +323,7 @@ def caller(request: Request, config: Annotated[ServiceConfig, Depends(current_co
             _wrong_token(request, config)
             raise HTTPException(401, "a valid token is required", {"WWW-Authenticate": "Bearer"})
         _refuse_expired(token)
-        return Caller(token.name, token.role)
+        return Caller(token.name, token.role, targets=token.targets)
     if COOKIE in request.cookies:
         who = _session_caller(request, config)
         if who is None:
@@ -408,6 +416,13 @@ class TokenBody(BaseModel):
     role: Literal["viewer", "operator", "admin"]
     # How many days it is accepted; null: without end (e.g. a monitored service account).
     valid_days: int | None = Field(default=90, ge=1, le=730)
+    # Only these targets (name patterns, e.g. "acme-*"); null: every target. Not for admins.
+    targets: list[str] | None = Field(default=None, max_length=50)
+
+
+class TargetsBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    targets: list[str] | None = Field(max_length=50)
 
 
 class RotateBody(BaseModel):
@@ -432,7 +447,7 @@ api = APIRouter(prefix="/api/v1")
 
 
 @api.post("/session")
-def login(body: Login, request: Request, response: Response, config: Config) -> dict[str, str]:
+def login(body: Login, request: Request, response: Response, config: Config) -> dict[str, Any]:
     _brake(request, config)
     token = match_token(config, body.token)
     if token is None:
@@ -472,7 +487,13 @@ def login(body: Login, request: Request, response: Response, config: Config) -> 
         path="/",
     )
     log.info("%s signed in from %s (session #%d)", token.name, client, session_id)
-    return {"name": token.name, "role": token.role}
+    # As /me says it: the page draws itself from this answer (e.g. no Audit for a token
+    # limited to some targets).
+    return {
+        "name": token.name,
+        "role": token.role,
+        "targets": list(token.targets) if token.targets is not None else None,
+    }
 
 
 @api.delete("/session", status_code=204)
@@ -495,8 +516,36 @@ def logout(request: Request, response: Response, config: Config) -> None:
 
 
 @api.get("/me")
-def me(who: Viewer) -> dict[str, str]:
-    return {"name": who.name, "role": who.role, "version": __version__}
+def me(who: Viewer) -> dict[str, Any]:
+    return {
+        "name": who.name,
+        "role": who.role,
+        "version": __version__,
+        "targets": list(who.targets) if who.targets is not None else None,
+    }
+
+
+# --- per-target permissions (G23) --------------------------------------------------------------
+# A token limited to some targets sees only what their runs found, and acts only on them.
+# Anything else answers 404, as if it did not exist: another customer's target names, run
+# numbers and hosts are not for this caller to learn.
+
+
+def _hidden_run(who: Caller, store: Storage | None, run_id: int) -> bool:
+    """True if run #run_id does not exist or is not this caller's to see."""
+    if store is None:
+        return True
+    exists, name = store.run_target_name(run_id)
+    return not exists or not who.sees(name)
+
+
+def _visible_hosts(who: Caller, store: Storage) -> set[str] | None:
+    """The inventory host keys this caller may see; None: all."""
+    return None if who.targets is None else store.host_keys_seen_by(who.targets)
+
+
+def _visible(row: FindingRow, hosts: set[str] | None) -> bool:
+    return hosts is None or host_key(row.ip, row.host) in hosts
 
 
 @api.get("/targets")
@@ -519,6 +568,7 @@ def targets(who: Viewer, config: Config) -> list[dict[str, Any]]:
             "source": t.source,
         }
         for t in config.targets.values()
+        if who.sees(t.name)
     ]
 
 
@@ -526,7 +576,7 @@ def targets(who: Viewer, config: Config) -> list[dict[str, Any]]:
 def request_scan(
     body: ScanRequest, who: Operator, config: Config, holder: Annotated[LiveConfig, Depends(live)]
 ) -> dict[str, Any]:
-    if body.target not in config.targets:
+    if body.target not in config.targets or not who.sees(body.target):
         raise HTTPException(404, f"no target named {body.target!r} in the service config")
     job = rkqueue.enqueue_scan(holder.queue(config), config, body.target, who.name)
     log.info("%s queued a scan of %s as job %s", who.name, body.target, job.id)
@@ -540,7 +590,8 @@ def jobs(
     holder: Annotated[LiveConfig, Depends(live)],
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[dict[str, Any]]:
-    return [i.as_dict() for i in rkqueue.recent_jobs(holder.queue(config), limit)]
+    jobs = rkqueue.recent_jobs(holder.queue(config), limit if who.targets is None else 200)
+    return [i.as_dict() for i in jobs if who.sees(i.target)][:limit]
 
 
 @api.get("/jobs/{job_id}")
@@ -556,7 +607,10 @@ def job(
         raise HTTPException(404, "no such job") from None
     if found.origin != q.name:
         raise HTTPException(404, "no such job")  # another queue on the same Redis
-    return rkqueue.info(found).as_dict()
+    info = rkqueue.info(found)
+    if not who.sees(info.target):
+        raise HTTPException(404, "no such job")
+    return info.as_dict()
 
 
 @api.get("/runs")
@@ -568,12 +622,15 @@ def runs(
 ) -> list[dict[str, Any]]:
     """Newest first; the next page: `before` = the last id of this one."""
     with opened(config) as store:
-        return [dataclasses.asdict(r) for r in store.list_runs(limit, before)] if store else []
+        if store is None:
+            return []
+        return [dataclasses.asdict(r) for r in store.list_runs(limit, before, who.targets)]
 
 
-def _model(config: ServiceConfig, run_id: int) -> dict[str, Any]:
+def _model(config: ServiceConfig, run_id: int, who: Caller) -> dict[str, Any]:
     with opened(config) as store:
-        model = stored_model(store, run_id) if store else None
+        hidden = _hidden_run(who, store, run_id)
+        model = stored_model(store, run_id) if store and not hidden else None
     if model is None:
         raise HTTPException(404, f"no run #{run_id}")
     return model
@@ -581,14 +638,14 @@ def _model(config: ServiceConfig, run_id: int) -> dict[str, Any]:
 
 @api.get("/runs/{run_id}")
 def run(run_id: int, who: Viewer, config: Config) -> dict[str, Any]:
-    return _model(config, run_id)
+    return _model(config, run_id, who)
 
 
 @api.get("/runs/{run_id}/report.html", response_class=HTMLResponse)
 def run_report(run_id: int, who: Viewer, config: Config) -> HTMLResponse:
     # The M1 report as it is: one self-contained page with its own strict CSP (sent
     # as a header too, with frame-ancestors, which a <meta> cannot set).
-    page = render_html(_model(config, run_id))
+    page = render_html(_model(config, run_id, who))
     return HTMLResponse(
         page, headers={"Content-Security-Policy": f"{page_csp()}; frame-ancestors 'none'"}
     )
@@ -604,8 +661,10 @@ def run_diff(
     """What run #run_id shows differently from run #against (default: the run of the same
     target just before it)."""
     with opened(config) as store:
-        if store is None:
+        if store is None or _hidden_run(who, store, run_id):
             raise HTTPException(404, f"no run #{run_id}")
+        if against is not None and _hidden_run(who, store, against):
+            raise HTTPException(404, f"no run #{against}")
         if against is None:
             pair = previous_run(store.list_runs(), run_id)
             if pair is None:
@@ -627,7 +686,7 @@ def run_diff(
 @api.get("/runs/{run_id}/sarif")
 def run_sarif(run_id: int, who: Viewer, config: Config) -> JSONResponse:
     return JSONResponse(
-        to_sarif(_model(config, run_id)),
+        to_sarif(_model(config, run_id, who)),
         media_type="application/sarif+json",
         headers={"Content-Disposition": f'attachment; filename="zues-run-{run_id}.sarif"'},
     )
@@ -656,6 +715,8 @@ def findings(
     statuses = None if all else {str(s) for s in (status or ACTIVE)}
     with opened(config) as store:
         rows = store.inventory_findings(statuses) if store else []
+        hosts = _visible_hosts(who, store) if store else None
+    rows = [r for r in rows if _visible(r, hosts)]
     rows.sort(key=lambda r: priority.sort_key(r.as_finding()))
     response.headers["X-Total-Count"] = str(len(rows))
     page = rows[offset : None if limit is None else offset + limit]
@@ -666,7 +727,7 @@ def findings(
 def finding(finding_id: int, who: Viewer, config: Config) -> dict[str, Any]:
     with opened(config) as store:
         row = store.inventory_finding(finding_id) if store else None
-        if store is None or row is None:
+        if store is None or row is None or not _visible(row, _visible_hosts(who, store)):
             raise HTTPException(404, f"no finding #{finding_id}")
         history = store.finding_history(finding_id)
     return {**_finding(row), "history": [dataclasses.asdict(e) for e in history]}
@@ -675,7 +736,8 @@ def finding(finding_id: int, who: Viewer, config: Config) -> dict[str, Any]:
 @api.post("/findings/{finding_id}/decision")
 def decide(finding_id: int, body: Decision, who: Operator, config: Config) -> dict[str, Any]:
     with opened(config) as store:
-        if store is None or store.inventory_finding(finding_id) is None:
+        row = store.inventory_finding(finding_id) if store else None
+        if store is None or row is None or not _visible(row, _visible_hosts(who, store)):
             raise HTTPException(404, f"no finding #{finding_id}")
         try:
             new = store.decide_finding(
@@ -722,6 +784,7 @@ def admin_config(who: Admin, config: Config) -> dict[str, Any]:
                 "source": t.source,
                 "you": t.name == who.name,
                 "expires_at": t.expires_at.isoformat() if t.expires_at else None,
+                "targets": list(t.targets) if t.targets is not None else None,
             }
             for t in sorted(config.tokens, key=lambda t: t.name)
         ],
@@ -898,13 +961,31 @@ def post_token(body: TokenBody, who: Admin, config: Config) -> dict[str, Any]:
     try:
         with _writable(config) as store:
             token = managed.create_token(
-                store, config, body.name, body.role, who.name, _validity(body.valid_days)
+                store,
+                config,
+                body.name,
+                body.role,
+                who.name,
+                _validity(body.valid_days),
+                body.targets,
             )
     except managed.ManagedError as exc:
         raise _refused(exc) from None
     log.info("%s created the %s token %s", who.name, body.role, body.name)
     # Shown this once: only its SHA-256 is kept.
     return {"name": body.name.strip(), "role": body.role, "token": token}
+
+
+@api.put("/admin/tokens/{name}/targets")
+def put_token_targets(name: str, body: TargetsBody, who: Admin, config: Config) -> dict[str, Any]:
+    """Limit a token to some targets (null: every target); applies at its next request."""
+    try:
+        with _writable(config) as store:
+            managed.set_token_targets(store, config, name, body.targets, who.name)
+    except (managed.ManagedError, LookupError) as exc:
+        raise _refused(exc) from None
+    log.info("%s set the targets of the token %s: %s", who.name, name, body.targets or "all")
+    return {"name": name, "targets": body.targets}
 
 
 @api.post("/admin/tokens/{name}/rotate")
@@ -1019,13 +1100,18 @@ def retry_alert(alert_id: int, who: Admin, config: Config) -> dict[str, Any]:
 @api.get("/hosts")
 def hosts(who: Viewer, config: Config) -> list[dict[str, Any]]:
     with opened(config) as store:
-        return store.inventory_hosts() if store else []
+        if store is None:
+            return []
+        visible = _visible_hosts(who, store)
+        return [h for h in store.inventory_hosts() if visible is None or h["key"] in visible]
 
 
 @api.get("/audit")
 def audit(
     who: Viewer, config: Config, limit: Annotated[int, Query(ge=1, le=5000)] = 200
 ) -> dict[str, Any]:
+    if who.targets is not None:
+        raise HTTPException(403, "the audit trail covers every target: it needs a token for all")
     with opened(config) as store:
         if store is None:
             return {"chain": None, "events": []}
@@ -1124,6 +1210,27 @@ def create_app(config_path: str, *, redis: Redis | None = None) -> FastAPI:
     return app
 
 
+def name_old_runs(config: ServiceConfig) -> int:
+    """Give runs stored before schema 19 the name of the configured target they scanned,
+    where exactly one target scans that address with that profile: a token limited to that
+    target then sees its history too. Never creates the database."""
+    if not Path(config.db).is_file():
+        return 0
+    owners: dict[tuple[str, str | None], set[str]] = {}
+    for t in config.targets.values():
+        owners.setdefault((t.target, t.profile), set()).add(t.name)
+    unique = {key: next(iter(names)) for key, names in owners.items() if len(names) == 1}
+    try:
+        with Storage(config.db) as store:
+            named = store.name_runs(unique)
+    except (StorageError, sqlite3.Error) as exc:
+        log.warning("could not name the runs stored before per-target permissions: %s", exc)
+        return 0
+    if named:
+        log.info("%d run(s) from before per-target permissions now name their target", named)
+    return named
+
+
 def _database_ok(path: str) -> bool:
     """Readable, or not created yet (nothing scanned): never created or changed here."""
     if not Path(path).is_file():
@@ -1148,7 +1255,9 @@ def serve(config_path: str, host: str = "127.0.0.1", port: int = 8000) -> None:
     import uvicorn
 
     app = create_app(config_path)
-    prefer_wal(app.state.live.get().db)  # e.g. after a restore from a backup
+    config = app.state.live.get()
+    prefer_wal(config.db)  # e.g. after a restore from a backup
+    name_old_runs(config)
     # proxy_headers: behind a TLS reverse proxy, take the scheme from X-Forwarded-Proto
     # (only from the addresses in FORWARDED_ALLOW_IPS, 127.0.0.1 by default), so that
     # the session cookie is marked Secure.

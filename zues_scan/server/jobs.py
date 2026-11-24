@@ -44,6 +44,7 @@ def spec_for(config: ServiceConfig, target: Target, operator: str) -> ScanSpec:
         ipv4_only=target.ipv4_only,
         operator=operator,
         engagement=target.engagement,
+        target_name=target.name,
     )
 
 

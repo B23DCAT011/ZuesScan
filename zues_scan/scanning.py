@@ -72,6 +72,8 @@ class ScanSpec:
     engagement: str | None = None
     # The service's alerts, queued with the run in its transaction (the outbox).
     alerts: AlertPolicy | None = None
+    # The configured target being scanned (service jobs): recorded with the run.
+    target_name: str | None = None
 
 
 @dataclass
@@ -240,6 +242,7 @@ def _scan(spec: ScanSpec, orch: Orchestrator, store: Storage, outcome: Outcome) 
             "Traceroute needs raw-socket privileges (root on Linux, Npcap on Windows), "
             "and a local target has no route."
         )
+    run.target_name = spec.target_name
     outcome.run_id = store.save_run(run, alerts=spec.alerts)
     outcome.run = run
     outcome.changes = store.changes_in_run(outcome.run_id)
@@ -260,6 +263,7 @@ def _record_failure(
     would hide that the scan is broken.
     """
     run = orch.failed_run(spec.target, started, exc)
+    run.target_name = spec.target_name
     run_id = store.save_run(run, alerts=spec.alerts)
     outcome.messages.append(f"recorded as failed run #{run_id} in {spec.db} (no results saved)")
     if run.raw_outputs:

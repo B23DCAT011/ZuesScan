@@ -854,15 +854,25 @@ def _cmd_user(args: argparse.Namespace) -> int:
         with Storage(config.db) as store:
             store.config_alerts = bool(config.notify.webhook)  # as in the dashboard
             if args.user_command == "list":
-                print(f"{'NAME':<24} {'ROLE':<9} {'SOURCE':<10} EXPIRES (UTC)")
+                print(f"{'NAME':<24} {'ROLE':<9} {'SOURCE':<10} {'EXPIRES (UTC)':<26} TARGETS")
                 for t in sorted(config.tokens, key=lambda t: t.name):
-                    print(f"{t.name:<24} {t.role:<9} {t.source:<10} {_token_expiry(t)}")
+                    seen = "all" if t.targets is None else ",".join(t.targets)
+                    print(f"{t.name:<24} {t.role:<9} {t.source:<10} {_token_expiry(t):<26} {seen}")
                 for problem in config.problems:
                     print(f"note: {problem}")
                 return 0
+            if args.user_command == "targets":
+                patterns = args.patterns or None
+                managed.set_token_targets(store, config, args.name, patterns, actor)
+                print(
+                    f"{args.name} now sees: {', '.join(patterns) if patterns else 'every target'}"
+                )
+                return 0
             valid_for = _validity(getattr(args, "expires", "90d"))  # not for remove
             if args.user_command == "add":
-                token = managed.create_token(store, config, args.name, args.role, actor, valid_for)
+                token = managed.create_token(
+                    store, config, args.name, args.role, actor, valid_for, args.targets
+                )
                 print(f"{args.role} token for {args.name} (shown once, keep it secret):")
                 print(token)
                 print("\nsign in to the dashboard with it; it is recorded as the operator's name")
@@ -1428,12 +1438,23 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("--role", choices=["viewer", "operator", "admin"], default="viewer")
     expires_help = "how long it is accepted: 30d, 90d (default), 1y, ... or never"
     add.add_argument("--expires", default="90d", help=expires_help)
+    add.add_argument(
+        "--targets",
+        nargs="+",
+        metavar="PATTERN",
+        help="only these targets (names or patterns like acme-*); not for an admin",
+    )
     rotate = users.add_parser(
         "rotate", help="a new value for a dashboard token: the old one stops working"
     )
     rotate.add_argument("name")
     rotate.add_argument("--expires", default="90d", help=expires_help)
     users.add_parser("list", help="every token: service.toml's and the dashboard's")
+    limit = users.add_parser(
+        "targets", help="limit a dashboard token to some targets (no pattern: every target)"
+    )
+    limit.add_argument("name")
+    limit.add_argument("patterns", nargs="*", metavar="PATTERN")
     remove = users.add_parser("remove", help="revoke a dashboard token")
     remove.add_argument("name")
     user.set_defaults(func=_cmd_user)
