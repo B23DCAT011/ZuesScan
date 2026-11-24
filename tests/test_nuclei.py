@@ -252,3 +252,24 @@ def test_cli_nuclei_flag(
     assert len(made) == 1
     # EPSS 94 % (from the template): P2; the CVE was observed, so: confirmed.
     assert "P2 [CRITICAL, confirmed] Apache 2.4.49" in capsys.readouterr().out
+
+
+def test_the_kept_exchange_has_the_targets_secrets_masked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    shadow = "root:$6$rOUNDsalt$Q8zjk1Z9jvzS0cSbG5u0Hk1bW2:19000:0:99999:7:::"
+    hit = json.loads(SAMPLE.splitlines()[0])  # the CVE-2021-41773 match
+    hit["extracted-results"] = [shadow]
+    hit["response"] = "HTTP/1.1 200 OK\r\nSet-Cookie: sid=7f3e9a\r\n\r\n" + shadow + "\n"
+    _fake_nuclei(monkeypatch, json.dumps(hit) + "\n")
+
+    result = NucleiPlugin().check(PLAN, _assets())
+
+    stored = result.raw[0].content
+    assert "rOUNDsalt" not in stored and "7f3e9a" not in stored  # neither kept nor hashed
+    assert "Set-Cookie: sid=[redacted]" in stored
+    finding = [f for a in result.assets for f in a.findings][0]  # (one per nuclei run)
+    assert finding.cve == "CVE-2021-41773" and finding.confidence == Confidence.CONFIRMED
+    assert "rOUNDsalt" not in finding.evidence and "CVE-2021-41773" in finding.evidence
