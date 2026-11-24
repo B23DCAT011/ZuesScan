@@ -370,6 +370,7 @@ class TargetBody(BaseModel):
     scope: str = Field(min_length=1, max_length=64)
     profile: str = Field(default="standard", max_length=32)
     every: str | None = Field(default=None, max_length=16)
+    cron: str | None = Field(default=None, max_length=80)
     engagement: str | None = Field(default=None, max_length=200)
     scanners: list[str] = Field(default_factory=list, max_length=8)
     checks: list[str] = Field(default_factory=list, max_length=16)
@@ -474,6 +475,7 @@ def targets(who: Viewer, config: Config) -> list[dict[str, Any]]:
             "target": t.target,
             "profile": t.profile,
             "every_seconds": int(t.every.total_seconds()) if t.every else None,
+            "cron": t.cron.text if t.cron else None,
             "engagement": t.engagement,
             "nuclei": t.nuclei or "nuclei" in t.checks,
             "discover": t.discover or bool(t.discoverers),
@@ -672,6 +674,7 @@ def _target_settings(t: Any) -> dict[str, Any]:
         "scope": t.scope if t.scope_text is not None else None,  # a file target: not its path
         "profile": t.profile,
         "every": _every_text(every),
+        "cron": t.cron.text if t.cron else None,
         "engagement": t.engagement,
         "scanners": list(t.scanners) or ["nmap"],
         "checks": sorted({*t.checks, *(["nuclei"] if t.nuclei else [])}),

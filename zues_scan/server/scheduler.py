@@ -1,10 +1,18 @@
-"""Scheduled scans: enqueue each target with `every = ...` when it is due.
+"""Scheduled scans: enqueue each target with `every = ...` or `cron = ...` when it is due.
 
-A target is due when neither its last stored run nor its last enqueued job is more
-recent than `every`. The time of the last enqueue is kept in Redis, so that a
-scheduler restart, or two schedulers by mistake, do not enqueue the same scan twice
-while it waits in the queue. Stored runs are matched on target *and* profile: a
-quick hourly scan of a network must not make its daily full scan look done.
+Each scheduled target has a *slot*: the time its last scheduled scan was due, kept in
+Redis (so that a restart, or two schedulers by mistake, do not enqueue a scan twice).
+
+- `every`: the next slot is the last one plus `every` — not "when the last scan started"
+  or "when it was queued", which would drift later each time a scan waits in the queue or
+  a round comes late: a daily scan at 02:00 stays at 02:00. Slots missed while the
+  scheduler was down are made up with one scan, not one per missed slot.
+- `cron`: the slot is the schedule's latest firing; a newer one than recorded is due (one
+  scan for several missed). A target added after today's firing waits for the next one.
+
+Without a recorded slot (a new target, or Redis lost its keys) the run history decides:
+stored runs are matched on target *and* profile — a quick hourly scan of a network must
+not make its daily full scan look done. Manual scans never move a target's slots.
 
 Each round also sends the alerts still waiting in the outbox (`notify.flush`): those a
 worker could not deliver right after its scan, and those raised elsewhere (the web's
@@ -23,6 +31,7 @@ import logging
 import time
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -42,13 +51,46 @@ _LOCK = "zues:scheduler:lock:{queue}"
 _LOCK_SECONDS = 30  # far longer than a round takes; freed at its end anyway
 
 
-def due(
-    target: Target, last_run: datetime | None, last_enqueued: datetime | None, now: datetime
-) -> bool:
+# A cron target with no recorded slot whose latest firing is this recent (and not yet
+# scanned) is scanned now: e.g. the scheduler restarted, with Redis emptied, just after it.
+CATCH_UP = timedelta(hours=1)
+
+
+@dataclass(frozen=True, slots=True)
+class Decision:
+    due: bool
+    slot: datetime | None  # to record as the target's last slot (None: leave it)
+
+
+def decide(
+    target: Target, last_run: datetime | None, last_slot: datetime | None, now: datetime
+) -> Decision:
+    """Whether `target` is due at `now`, and which slot that scan (or none) takes."""
+    if target.cron is not None:
+        latest = target.cron.latest_at_or_before(now)
+        if latest is None:
+            return Decision(False, None)
+        if last_slot is not None:
+            return Decision(True, latest) if latest > last_slot else Decision(False, None)
+        if (last_run is None or last_run < latest) and now - latest <= CATCH_UP:
+            return Decision(True, latest)
+        return Decision(False, latest)  # from the next firing on
     if target.every is None:
-        return False
-    latest = max((t for t in (last_run, last_enqueued) if t is not None), default=None)
-    return latest is None or now - latest >= target.every
+        return Decision(False, None)
+    if last_slot is not None:
+        if now - last_slot < target.every:
+            return Decision(False, None)
+        missed = (now - last_slot) // target.every  # whole periods: one scan for all
+        return Decision(True, last_slot + target.every * missed)
+    if last_run is None or now - last_run >= target.every:
+        return Decision(True, now)  # the first slot: from here on, every `every`
+    return Decision(False, None)
+
+
+def due(
+    target: Target, last_run: datetime | None, last_slot: datetime | None, now: datetime
+) -> bool:
+    return decide(target, last_run, last_slot, now).due
 
 
 def last_runs(db: str) -> dict[tuple[str, str | None], datetime]:
@@ -92,13 +134,20 @@ def _enqueue_due(config: ServiceConfig, q: Queue, redis: Redis, now: datetime) -
     for target in config.targets.values():
         key = _KEY.format(name=target.name)
         text = _text(redis.get(key))
-        last_enqueued = datetime.fromisoformat(text) if text else None
+        last_slot = datetime.fromisoformat(text) if text else None
         last_run = history.get((target.target, target.profile))
-        if due(target, last_run, last_enqueued, now):
+        decision = decide(target, last_run, last_slot, now)
+        if decision.due:
             job = enqueue_scan(q, config, target.name, OPERATOR)
-            redis.set(key, now.isoformat())
-            log.info("scheduled scan of %s enqueued as job %s", target.name, job.id)
+            log.info(
+                "scheduled scan of %s (due %s) enqueued as job %s",
+                target.name,
+                decision.slot.isoformat(timespec="minutes") if decision.slot else "now",
+                job.id,
+            )
             enqueued.append(target.name)
+        if decision.slot is not None:
+            redis.set(key, decision.slot.isoformat())
     return enqueued
 
 

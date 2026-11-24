@@ -242,3 +242,22 @@ def test_a_lock_out_raises_one_alert_an_hour(svc: App, posts: list[dict[str, str
     assert alert["kind"] == "locked_out" and len(locks) == 2
     assert "203.0.113.66 was locked out of the dashboard" in alert["payload"]
     assert posts == []  # the web does not post it: the scheduler's next round does
+
+
+def test_a_dashboard_target_can_run_on_a_cron_schedule(svc: App) -> None:
+    root = svc.client(ROOT)
+    assert root.put("/api/v1/admin/scopes/lab2", json={"text": SCOPE}).status_code == 200
+    target = {"target": "scanme.lab", "scope": "lab2", "cron": "30 1 * * mon-fri +07:00"}
+
+    assert root.put("/api/v1/admin/targets/weekdays", json=target).status_code == 200
+    both = {**target, "every": "12h"}
+    refused = root.put("/api/v1/admin/targets/weekdays", json=both)
+    assert refused.status_code == 422 and "every or cron, not both" in refused.json()["detail"]
+    too_often = {**target, "cron": "*/2 * * * *"}
+    assert root.put("/api/v1/admin/targets/w2", json=too_often).status_code == 422
+
+    listed = {t["name"]: t for t in svc.client(BOB).get("/api/v1/targets").json()}
+    assert listed["weekdays"]["cron"] == "30 1 * * mon-fri +07:00"
+    assert listed["weekdays"]["every_seconds"] is None
+    settings = {t["name"]: t for t in root.get("/api/v1/admin/config").json()["targets"]}
+    assert settings["weekdays"]["cron"] == "30 1 * * mon-fri +07:00"
