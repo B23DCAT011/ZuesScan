@@ -69,7 +69,7 @@ from zues_scan.server import managed, notify, sessions
 from zues_scan.server import queue as rkqueue
 from zues_scan.server.config import DASHBOARD, ConfigError, ServiceConfig, Token, load_config
 from zues_scan.server.sessions import Session, stamp
-from zues_scan.storage import Storage, StorageError, prefer_wal
+from zues_scan.storage import ProposalError, Storage, StorageError, prefer_wal
 
 log = logging.getLogger(__name__)
 
@@ -376,6 +376,12 @@ class ScanRequest(BaseModel):
 class ScopeBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     text: str = Field(max_length=managed.MAX_SCOPE_BYTES)
+    reason: str | None = Field(default=None, max_length=500)  # for the approving admin
+
+
+class DecisionNote(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    note: str | None = Field(default=None, max_length=1000)
 
 
 class TargetBody(BaseModel):
@@ -734,6 +740,8 @@ def admin_config(who: Admin, config: Config) -> dict[str, Any]:
             {"name": p.name, "description": p.description} for p in BUILTIN_PROFILES.values()
         ],
         "sessions": _live_sessions(config, who),
+        "scope_approval": config.scope_approval,
+        "proposals": _proposals(config, who, ("pending",)),
         "alerts": _alerts(config, 20),
         "problems": list(config.problems),
     }
@@ -784,24 +792,84 @@ def _refused(exc: Exception) -> HTTPException:
 
 
 @api.put("/admin/scopes/{name}")
-def put_scope(name: str, body: ScopeBody, who: Admin, config: Config) -> dict[str, Any]:
+def put_scope(
+    name: str, body: ScopeBody, who: Admin, config: Config, response: Response
+) -> dict[str, Any]:
+    """Save a scope; with scope_approval, propose it (202): another admin approves it."""
     try:
         with _writable(config) as store:
-            saved = managed.save_scope(store, config, name, body.text, who.name)
+            saved = managed.save_scope(store, config, name, body.text, who.name, body.reason)
     except managed.ManagedError as exc:
         raise _refused(exc) from None
+    if saved.proposal is not None:
+        response.status_code = 202
+        log.info("%s proposed a change of the scope %s (#%d)", who.name, name, saved.proposal)
+        return {"name": saved.name, "warnings": saved.warnings, "proposal": saved.proposal}
     log.info("%s saved the scope %s", who.name, name)
     return {"name": saved.name, "warnings": saved.warnings}
 
 
-@api.delete("/admin/scopes/{name}", status_code=204)
-def delete_scope(name: str, who: Admin, config: Config) -> None:
+@api.delete("/admin/scopes/{name}", status_code=204, response_model=None)
+def delete_scope(
+    name: str, who: Admin, config: Config, reason: str | None = None
+) -> JSONResponse | None:
     try:
         with _writable(config) as store:
-            managed.delete_scope(store, config, name, who.name)
+            proposal = managed.delete_scope(store, config, name, who.name, reason)
     except (managed.ManagedError, LookupError) as exc:
         raise _refused(exc) from None
+    if proposal is not None:
+        log.info("%s proposed deleting the scope %s (#%d)", who.name, name, proposal)
+        return JSONResponse({"name": name, "proposal": proposal}, status_code=202)
     log.info("%s deleted the scope %s", who.name, name)
+    return None
+
+
+def _proposals(config: ServiceConfig, who: Caller, statuses: tuple[str, ...] | None) -> list[Any]:
+    with opened(config) as store:
+        rows = store.scope_proposals(statuses) if store else []
+    out = []
+    for row in rows:
+        item = dict(row)
+        item["current"] = config.scopes.get(row["name"])  # what an approval would replace
+        if row["status"] == "pending":
+            item["can"] = {
+                d: managed.why_not_decide(config, row, who.name, d) is None
+                for d in ("approve", "reject", "withdraw")
+            }
+            item["why_not"] = managed.why_not_decide(config, row, who.name, "approve")
+        out.append(item)
+    return out
+
+
+@api.get("/admin/proposals")
+def admin_proposals(who: Admin, config: Config, all: bool = False) -> list[Any]:  # noqa: A002
+    """Scope changes waiting for a second admin (all=true: decided ones too)."""
+    return _proposals(config, who, None if all else ("pending",))
+
+
+@api.post("/admin/proposals/{proposal_id}/{decision}")
+def decide_proposal(
+    proposal_id: int,
+    decision: Literal["approve", "reject", "withdraw"],
+    who: Admin,
+    config: Config,
+    body: DecisionNote | None = None,  # a note is optional, except to reject
+) -> dict[str, Any]:
+    note = body.note if body else None
+    try:
+        with _writable(config) as store:
+            row = managed.decide_proposal(store, config, proposal_id, decision, who.name, note)
+    except LookupError as exc:
+        raise _refused(exc) from None
+    except managed.NotAllowed as exc:
+        raise HTTPException(403, str(exc)) from None
+    except managed.ManagedError as exc:
+        raise HTTPException(422, str(exc)) from None
+    except ProposalError as exc:
+        raise HTTPException(409, str(exc)) from None
+    log.info("%s: %s on scope proposal #%d (%s)", who.name, decision, proposal_id, row["name"])
+    return dict(row)
 
 
 @api.put("/admin/targets/{name}")

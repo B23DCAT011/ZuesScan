@@ -54,7 +54,7 @@ log = logging.getLogger(__name__)
 
 # The schema version this code reads and writes. Bump it together with a new entry
 # in `_MIGRATIONS`; never edit a migration that has already shipped.
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 # How long a writer waits for another to finish before "database is locked".
 BUSY_SECONDS = 15.0
@@ -62,6 +62,10 @@ BUSY_SECONDS = 15.0
 
 class StorageError(Exception):
     """The database cannot be used: unreadable, inconsistent, or from a newer ZuesScan."""
+
+
+class ProposalError(Exception):
+    """A scope proposal cannot be decided: not pending, or its scope changed since."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -589,6 +593,33 @@ _V17 = (
     "ALTER TABLE managed_token ADD COLUMN rotated_at TEXT",
 )
 
+# Version 18: two people for a scope change (G30). With approval on, a scope saved or
+# deleted in the dashboard is a *proposal* until another admin approves it; `base_sha256` is
+# the scope it was made against (a proposal whose scope changed since is not approved).
+# `managed_token.rotated_by`: who last saw a token's value, to tell who may approve.
+_V18 = (
+    """
+    CREATE TABLE scope_proposal (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        name          TEXT NOT NULL,
+        action        TEXT NOT NULL CHECK (action IN ('save', 'delete')),
+        content       TEXT,
+        sha256        TEXT,
+        base_sha256   TEXT,
+        reason        TEXT,
+        proposed_by   TEXT NOT NULL,
+        proposed_at   TEXT NOT NULL,
+        status        TEXT NOT NULL CHECK (status IN
+                      ('pending', 'approved', 'rejected', 'withdrawn', 'superseded')),
+        decided_by    TEXT,
+        decided_at    TEXT,
+        decision_note TEXT
+    )
+    """,
+    "CREATE INDEX idx_scope_proposal_status ON scope_proposal(status, name)",
+    "ALTER TABLE managed_token ADD COLUMN rotated_by TEXT",
+)
+
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: _V1,
     2: _V2,
@@ -607,6 +638,7 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
     15: _V15,
     16: _V16,
     17: _V17,
+    18: _V18,
 }
 
 
@@ -1110,8 +1142,8 @@ class Storage:
 
     def managed_tokens(self) -> list[sqlite3.Row]:
         return self._conn.execute(
-            "SELECT name, sha256, role, created_at, created_by, expires_at, rotated_at "
-            "FROM managed_token ORDER BY name"
+            "SELECT name, sha256, role, created_at, created_by, expires_at, rotated_at, "
+            "rotated_by FROM managed_token ORDER BY name"
         ).fetchall()
 
     def save_managed_scope(self, name: str, content: str, sha256: str, actor: str) -> None:
@@ -1187,8 +1219,9 @@ class Storage:
         """A new value for a dashboard token: the old one stops working at once."""
         now = datetime.now(UTC).isoformat()
         self._managed_change(
-            "UPDATE managed_token SET sha256 = ?, expires_at = ?, rotated_at = ? WHERE name = ?",
-            (sha256, expires_at, now, name),
+            "UPDATE managed_token SET sha256 = ?, expires_at = ?, rotated_at = ?, rotated_by = ? "
+            "WHERE name = ?",
+            (sha256, expires_at, now, actor, name),
             AuditEvent(
                 at=now,
                 kind=AuditKind.CONFIG,
@@ -1240,6 +1273,172 @@ class Storage:
             self._conn.execute("UPDATE managed_meta SET value = value + 1 WHERE key = 'version'")
             if self.config_alerts:
                 self._queue_alert(_config_alert(event), event.at, None)
+
+    # --- scope proposals (schema 18) --------------------------------------------------------
+
+    def propose_scope(
+        self,
+        name: str,
+        *,
+        action: str,
+        content: str | None,
+        sha256: str | None,
+        reason: str | None,
+        actor: str,
+        at: str,
+    ) -> int:
+        """Record a proposed scope change (save or delete) against the scope as it is now; a
+        pending proposal for the same scope is superseded. Audited, nothing applied."""
+        self._conn.execute("BEGIN IMMEDIATE")
+        with self._conn:
+            base = self._conn.execute(
+                "SELECT sha256 FROM managed_scope WHERE name = ?", (name,)
+            ).fetchone()
+            cur = self._conn.execute(
+                "INSERT INTO scope_proposal (name, action, content, sha256, base_sha256, reason, "
+                "proposed_by, proposed_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
+                (
+                    name,
+                    action,
+                    content,
+                    sha256,
+                    base["sha256"] if base else None,
+                    reason,
+                    actor,
+                    at,
+                ),
+            )
+            proposal = int(cur.lastrowid or 0)
+            self._conn.execute(
+                "UPDATE scope_proposal SET status = 'superseded', decided_by = ?, decided_at = ?, "
+                "decision_note = ? WHERE name = ? AND status = 'pending' AND id != ?",
+                (actor, at, f"replaced by proposal #{proposal}", name, proposal),
+            )
+            self._config_event(
+                at,
+                name,
+                actor,
+                {
+                    "action": f"scope {'deletion' if action == 'delete' else 'change'} proposed",
+                    "proposal": proposal,
+                    "reason": reason,
+                },
+                sha256,
+            )
+        return proposal
+
+    def scope_proposals(self, statuses: tuple[str, ...] | None = None) -> list[sqlite3.Row]:
+        if statuses is None:
+            return self._conn.execute("SELECT * FROM scope_proposal ORDER BY id DESC").fetchall()
+        marks = ", ".join("?" for _ in statuses)
+        return self._conn.execute(
+            f"SELECT * FROM scope_proposal WHERE status IN ({marks}) ORDER BY id DESC", statuses
+        ).fetchall()
+
+    def scope_proposal(self, proposal_id: int) -> sqlite3.Row | None:
+        row: sqlite3.Row | None = self._conn.execute(
+            "SELECT * FROM scope_proposal WHERE id = ?", (proposal_id,)
+        ).fetchone()
+        return row
+
+    def decide_scope_proposal(
+        self, proposal_id: int, *, decision: str, actor: str, note: str | None, at: str
+    ) -> sqlite3.Row:
+        """Approve (the change is applied, in the same transaction), reject or withdraw a
+        pending proposal. Who may do which is the caller's rule (managed.decide_proposal);
+        this keeps it consistent: still pending, and the scope still what it was proposed
+        against. Returns the proposal as decided."""
+        status = {"approve": "approved", "reject": "rejected", "withdraw": "withdrawn"}[decision]
+        self._conn.execute("BEGIN IMMEDIATE")
+        with self._conn:
+            row = self.scope_proposal(proposal_id)
+            if row is None or row["status"] != "pending":
+                raise ProposalError(
+                    f"proposal #{proposal_id} is {row['status'] if row else 'unknown'}, not pending"
+                )
+            name = row["name"]
+            if decision == "approve":
+                current = self._conn.execute(
+                    "SELECT sha256, content FROM managed_scope WHERE name = ?", (name,)
+                ).fetchone()
+                if (current["sha256"] if current else None) != row["base_sha256"]:
+                    self._conn.execute(
+                        "UPDATE scope_proposal SET status = 'superseded', decided_by = ?, "
+                        "decided_at = ?, decision_note = ? WHERE id = ?",
+                        (actor, at, "the scope changed since it was proposed", proposal_id),
+                    )
+                    self._conn.commit()
+                    raise ProposalError(
+                        f"scope {name} changed since proposal #{proposal_id} was made: "
+                        "propose the change again against the scope as it is now"
+                    )
+                self._apply_proposal(row, actor, at, current)
+            self._conn.execute(
+                "UPDATE scope_proposal SET status = ?, decided_by = ?, decided_at = ?, "
+                "decision_note = ? WHERE id = ?",
+                (status, actor, at, note, proposal_id),
+            )
+            if decision != "approve":
+                change = "deletion" if row["action"] == "delete" else "change"
+                self._config_event(
+                    at,
+                    name,
+                    actor,
+                    {
+                        "action": f"scope {change} {status}",
+                        "proposal": proposal_id,
+                        "proposed_by": row["proposed_by"],
+                        "note": note,
+                    },
+                    row["sha256"],
+                )
+        decided = self.scope_proposal(proposal_id)
+        assert decided is not None
+        return decided
+
+    def _apply_proposal(
+        self, row: sqlite3.Row, actor: str, at: str, current: sqlite3.Row | None
+    ) -> None:
+        name = row["name"]
+        detail = {"proposal": row["id"], "proposed_by": row["proposed_by"], "approved_by": actor}
+        if row["action"] == "delete":
+            self._conn.execute("DELETE FROM managed_scope WHERE name = ?", (name,))
+            self._config_event(at, name, actor, {"action": "scope deleted", **detail}, None)
+        else:
+            self._conn.execute(
+                "INSERT INTO managed_scope (name, content, sha256, updated_at, updated_by) "
+                "VALUES (?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET "
+                "content = excluded.content, sha256 = excluded.sha256, "
+                "updated_at = excluded.updated_at, updated_by = excluded.updated_by",
+                (name, row["content"], row["sha256"], at, row["proposed_by"]),
+            )
+            self._keep_scope(row["sha256"], row["content"])
+            previous = current["sha256"] if current else None
+            self._config_event(
+                at,
+                name,
+                actor,
+                {"action": "scope saved", "previous_sha256": previous, **detail},
+                row["sha256"],
+            )
+        self._conn.execute("UPDATE managed_meta SET value = value + 1 WHERE key = 'version'")
+
+    def _config_event(
+        self, at: str, scope: str, actor: str, detail: dict[str, Any], sha256: str | None
+    ) -> None:
+        """A scope's config audit event (and its alert), inside the caller's transaction."""
+        event = AuditEvent(
+            at=at,
+            kind=AuditKind.CONFIG,
+            target=f"scope:{scope}",
+            operator=actor,
+            engagement=None,
+            scope_sha256=sha256,
+            detail={k: v for k, v in detail.items() if v is not None},
+        )
+        self._append_audit(event)
+        if self.config_alerts:
+            self._queue_alert(_config_alert(event), at, None)
 
     def _keep_scope(self, sha256: str | None, text: str | None) -> None:
         if sha256 and text is not None:
@@ -1818,13 +2017,20 @@ def _config_alert(event: AuditEvent) -> Alert:
     extra = ""
     if kind == "token" and event.detail.get("role"):
         extra = f" (role {event.detail['role']})"
+    why = _WHY.get(kind, "the configuration changed")
+    if action.endswith("proposed"):
+        why = "it waits for another admin's approval"
+    elif action.endswith(("rejected", "withdrawn")):
+        why = "nothing changed"
+    elif event.detail.get("approved_by"):
+        extra = f" (proposed by {event.detail['proposed_by']}, approved)"
     return Alert(
         "config_changed",
         {
             "kind": "config_changed",
             "text": (
                 f"ZuesScan: {event.operator or 'someone'}: {action} — {kind} {name}{extra}: "
-                f"{_WHY.get(kind, 'the configuration changed')}; see the audit trail"
+                f"{why}; see the audit trail"
             ),
             "what": kind,
             "name": name,

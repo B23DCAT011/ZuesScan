@@ -687,6 +687,7 @@
           el("ul", null, cfg.problems.map(function (p) { return el("li", null, p); }))));
       }
       view.appendChild(settingsTargets(cfg));
+      if (cfg.scope_approval || cfg.proposals.length) view.appendChild(settingsProposals(cfg));
       view.appendChild(settingsScopes(cfg));
       view.appendChild(settingsTokens(cfg));
       view.appendChild(settingsSessions(cfg));
@@ -722,6 +723,80 @@
       el("div", { class: "toolbar" }, el("h2", null, "Targets"), add,
         ownScopes.length ? null : el("span", { class: "muted small" }, "Add a scope first: a target needs one.")),
       table(["Name", "Target", "Scope", "Profile", "Schedule", "Tools", "Source", ""], rows.map(row), "No target yet."));
+  }
+
+  // Lines of `before` and `after`, each marked " " (kept), "-" (removed) or "+" (added):
+  // a longest-common-subsequence diff, enough for scope files of a few hundred lines.
+  function lineDiff(before, after) {
+    var a = before ? before.replace(/\n$/, "").split("\n") : [];
+    var b = after ? after.replace(/\n$/, "").split("\n") : [];
+    var n = a.length, m = b.length, i, j;
+    var table = [];
+    for (i = 0; i <= n; i++) { table.push(new Array(m + 1).fill(0)); }
+    for (i = n - 1; i >= 0; i--) {
+      for (j = m - 1; j >= 0; j--) {
+        table[i][j] = a[i] === b[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
+      }
+    }
+    var out = [];
+    i = 0; j = 0;
+    while (i < n && j < m) {
+      if (a[i] === b[j]) { out.push([" ", a[i]]); i++; j++; }
+      else if (table[i + 1][j] >= table[i][j + 1]) { out.push(["-", a[i]]); i++; }
+      else { out.push(["+", b[j]]); j++; }
+    }
+    for (; i < n; i++) out.push(["-", a[i]]);
+    for (; j < m; j++) out.push(["+", b[j]]);
+    return out;
+  }
+
+  function diffView(before, after) {
+    return el("pre", { class: "mono diff" }, lineDiff(before, after).map(function (d) {
+      var kind = d[0] === "+" ? "added" : d[0] === "-" ? "removed" : null;
+      return el("div", { class: kind }, d[0] + " " + d[1]);
+    }));
+  }
+
+  function settingsProposals(cfg) {
+    var rows = [];
+    cfg.proposals.forEach(function (p) {
+      var review = el("tr", { hidden: true }, el("td", { colspan: 6 }, proposalPanel(p)));
+      var open = el("button", { type: "button", class: "link",
+        on: { click: function () { review.hidden = !review.hidden; } } }, "Review");
+      rows.push(el("tr", null,
+        el("td", null, "#" + p.id), el("td", null, el("strong", null, p.name)),
+        el("td", null, p.action === "delete" ? el("span", { class: "error" }, "delete") : p.current === null ? "new" : "change"),
+        el("td", null, p.proposed_by + ", " + when(p.proposed_at)),
+        el("td", { class: "wrap" }, p.reason || el("span", { class: "muted" }, "(no reason given)")),
+        el("td", null, open)));
+      rows.push(review);
+    });
+    return el("section", null,
+      el("h2", null, "Scope changes waiting for approval"),
+      el("p", { class: "muted small" },
+        "Two people for what may be scanned: a scope change applies only once a second admin approves " +
+        "it — not who proposed it, nor a token whose value they issued (its holder rotates it first)."),
+      table(["#", "Scope", "Change", "Proposed by", "Why", ""], rows, "Nothing is waiting."));
+  }
+
+  function proposalPanel(p) {
+    var note = el("input", { maxlength: "1000", placeholder: "note (required to reject)" });
+    function decide(decision) {
+      api("POST", "/admin/proposals/" + p.id + "/" + decision, { note: note.value.trim() || null })
+        .then(function (r) { flash("Proposal #" + r.id + " " + r.status + "."); route(); })
+        .catch(function (err) { flash(err.message, true); });
+    }
+    var buttons = [];
+    if (p.can.approve) buttons.push(el("button", { type: "button", class: "primary", on: { click: function () { decide("approve"); } } }, "Approve"));
+    if (p.can.reject) buttons.push(el("button", { type: "button", on: { click: function () { decide("reject"); } } }, "Reject"));
+    if (p.can.withdraw) buttons.push(el("button", { type: "button", on: { click: function () { decide("withdraw"); } } }, "Withdraw"));
+    return el("div", null,
+      el("p", { class: "small" }, p.action === "delete" ? "Deletes the scope " + p.name + " as it is now:"
+        : p.current === null ? "A new scope " + p.name + ":" : "Changes to the scope " + p.name + " (− now, + proposed):"),
+      diffView(p.current, p.action === "delete" ? "" : p.content),
+      p.why_not && !p.can.withdraw ? el("p", { class: "error small" }, p.why_not) : null,
+      p.can.withdraw ? el("p", { class: "muted small" }, "Your proposal: another admin decides on it.") : null,
+      el("div", { class: "toolbar" }, p.can.approve || p.can.reject ? note : null, buttons));
   }
 
   function settingsScopes(cfg) {
@@ -929,7 +1004,9 @@
   }
 
   function saved(what, result) {
-    var text = what + " saved.";
+    var text = result && result.proposal
+      ? what + ": change proposed (#" + result.proposal + "): it applies once another admin approves it."
+      : what + " saved.";
     if (result && result.warnings && result.warnings.length) {
       flash(text + " Note: " + result.warnings.join(" "), true);
     } else {
@@ -942,7 +1019,11 @@
     return el("button", {
       type: "button",
       on: { click: function () {
-        api("DELETE", path).then(function () { flash(what + " deleted."); location.hash = "#/settings"; })
+        api("DELETE", path).then(function (r) {
+          flash(r && r.proposal ? what + ": deletion proposed (#" + r.proposal + "), waiting for another admin."
+            : what + " deleted.");
+          location.hash = "#/settings";
+        })
           .catch(function (err) { flash(err.message, true); });
       } },
     }, "Delete");
@@ -956,12 +1037,20 @@
       placeholder: "e.g. office-lan" });
     var text = el("textarea", { id: "scope-text", class: "mono", rows: "16", spellcheck: "false" });
     text.value = isNew ? NEW_SCOPE : existing.text;
-    var button = el("button", { type: "submit", class: "primary" }, "Save scope");
+    var approval = cfg.scope_approval;
+    var reason = el("input", { id: "scope-reason", maxlength: "500",
+      placeholder: "e.g. engagement PT-2026-09 signed on 2026-11-20 (for the admin who approves)" });
+    var button = el("button", { type: "submit", class: "primary" }, approval ? "Propose change" : "Save scope");
+    var waiting = cfg.proposals.filter(function (p) { return p.name === name; })[0];
     var form = el("form", { class: "decision panel" },
+      approval ? el("p", { class: "small" }, el("strong", null, "Two people: "),
+        "a change of a scope applies only once another admin approves it (scope_approval is on).",
+        waiting ? " Proposal #" + waiting.id + " by " + waiting.proposed_by + " is waiting: a new one replaces it." : "") : null,
       isNew ? el("label", null, "Name (lowercase letters, digits, - and _)", nameInput)
         : el("p", null, "Scope ", el("strong", null, name), existing.used_by.length
           ? " — used by " + existing.used_by.join(", ") : ""),
       el("label", null, "Authorisation: what may be scanned, until when, how far", text),
+      approval ? el("label", null, "Why (shown to the admin who approves)", reason) : null,
       el("p", { class: "muted small" },
         "Directives: @engagement <reference>, @expires <YYYY-MM-DD> [+HH:MM], " +
         "@window [Mon-Fri|daily] HH:MM-HH:MM [+HH:MM], @activity passive|scan|active. " +
@@ -972,7 +1061,9 @@
       event.preventDefault();
       var target = isNew ? nameInput.value.trim() : name;
       button.disabled = true;
-      api("PUT", "/admin/scopes/" + encodeURIComponent(target), { text: text.value })
+      var body = { text: text.value };
+      if (approval && reason.value.trim()) body.reason = reason.value.trim();
+      api("PUT", "/admin/scopes/" + encodeURIComponent(target), body)
         .then(function (result) { saved("Scope " + target, result); })
         .catch(function (err) { flash(err.message, true); button.disabled = false; });
     });
