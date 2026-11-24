@@ -148,7 +148,7 @@ zues plugins --pin exposed-git        # in ra mục cấu hình — đọc code 
 name = "exposed-git"                  # tên plugin (entry point)
 package = "zues-exposed-git"          # gói cung cấp nó
 version = "0.1.0"
-sha256 = "c33c0a3d…"                  # các file gói đã cài (theo RECORD của nó)
+sha256 = "<64 chữ số hex>"            # các file gói đã cài (theo RECORD của nó)
 activity = "active"                   # mức BẠN đánh giá sau khi đọc code
 ```
 

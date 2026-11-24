@@ -83,6 +83,7 @@ class ExposedGitCheck:
             with self._opener.open(request, timeout=TIMEOUT) as response:
                 return response.status, response.read(256).decode("utf-8", "replace")
         except urllib.error.HTTPError as exc:
+            exc.close()  # an error answer is a response too: free its connection
             return exc.code, ""
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             # A web service that stops answering is not a finding, nor a reason to

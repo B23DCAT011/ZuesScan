@@ -129,7 +129,7 @@ zues plugins --pin exposed-git      # đọc code của gói trước, rồi dá
 name = "exposed-git"
 package = "zues-exposed-git"
 version = "0.1.0"
-sha256 = "c33c0a3d…"                # của các file gói đã cài, in bởi --pin
+sha256 = "<64 chữ số hex>"          # của các file gói đã cài, in bởi --pin
 activity = "active"                  # mức bạn đánh giá; plugin khai cao hơn thì bị từ chối
 ```
 
