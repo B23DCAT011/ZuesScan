@@ -220,4 +220,7 @@ rồi độ tin cậy, rồi tiện dụng.
 - [x] `feat/web-compare` (G23) — so sánh hai run trên web (Changes / Compare, API `/runs/{id}/diff`,
       tool MCP `compare_runs`), phân trang runs (`before`) và findings (`limit` / `offset`,
       `X-Total-Count`); `diff.previous_run` dùng chung cho CLI, web, MCP. Thử trên Chrome headless.
+- [x] `feat/evidence-redaction` (G24) — request / response của nuclei được che trước khi lưu và
+      băm (header đăng nhập / phiên, mẫu bí mật, thân response 2 KB); không có gì để che thì giữ
+      nguyên từng byte; `zues_scan/redact.py` chỉ dùng thư viện chuẩn.
 

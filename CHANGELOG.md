@@ -6,6 +6,14 @@ section of a version as its release notes, so every tag needs one.
 
 ## [Unreleased]
 
+### Security
+- Evidence is masked before it is stored and hashed: the requests and responses nuclei
+  keeps when it confirms a flaw no longer carry the target's credentials and secrets
+  (`Authorization`, `Cookie` / `Set-Cookie` values, headers named after tokens, secrets or
+  sessions; `password=`-style pairs, bearer tokens and JWTs, AWS keys, PEM private keys,
+  `/etc/shadow` hashes, passwords in URLs), and a response body is cut to 2 KB with a note.
+  A match with nothing to mask is kept byte for byte. `zues_scan/redact.py`.
+
 ### Added
 - Compare runs in the dashboard: a run's **Changes** (against the run of the same target
   before it) or any two runs ticked in Runs: hosts that appeared or went away, ports opened
