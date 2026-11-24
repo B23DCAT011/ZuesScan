@@ -367,3 +367,38 @@ def test_an_invalid_configuration_stops_the_scheduling(
 
     assert q.count == 0  # not the old targets: nothing until the file is fixed
     assert "scheduling nothing until it is fixed" in caplog.text
+
+
+def test_a_job_that_raises_alerts_through_rq(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_service(tmp_path)
+    with (tmp_path / "service.toml").open("a", encoding="utf-8") as handle:
+        handle.write('\n[notify]\nwebhook = "https://hooks.example.com/T1"\n')
+    service = load_config(tmp_path / "service.toml")
+    q = rkqueue.queue(service, connection=fakeredis.FakeRedis())
+    posted: list[bytes] = []
+    monkeypatch.setattr(
+        "zues_scan.server.notify.http_post", lambda url, body, headers: posted.append(body)
+    )
+
+    def crash(spec: object) -> None:
+        raise MemoryError("the scanner ate the worker")
+
+    monkeypatch.setattr("zues_scan.server.jobs.execute", crash)
+    rkqueue.enqueue_scan(q, service, "manual", "alice")
+    work(q)
+
+    [body] = posted
+    assert b"the scan job of manual failed without saving a run: MemoryError" in body
+
+
+def test_each_scheduler_round_sends_the_waiting_alerts(
+    service: ServiceConfig, q: Queue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    flushed: list[str] = []
+    monkeypatch.setattr("zues_scan.server.notify.flush", lambda config: flushed.append(config.db))
+
+    scheduler.run_forever(service, q, sleep=lambda _: None, rounds=2)
+
+    assert flushed == [service.db, service.db]

@@ -172,3 +172,73 @@ def test_revoking_a_dashboard_token_ends_its_sessions(svc: App) -> None:
     assert carol.get("/api/v1/me").status_code == 401
     assert [s["name"] for s in root.get("/api/v1/admin/sessions").json()] == []
     assert carol.delete("/api/v1/session", headers=CSRF).status_code == 204
+
+
+NOTIFY = (
+    '\n[notify]\nwebhook = "https://hooks.example.com/T9/secret"\nsecret = "0123456789abcdef0123"\n'
+)
+
+
+@pytest.fixture
+def posts(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, str]]:
+    sent: list[dict[str, str]] = []
+
+    def post(url: str, body: bytes, headers: dict[str, str]) -> None:
+        sent.append(headers)
+        if len(sent) == 1:
+            raise ConnectionRefusedError("refused")  # the first try fails
+
+    monkeypatch.setattr("zues_scan.server.notify.http_post", post)
+    return sent
+
+
+def test_an_admin_tests_the_webhook_and_retries_an_alert(
+    svc: App, posts: list[dict[str, str]]
+) -> None:
+    from test_server_web import CSRF, sign_in
+
+    root = sign_in(svc, ROOT)
+    assert root.post("/api/v1/admin/alerts/test", headers=CSRF).status_code == 409  # none yet
+    svc.rewrite(config_text(svc.dir.as_posix(), TOKENS + ADMIN) + NOTIFY)
+    assert svc.client(ALICE).post("/api/v1/admin/alerts/test").status_code == 403
+
+    failed = root.post("/api/v1/admin/alerts/test", headers=CSRF).json()
+    assert (failed["kind"], failed["state"], failed["attempts"]) == ("test", "waiting", 1)
+    assert "refused" in failed["last_error"]
+    retried = root.post(f"/api/v1/admin/alerts/{failed['id']}/retry", headers=CSRF).json()
+    assert (retried["state"], retried["attempts"], retried["last_error"]) == ("sent", 2, None)
+    assert posts[1]["X-ZuesScan-Signature"].startswith("sha256=")
+    assert root.post(f"/api/v1/admin/alerts/{failed['id']}/retry", headers=CSRF).status_code == 404
+
+    alerts = root.get("/api/v1/admin/config").json()["alerts"]
+    assert (alerts["webhook"], alerts["signed"], alerts["failed_scans"]) == (
+        "hooks.example.com",  # only its host: the URL is a secret
+        True,
+        3,
+    )
+    assert [a["summary"] for a in alerts["latest"]] == [
+        "ZuesScan: a test alert, sent by root from Settings. Delivery works."
+    ]
+    assert "T9" not in root.get("/api/v1/admin/alerts").text
+
+
+def test_a_lock_out_raises_one_alert_an_hour(svc: App, posts: list[dict[str, str]]) -> None:
+    from fastapi.testclient import TestClient
+
+    from zues_scan.server import sessions
+
+    svc.rewrite(config_text(svc.dir.as_posix(), TOKENS + ADMIN) + NOTIFY)
+    attacker = TestClient(svc.app, client=("203.0.113.66", 1))
+    for _ in range(sessions.LIMIT):
+        attacker.post("/api/v1/session", json={"token": "guess"})
+    svc.app.state.throttle = sessions.Throttle()  # as if the lock had expired
+    svc.redis.flushall()
+    for _ in range(sessions.LIMIT):
+        attacker.post("/api/v1/session", json={"token": "guess"})
+
+    with Storage(svc.db) as store:
+        (alert,) = store.alert_rows()  # the second lock-out within the hour: held back
+        locks = [e for _, e, _ in store.audit_events() if e.detail.get("action") == "locked out"]
+    assert alert["kind"] == "locked_out" and len(locks) == 2
+    assert "203.0.113.66 was locked out of the dashboard" in alert["payload"]
+    assert posts == []  # the web does not post it: the scheduler's next round does

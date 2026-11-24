@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from zues_scan.alerts import AlertPolicy
 from zues_scan.audit import default_operator
 from zues_scan.cve import CveDataError, CveSource, LocalCveSource
 from zues_scan.cve.cache import CacheError, CveCache, NvdCveSource
@@ -69,6 +70,8 @@ class ScanSpec:
     ipv4_only: bool = False
     operator: str | None = None
     engagement: str | None = None
+    # The service's alerts, queued with the run in its transaction (the outbox).
+    alerts: AlertPolicy | None = None
 
 
 @dataclass
@@ -237,7 +240,7 @@ def _scan(spec: ScanSpec, orch: Orchestrator, store: Storage, outcome: Outcome) 
             "Traceroute needs raw-socket privileges (root on Linux, Npcap on Windows), "
             "and a local target has no route."
         )
-    outcome.run_id = store.save_run(run)
+    outcome.run_id = store.save_run(run, alerts=spec.alerts)
     outcome.run = run
     outcome.changes = store.changes_in_run(outcome.run_id)
     return outcome
@@ -257,7 +260,7 @@ def _record_failure(
     would hide that the scan is broken.
     """
     run = orch.failed_run(spec.target, started, exc)
-    run_id = store.save_run(run)
+    run_id = store.save_run(run, alerts=spec.alerts)
     outcome.messages.append(f"recorded as failed run #{run_id} in {spec.db} (no results saved)")
     if run.raw_outputs:
         outcome.messages.append(f"the scanner's output was kept: zues raw {run_id} --db {spec.db}")

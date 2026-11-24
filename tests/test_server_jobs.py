@@ -31,13 +31,16 @@ def _lab_dns(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("zues_scan.scope.resolve_addresses", lab_resolver)
 
 
-@pytest.fixture
-def posted(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]]]:
-    """Every webhook delivery, decoded, instead of a real HTTP POST."""
-    calls: list[tuple[str, dict[str, Any]]] = []
+Posted = list[tuple[str, dict[str, Any], dict[str, str]]]
 
-    def record(url: str, body: bytes) -> None:
-        calls.append((url, json.loads(body)))
+
+@pytest.fixture
+def posted(monkeypatch: pytest.MonkeyPatch) -> Posted:
+    """Every webhook delivery (URL, decoded body, headers), instead of a real HTTP POST."""
+    calls: Posted = []
+
+    def record(url: str, body: bytes, headers: dict[str, str]) -> None:
+        calls.append((url, json.loads(body), headers))
 
     monkeypatch.setattr("zues_scan.server.notify.http_post", record)
     return calls
@@ -77,7 +80,7 @@ def test_the_spec_comes_from_the_config_not_from_the_request(tmp_path: Path) -> 
 
 
 def test_a_job_scans_records_and_alerts_on_new_urgent_findings(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, posted: list[tuple[str, dict[str, Any]]]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, posted: Posted
 ) -> None:
     use_scanner(monkeypatch, VSFTPD, OPENSSH)
     config = service_config(tmp_path)
@@ -91,8 +94,9 @@ def test_a_job_scans_records_and_alerts_on_new_urgent_findings(
         run = store.load_run(1)
     assert run is not None
     assert (run.operator, run.engagement, run.profile) == ("alice", "PT-1", "quick")
-    [(url, payload)] = posted
+    [(url, payload, headers)] = posted
     assert url == "https://hooks.example.com/T0"
+    assert headers["X-ZuesScan-Event"] == "run" and headers["X-ZuesScan-Delivery"] == "1"
     assert payload["target"] == "lab" and payload["run_id"] == 1
     assert payload["text"].splitlines() == [
         "ZuesScan: run #1 of lab needs attention",
@@ -103,7 +107,7 @@ def test_a_job_scans_records_and_alerts_on_new_urgent_findings(
 
 
 def test_nothing_new_means_no_alert(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, posted: list[tuple[str, dict[str, Any]]]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, posted: Posted
 ) -> None:
     use_scanner(monkeypatch, VSFTPD)
     config = service_config(tmp_path)
@@ -116,7 +120,7 @@ def test_nothing_new_means_no_alert(
 
 
 def test_a_fake_fix_is_alerted_first(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, posted: list[tuple[str, dict[str, Any]]]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, posted: Posted
 ) -> None:
     use_scanner(monkeypatch, VSFTPD, OPENSSH)
     config = service_config(tmp_path, min_priority="P4")
@@ -138,10 +142,10 @@ def test_a_fake_fix_is_alerted_first(
     assert first == ["P2", "P4"]
 
 
-def test_a_lost_alert_does_not_fail_the_job(
+def test_an_alert_that_cannot_be_sent_waits_in_the_outbox(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    def down(url: str, body: bytes) -> None:
+    def down(url: str, body: bytes, headers: dict[str, str]) -> None:
         raise urllib.error.URLError("connection refused")
 
     monkeypatch.setattr("zues_scan.server.notify.http_post", down)
@@ -151,34 +155,44 @@ def test_a_lost_alert_does_not_fail_the_job(
         summary = scan_target(service_config(tmp_path), "lab", "alice")
 
     assert summary["code"] == 0 and summary["alerts"] == 1  # the scan is saved anyway
-    assert "could not deliver the alert" in caplog.text
+    assert "could not deliver alert #1 (run) to hooks.example.com" in caplog.text
+    assert "T0" not in caplog.text  # the webhook's URL is a secret: only its host is logged
+    with Storage(tmp_path / "zues.db") as store:
+        (row,) = store.alert_rows()
+    assert (row["kind"], row["run_id"], row["attempts"], row["sent_at"]) == ("run", 1, 1, None)
+    assert "connection refused" in row["last_error"]
 
 
 def test_without_a_webhook_alerts_are_only_counted(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, posted: list[tuple[str, dict[str, Any]]]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, posted: Posted
 ) -> None:
     use_scanner(monkeypatch, VSFTPD)
 
     summary = scan_target(service_config(tmp_path, webhook=False), "lab", "alice")
 
     assert summary["alerts"] == 1 and posted == []
+    with Storage(tmp_path / "zues.db") as store:
+        assert store.alert_rows() == []  # nothing queued for a webhook that does not exist
 
 
 def test_a_refused_target_is_reported_not_scanned(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, posted: list[tuple[str, dict[str, Any]]]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, posted: Posted
 ) -> None:
     fake = use_scanner(monkeypatch, VSFTPD)
+    config = service_config(tmp_path, target="192.0.2.7")
 
-    summary = scan_target(service_config(tmp_path, target="192.0.2.7"), "lab", "alice")
+    summary = scan_target(config, "lab", "alice")
+    scan_target(config, "lab", "scheduler")  # the next scheduled try, refused again
 
     assert summary["code"] == 3 and summary["run_id"] is None and summary["status"] is None
     assert summary["messages"][0].startswith("refused:")
-    assert fake.seen == [] and posted == []
+    assert fake.seen == []
+    [(_, payload, _)] = posted  # once a day, not at every try
+    assert payload["kind"] == "not_started" and payload["target"] == "lab"
+    assert payload["text"].startswith("ZuesScan: a scan of lab was not started: refused:")
 
 
-def test_a_failed_scan_is_recorded_and_not_alerted(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, posted: list[tuple[str, dict[str, Any]]]
-) -> None:
+def failing_scanner(monkeypatch: pytest.MonkeyPatch) -> None:
     from zues_scan.plugins.base import ScanError
 
     error = ScanError("nmap exited with code 1", plugin="fake", stderr="boom")
@@ -186,10 +200,70 @@ def test_a_failed_scan_is_recorded_and_not_alerted(
         "zues_scan.plugins.registry.NmapPlugin", lambda **_: FakePlugin([], error=error)
     )
 
+
+def test_one_failed_scan_is_recorded_and_not_alerted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, posted: Posted
+) -> None:
+    failing_scanner(monkeypatch)
+
     summary = scan_target(service_config(tmp_path), "lab", "alice")
 
     assert summary["code"] == 4 and summary["status"] == "failed" and summary["run_id"] == 1
     assert summary["alerts"] == 0 and posted == []
+
+
+def test_scans_failing_three_times_in_a_row_alert_once_and_again_when_they_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, posted: Posted
+) -> None:
+    config = service_config(tmp_path)
+    failing_scanner(monkeypatch)
+    for _ in range(4):
+        scan_target(config, "lab", "scheduler")
+
+    [(_, failed, _)] = posted  # at the third failure, not at every one after it
+    assert (failed["kind"], failed["run_id"], failed["failures"]) == ("scan_failed", 3, 3)
+    assert failed["text"].startswith("ZuesScan: scans of lab have failed 3 times in a row")
+    assert "nmap exited with code 1" in failed["error"]
+
+    use_scanner(monkeypatch, OPENSSH)  # P4: no finding alert
+    scan_target(config, "lab", "scheduler")
+
+    recovered = posted[-1][1]
+    assert (recovered["kind"], recovered["run_id"], recovered["failures"]) == (
+        "scan_recovered",
+        5,
+        4,
+    )
+    assert len(posted) == 2
+
+
+def test_a_job_that_fails_without_a_run_alerts_through_its_callback(
+    tmp_path: Path, posted: Posted
+) -> None:
+    from types import SimpleNamespace
+
+    from zues_scan.server.jobs import job_failed
+
+    config = service_config(tmp_path)
+    job = SimpleNamespace(id="j1", args=(config, "lab", "alice"))
+
+    job_failed(job, None, TimeoutError, TimeoutError("Task exceeded maximum timeout"), None)
+    job_failed(job, None, TimeoutError, TimeoutError("Task exceeded maximum timeout"), None)
+
+    [(_, payload, _)] = posted  # the same failure again within 6 hours: held back
+    assert payload["kind"] == "job_failed" and payload["target"] == "lab"
+    assert payload["error"] == "TimeoutError: Task exceeded maximum timeout"
+
+
+def test_the_failure_callback_never_raises(tmp_path: Path, posted: Posted) -> None:
+    from types import SimpleNamespace
+
+    from zues_scan.server.jobs import job_failed
+
+    job = SimpleNamespace(id="j2", args=(str(tmp_path / "missing.toml"), "lab", "alice"))
+    job_failed(job, None, RuntimeError, RuntimeError("x"), None)  # its config is gone
+
+    assert posted == []
 
 
 def test_a_target_removed_from_the_config_fails_the_job(tmp_path: Path) -> None:
@@ -210,18 +284,3 @@ def test_a_long_alert_is_cut_at_twenty_lines() -> None:
     assert len(lines) == 22  # header, 20 items, "and 5 more"
     assert lines[1] == "• REAPPEARED: t0 on h" and lines[-1] == "… and 5 more"
     assert len(payload["items"]) == 25  # the structured part keeps everything
-
-
-def test_send_reports_delivery() -> None:
-    seen: list[bytes] = []
-
-    def ok(url: str, body: bytes) -> None:
-        seen.append(body)
-
-    def refused(url: str, body: bytes) -> None:
-        raise ConnectionError("refused")
-
-    assert notify.send("https://h/x", {"text": "Lỗ hổng"}, post=ok) is True
-    assert json.loads(seen[0]) == {"text": "Lỗ hổng"}  # UTF-8, not \\u escapes
-    assert "Lỗ hổng".encode() in seen[0]
-    assert notify.send("https://h/x", {"text": "x"}, post=refused) is False

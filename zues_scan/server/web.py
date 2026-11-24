@@ -45,6 +45,7 @@ from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -62,7 +63,7 @@ from zues_scan.profiles import BUILTIN as BUILTIN_PROFILES
 from zues_scan.report import render_html, stored_model
 from zues_scan.report.html import page_csp
 from zues_scan.report.sarif import to_sarif
-from zues_scan.server import managed, sessions
+from zues_scan.server import managed, notify, sessions
 from zues_scan.server import queue as rkqueue
 from zues_scan.server.config import DASHBOARD, ConfigError, ServiceConfig, Token, load_config
 from zues_scan.server.sessions import Session, stamp
@@ -243,7 +244,15 @@ def _wrong_token(request: Request, config: ServiceConfig) -> None:
     try:
         with _writable(config) as store:
             store.record_lockout(
-                client, failures=failures, seconds=sessions.LOCKOUT, at=stamp(sessions.now())
+                client,
+                failures=failures,
+                seconds=sessions.LOCKOUT,
+                at=stamp(sessions.now()),
+                alert=(
+                    notify.locked_out(client, failures, sessions.LOCKOUT)
+                    if config.notify.webhook
+                    else None
+                ),
             )
     except (StorageError, sqlite3.Error) as exc:  # the lock holds; only the record is lost
         log.error("could not audit the lock-out of %s: %s", client, exc)
@@ -649,6 +658,7 @@ def admin_config(who: Admin, config: Config) -> dict[str, Any]:
             {"name": p.name, "description": p.description} for p in BUILTIN_PROFILES.values()
         ],
         "sessions": _live_sessions(config, who),
+        "alerts": _alerts(config, 20),
         "problems": list(config.problems),
     }
 
@@ -787,6 +797,62 @@ def end_session(session_id: int, who: Admin, config: Config) -> None:
     if not ended:
         raise HTTPException(404, f"no session #{session_id}")
     log.info("%s ended session #%d", who.name, session_id)
+
+
+def _alerts(config: ServiceConfig, limit: int) -> dict[str, Any]:
+    """Where alerts go (the webhook's host only: its URL is a secret) and the latest ones."""
+    with opened(config) as store:
+        rows = store.alert_rows(limit) if store else []
+    webhook = config.notify.webhook
+    return {
+        "webhook": (urlsplit(webhook).hostname or "?") if webhook else None,
+        "signed": bool(config.notify.secret),
+        "min_priority": config.notify.min_priority,
+        "failed_scans": config.notify.failed_scans,
+        "latest": [notify.describe(r) for r in rows],
+    }
+
+
+def _alert(config: ServiceConfig, alert_id: int) -> dict[str, Any]:
+    with opened(config) as store:
+        rows = store.alert_rows(ids=[alert_id]) if store else []
+    if not rows:
+        raise HTTPException(404, f"no alert #{alert_id}")
+    return notify.describe(rows[0])
+
+
+@api.get("/admin/alerts")
+def admin_alerts(
+    who: Admin, config: Config, limit: Annotated[int, Query(ge=1, le=500)] = 50
+) -> dict[str, Any]:
+    return _alerts(config, limit)
+
+
+@api.post("/admin/alerts/test")
+def send_test_alert(who: Admin, config: Config) -> dict[str, Any]:
+    """Queue a test alert and send it now: whether the webhook (and its signature) works."""
+    if not config.notify.webhook:
+        raise HTTPException(
+            409, "no webhook is set: [notify] webhook in service.toml, or ZUES_WEBHOOK"
+        )
+    alert_id = notify.queue(config, notify.delivery_test(who.name))
+    if alert_id is None:
+        raise HTTPException(503, "the alert could not be queued; see the server log")
+    notify.flush(config, ids=[alert_id])
+    log.info("%s sent a test alert (#%d)", who.name, alert_id)
+    return _alert(config, alert_id)
+
+
+@api.post("/admin/alerts/{alert_id}/retry")
+def retry_alert(alert_id: int, who: Admin, config: Config) -> dict[str, Any]:
+    """Send an alert that is waiting or was given up now, instead of at its next try."""
+    with opened(config) as store:
+        due = store is not None and store.retry_alert(alert_id, notify.stamp(notify.now()))
+    if not due:
+        raise HTTPException(404, f"no alert #{alert_id} waiting to be sent")
+    notify.flush(config, ids=[alert_id])
+    log.info("%s retried alert #%d", who.name, alert_id)
+    return _alert(config, alert_id)
 
 
 @api.get("/hosts")
