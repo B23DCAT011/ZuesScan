@@ -113,6 +113,30 @@ bằng một gói Python khai báo entry point `zues_scan.plugins` — không s�
 động** (`passive` / `scan` / `active`) và file scope quyết định được tới đâu (`@activity`).
 Hướng dẫn viết plugin, bộ kiểm tra hợp đồng và ví dụ: [`docs/PLUGINS.md`](docs/PLUGINS.md).
 
+**Dịch vụ chỉ nạp plugin được ghim** (D14). Plugin chạy với mọi quyền của ZuesScan, nên
+web / worker / scheduler chỉ nạp plugin dựng sẵn và những plugin bên thứ ba có trong cấu hình,
+ghim theo gói + phiên bản + SHA-256 các file đã cài. Mã băm được kiểm **trước khi import**:
+plugin chưa ghim, hoặc có file bị sửa sau khi ghim, không bao giờ chạy. `activity` dùng cho
+cổng scope là mức **người vận hành** ghi, không phải mức plugin tự khai:
+
+```bash
+zues plugins --pin exposed-git      # đọc code của gói trước, rồi dán kết quả vào cấu hình
+```
+
+```toml
+# service.toml (hoặc ZUES_PLUGINS=exposed-git:active:zues-exposed-git==0.1.0:<sha256>)
+[[plugins]]
+name = "exposed-git"
+package = "zues-exposed-git"
+version = "0.1.0"
+sha256 = "c33c0a3d…"                # của các file gói đã cài, in bởi --pin
+activity = "active"                  # mức bạn đánh giá; plugin khai cao hơn thì bị từ chối
+```
+
+`zues plugins --config service.toml` và `zues doctor` cho thấy dịch vụ nạp gì và vì sao một
+plugin không được nạp. `zues scan` ở dòng lệnh của bạn vẫn nạp mọi plugin đã cài (cài là đã
+quyết định), trừ khi đặt `ZUES_PLUGINS` (`none` = chỉ plugin dựng sẵn).
+
 **Scanner thứ hai: naabu** (`--scanner naabu`). Ba bước: nmap dò host sống (`-sn`), naabu quét
 cổng của các host đó bằng *connect scan* (không cần raw socket, Npcap hay root) với tốc độ cố
 định (`max_rate`, mặc định 1000/giây), rồi nmap nhận diện dịch vụ **chỉ trên các cổng mở** —
@@ -743,7 +767,8 @@ docker compose logs -f worker
 Không có `service.toml`, dịch vụ đọc cài đặt từ biến môi trường (compose đã đặt sẵn):
 `ZUES_DB`, `ZUES_REDIS_URL`, và tuỳ chọn `ZUES_QUEUE`, `ZUES_CVE_CACHE`, `ZUES_WEBHOOK`,
 `ZUES_WEBHOOK_SECRET`, `ZUES_NOTIFY_MIN_PRIORITY`, `ZUES_NOTIFY_FAILED_SCANS` (bốn biến cảnh báo
-đặt trong file `.env` cạnh `compose.yaml` — đừng commit file đó); target, scope và token nằm
+đặt trong file `.env` cạnh `compose.yaml` — đừng commit file đó), `ZUES_SCOPE_APPROVAL`,
+`ZUES_PLUGINS` (plugin bên thứ ba được ghim, xem phần Plugin); target, scope và token nằm
 trong database (dashboard). Muốn quản lý
 bằng file như trước (vd cấu hình qua git, credentials SSH): đặt file vào `deploy/` (được mount
 vào `/config`) và `ZUES_CONFIG=/config/service.toml` — target của file và của dashboard dùng

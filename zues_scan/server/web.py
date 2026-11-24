@@ -755,7 +755,7 @@ def decide(finding_id: int, body: Decision, who: Operator, config: Config) -> di
 @api.get("/admin/config")
 def admin_config(who: Admin, config: Config) -> dict[str, Any]:
     """Everything the settings page shows: scopes, targets, tokens, plugins, profiles."""
-    registry = plugin_registry.load()
+    registry = plugin_registry.load(policy=config.plugins)
     scopes = []
     for name, text in sorted(config.scopes.items()):
         try:
@@ -799,6 +799,10 @@ def admin_config(who: Admin, config: Config) -> dict[str, Any]:
             }
             for s in registry.plugins.values()
         ],
+        # Installed, but not loaded: not pinned in [[plugins]], or not matching its pin.
+        "plugins_left_out": [
+            {"name": name, "reason": reason} for name, reason in sorted(registry.left_out.items())
+        ],
         "profiles": [
             {"name": p.name, "description": p.description} for p in BUILTIN_PROFILES.values()
         ],
@@ -806,7 +810,7 @@ def admin_config(who: Admin, config: Config) -> dict[str, Any]:
         "scope_approval": config.scope_approval,
         "proposals": _proposals(config, who, ("pending",)),
         "alerts": _alerts(config, 20),
-        "problems": list(config.problems),
+        "problems": [*config.problems, *registry.problems],
     }
 
 

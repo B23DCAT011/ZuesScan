@@ -103,6 +103,48 @@ def test_keeps_the_contract():
 lúc): có tên và `activity`, `version()` không raise, không báo host ngoài phạm vi được giao, giữ
 output gốc, lỗi là `ScanError`, tên tìm được nằm dưới đúng tên miền.
 
+## Cho dịch vụ nạp plugin: ghim
+
+Plugin chạy với mọi quyền của ZuesScan (đọc được database, token, khoá SSH), và code của nó
+chạy ngay khi được import. Vì vậy **dịch vụ** (web, worker, scheduler) chỉ nạp plugin dựng
+sẵn và những plugin bên thứ ba mà cấu hình của nó **ghim**:
+
+```bash
+pip install zues-exposed-git          # trong image / venv của dịch vụ
+zues plugins --pin exposed-git        # in ra mục cấu hình — đọc code của gói trước đã
+```
+
+```toml
+[[plugins]]
+name = "exposed-git"                  # tên plugin (entry point)
+package = "zues-exposed-git"          # gói cung cấp nó
+version = "0.1.0"
+sha256 = "c33c0a3d…"                  # các file gói đã cài (theo RECORD của nó)
+activity = "active"                   # mức BẠN đánh giá sau khi đọc code
+```
+
+Hoặc trong môi trường (compose, không có service.toml):
+`ZUES_PLUGINS=exposed-git:active:zues-exposed-git==0.1.0:<sha256>` (nhiều mục: cách nhau bởi dấu
+phẩy).
+
+Lúc khởi động mỗi lần quét, ZuesScan kiểm **từ file trên đĩa, trước khi import**: đúng gói,
+đúng phiên bản, mã băm của mọi file trong RECORD khớp (bỏ qua `__pycache__`, script do bộ cài
+sinh ra ngoài site-packages, và file của bộ cài như `INSTALLER`), entry point trỏ vào module
+của chính gói đó. Sai một điều thì plugin không được nạp, code của nó không chạy, `zues doctor`
+báo lỗi; target dùng nó dừng với lý do rõ ràng thay vì quét thiếu.
+
+- **`activity` là của người vận hành.** Cổng scope (`@activity`) dùng mức ghi trong pin; plugin
+  tự khai cao hơn mức đó thì bị từ chối (nó trung thực về việc nó làm nhiều hơn bạn nghĩ), khai
+  thấp hơn thì vẫn bị coi theo mức bạn ghi. `--pin` mặc định ghi `active` — mức cao nhất.
+- **Pin là của một bản cài.** Ghim cái thực sự chạy: chạy `--pin` trong image sẽ triển khai.
+  Dựng lại wheel từ mã nguồn bằng công cụ khác có thể cho metadata khác, tức pin khác.
+- Gói cài kiểu editable (`pip install -e`) hoặc không có RECORD thì không ghim được: code của nó
+  nằm ngoài các file đã cài.
+- Không ghim gì: chỉ plugin dựng sẵn. `zues plugins --config service.toml` cho thấy dịch vụ nạp
+  gì và vì sao một plugin bị bỏ.
+- Dòng lệnh của bạn (`zues scan`) vẫn nạp mọi plugin đã cài — cài là đã quyết định — trừ khi
+  đặt `ZUES_PLUGINS` (`none`: chỉ plugin dựng sẵn).
+
 ## Chọn plugin khi quét
 
 | | Dòng lệnh | `service.toml` (mỗi target) |
@@ -113,5 +155,7 @@ output gốc, lỗi là `ScanError`, tên tìm được nằm dưới đúng tê
 
 ## Giới hạn
 
-Plugin chạy **trong cùng tiến trình** với ZuesScan và có mọi quyền của nó; `activity` là lời khai
-của plugin. Chỉ cài plugin từ nguồn tin cậy — xem G25 trong [`KNOWN-GAPS.md`](KNOWN-GAPS.md).
+Plugin được ghim vẫn chạy **trong cùng tiến trình** với ZuesScan và có mọi quyền của nó: pin
+bảo đảm đó đúng là code bạn đã đọc, không bảo đảm code đó vô hại. Phụ thuộc của plugin (gói
+khác nó import) không nằm trong pin — ghim chúng khi dựng image (`pip install --require-hashes`).
+Xem G25 trong [`KNOWN-GAPS.md`](KNOWN-GAPS.md).

@@ -551,3 +551,23 @@ def test_scope_approval_is_set_by_the_server_not_the_dashboard(
     monkeypatch.setenv("ZUES_SCOPE_APPROVAL", "maybe")
     with pytest.raises(ConfigError, match="ZUES_SCOPE_APPROVAL must be on or off"):
         from_environment()
+
+
+def test_settings_show_installed_plugins_the_service_does_not_load(
+    svc: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from test_plugins import Entry, spec
+
+    from zues_scan.plugins import registry
+
+    monkeypatch.setattr(registry, "_entry_points", lambda: [Entry("probe", spec(), "zues-probe")])
+    root = svc.client(ROOT)
+    settings = root.get("/api/v1/admin/config").json()
+    assert "probe" not in {p["name"] for p in settings["plugins"]}
+    [row] = settings["plugins_left_out"]
+    assert row["name"] == "probe" and "but not allowed in" in row["reason"]
+
+    assert root.put("/api/v1/admin/scopes/lab2", json={"text": SCOPE}).status_code == 200
+    target = {"target": "scanme.lab", "scope": "lab2", "checks": ["probe"]}
+    saved = root.put("/api/v1/admin/targets/web", json=target)
+    assert saved.status_code == 422 and "plugin probe is not loaded" in saved.text

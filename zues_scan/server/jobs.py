@@ -45,6 +45,7 @@ def spec_for(config: ServiceConfig, target: Target, operator: str) -> ScanSpec:
         operator=operator,
         engagement=target.engagement,
         target_name=target.name,
+        plugins=config.plugins,
     )
 
 

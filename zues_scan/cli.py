@@ -497,9 +497,31 @@ def _cmd_tools(args: argparse.Namespace) -> int:
     return 0
 
 
+def _service_path(given: str | None) -> str | None:
+    """The service to look at: --config, else one the environment sets up (the image,
+    compose), else None (this command line on its own)."""
+    if given is None and (os.environ.get("ZUES_CONFIG") or os.environ.get("ZUES_DB")):
+        return os.environ.get("ZUES_CONFIG") or "(environment)"
+    return given
+
+
 def _cmd_plugins(args: argparse.Namespace) -> int:
     """The plugins ZuesScan knows: built in or from installed packages."""
-    registry = plugin_registry.load()
+    if args.pin:
+        return _pin_plugin(args.pin)
+    service = _service_path(args.config)
+    policy: plugin_registry.Policy | None
+    try:
+        if service is not None:
+            from zues_scan.server.config import load_config
+
+            policy = load_config(service).plugins
+        else:
+            policy = plugin_registry.policy_from_env()
+    except Exception as exc:  # noqa: BLE001 - ConfigError or PluginError: say which
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    registry = plugin_registry.load(policy=policy)
     rows = []
     for spec in registry.plugins.values():
         # Where plugins really look: ZuesScan's own tools first, then PATH (and the
@@ -516,10 +538,19 @@ def _cmd_plugins(args: argparse.Namespace) -> int:
                 "needs": list(spec.needs),
                 "source": spec.source,
                 "summary": spec.summary,
+                # A pinned plugin's own claim, where its operator granted it more.
+                "declared": str(registry.declared[spec.name])
+                if spec.name in registry.declared
+                else None,
             }
         )
+    left_out = [{"name": n, "reason": r} for n, r in sorted(registry.left_out.items())]
     if args.json:
-        print(json.dumps({"plugins": rows, "problems": registry.problems}, indent=2))
+        print(
+            json.dumps(
+                {"plugins": rows, "left_out": left_out, "problems": registry.problems}, indent=2
+            )
+        )
         return 0
     print(f"{'NAME':<14} {'KIND':<10} {'ACTIVITY':<9} {'READY':<6} {'SOURCE':<12} SUMMARY")
     for r in rows:
@@ -530,21 +561,48 @@ def _cmd_plugins(args: argparse.Namespace) -> int:
         )
         if not r["found"]:
             print(f"{'':<14} needs the program {r['binary']!r}: see zues doctor")
+        if r["declared"]:
+            print(f"{'':<14} declares {r['declared']}; {r['activity']} as pinned")
+    for row in left_out:
+        print(f"not loaded: {row['name']}: {row['reason']}")
     for problem in registry.problems:
         print(f"warning: {problem}", file=sys.stderr)
     print(
         "\nactivity: passive < scan < active. A scope allows up to scan unless it says "
         "otherwise ('@activity active')."
     )
+    if policy is None and any(r["source"] != "built-in" for r in rows):
+        print(
+            "Every installed plugin loads for this command line. A service loads only those "
+            "pinned in its configuration: zues plugins --pin NAME."
+        )
+    return 0
+
+
+def _pin_plugin(name: str) -> int:
+    """Print the pin of an installed plugin, for service.toml or ZUES_PLUGINS."""
+    try:
+        pin = plugin_registry.pin_for(name)
+    except plugin_registry.PluginError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(
+        f"# {pin.package} {pin.version}, as installed here. Review its code before allowing\n"
+        "# it: it runs with every right ZuesScan has. activity is set to active, the most a\n"
+        "# plugin can do; write down less only if the code does less (the scope gate uses\n"
+        "# this, not what the plugin claims).\n"
+        "\n# service.toml\n"
+        f"{pin.toml()}"
+        "\n# or in the environment (compose .env); several: separate them with commas\n"
+        f"ZUES_PLUGINS={pin.line()}"
+    )
     return 0
 
 
 def _cmd_doctor(args: argparse.Namespace) -> int:
     """What this machine can scan with, and what to install or fix."""
-    service = args.config
-    if service is None and (os.environ.get("ZUES_CONFIG") or os.environ.get("ZUES_DB")):
-        # A service set up from the environment (the image, compose): check it too.
-        service = os.environ.get("ZUES_CONFIG") or "(environment)"
+    # A service set up from the environment (the image, compose) is checked too.
+    service = _service_path(args.config)
     checks = doctor.gather(config=service, cve_cache=args.cve_cache)
     if args.json:
         print(json.dumps(doctor.as_json(checks), indent=2, ensure_ascii=False))
@@ -1395,6 +1453,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     plugins_cmd = sub.add_parser("plugins", help="list the scanner, check and discovery plugins")
     plugins_cmd.add_argument("--json", action="store_true", help="machine-readable output")
+    plugins_cmd.add_argument(
+        "--config",
+        help="show what this service loads (default: $ZUES_CONFIG, or the environment's "
+        "service when ZUES_DB is set)",
+    )
+    plugins_cmd.add_argument(
+        "--pin",
+        metavar="NAME",
+        help="print the pin that lets a service load this installed plugin ([[plugins]] in "
+        "service.toml, or ZUES_PLUGINS)",
+    )
     plugins_cmd.set_defaults(func=_cmd_plugins)
 
     doctor_cmd = sub.add_parser(

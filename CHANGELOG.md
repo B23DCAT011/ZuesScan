@@ -7,6 +7,18 @@ section of a version as its release notes, so every tag needs one.
 ## [Unreleased]
 
 ### Security
+- A service loads third-party plugins only when its configuration pins them (D14):
+  `[[plugins]]` in service.toml or `ZUES_PLUGINS`, each with its package, version, the
+  SHA-256 of the files that package installed (its RECORD) and the `activity` its operator
+  judged it has. The pin is checked from the files on disk **before** anything of the
+  package is imported: a plugin that is not pinned, another release, a changed or missing
+  file, an entry point into another package's module or an editable install is left out
+  and its code never runs; a target that uses it stops with the reason. The scope gate
+  uses the pinned activity, and a plugin that declares more is refused. Without pins a
+  service loads the built-in plugins only. `zues plugins --pin NAME` prints the pin to
+  paste, `zues plugins --config` shows what a service loads, `zues doctor` reports changed
+  plugins, Settings shows plugins left out and why. `zues scan` on the command line still
+  loads every installed plugin unless `ZUES_PLUGINS` is set (`none`: built-ins only).
 - Per-target permissions: a viewer or operator token can be limited to some targets, by
   name or pattern (`acme-*`): in Settings (Targets when making a token, **Limit** after),
   `zues user add --targets`, `zues user targets`, `targets = [...]` in service.toml, or

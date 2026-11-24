@@ -37,6 +37,13 @@ target by its `name`; it never brings its own address, scope file or options.
     min_priority = "P2"                          # new findings at least this urgent
     secret = "..."             # optional: sign each alert (HMAC-SHA256), at least 16 chars
     failed_scans = 3           # alert when a target's scans fail this many times in a row
+
+    [[plugins]]                # a third-party plugin the service may load (G25); without
+    name = "exposed-git"       # one, only the built-in plugins load. All five come from
+    package = "zues-exposed-git"   # `zues plugins --pin exposed-git`, after reviewing it.
+    version = "0.1.0"
+    sha256 = "..."             # of the files the package installed, checked before loading
+    activity = "active"        # what YOU judged it does: the scope gate uses this
 """
 
 from __future__ import annotations
@@ -51,6 +58,14 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
+from zues_scan.plugins.registry import (
+    PINS_ENV,
+    PluginError,
+    Policy,
+    pin_from_table,
+    pins_from_text,
+    unique_pins,
+)
 from zues_scan.server.cron import Cron, CronError
 
 ROLES = ("viewer", "operator", "admin")
@@ -161,6 +176,8 @@ class ServiceConfig:
     # Two people for a scope change in the dashboard (G30): set by whoever runs the server
     # (service.toml or ZUES_SCOPE_APPROVAL), never from the dashboard itself.
     scope_approval: bool = False
+    # The third-party plugins it may load ([[plugins]] or ZUES_PLUGINS); none: built-ins.
+    plugins: Policy = Policy()
 
     def target(self, name: str) -> Target:
         try:
@@ -216,8 +233,16 @@ def from_environment() -> ServiceConfig:
         cve_cache=env.get("ZUES_CVE_CACHE") or None,
         notify=notify,
         scope_approval=_switch(env.get("ZUES_SCOPE_APPROVAL"), "ZUES_SCOPE_APPROVAL"),
+        plugins=_env_plugins(env.get(PINS_ENV) or ""),
     )
     return with_dashboard(config)
+
+
+def _env_plugins(text: str) -> Policy:
+    try:
+        return Policy(pins_from_text(text), PINS_ENV)
+    except PluginError as exc:
+        raise ConfigError(str(exc)) from None
 
 
 def load_config(path: str | Path | None = None) -> ServiceConfig:
@@ -233,7 +258,7 @@ def load_config(path: str | Path | None = None) -> ServiceConfig:
         raise ConfigError(f"service config not found: {path}") from None
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise ConfigError(f"cannot read service config {path}: {exc}") from None
-    _only(data, {"service", "tokens", "targets", "notify"}, str(path))
+    _only(data, {"service", "tokens", "targets", "notify", "plugins"}, str(path))
     service = data.get("service") or {}
     _only(
         service,
@@ -266,6 +291,16 @@ def load_config(path: str | Path | None = None) -> ServiceConfig:
     notify_table = data.get("notify") or {}
     _only(notify_table, {"webhook", "min_priority", "secret", "failed_scans"}, "[notify]")
     notify = _notify(notify_table, "[notify] ")
+    tables = data.get("plugins", [])
+    if not isinstance(tables, list):
+        raise ConfigError(f"{path}: write each plugin as a [[plugins]] table")
+    try:
+        pins = unique_pins(
+            (pin_from_table(t, f"[[plugins]] #{i}") for i, t in enumerate(tables, start=1)),
+            str(path),
+        )
+    except PluginError as exc:
+        raise ConfigError(str(exc)) from None
     config = ServiceConfig(
         path=str(path),
         db=str(service["db"]),
@@ -279,6 +314,7 @@ def load_config(path: str | Path | None = None) -> ServiceConfig:
         targets=targets,
         notify=notify,
         scope_approval=approval,
+        plugins=Policy(pins, f"{path} ([[plugins]])"),
     )
     return with_dashboard(config)
 

@@ -440,18 +440,41 @@ def gather(config: str | None = None, cve_cache: str = "zues-cve.db") -> list[Ch
         except ImportError:
             missing.append(module)
     checks.append(check_server_extra(missing))
-    checks += check_plugins()
+    checks += check_plugins(_policy(config))
     if config:
         checks += check_service(config)
     return checks
 
 
-def check_plugins() -> list[Check]:
-    """Plugins from installed packages: loadable, and is the program they run here?"""
+def _policy(config: str | None) -> Any:
+    """The plugin policy of the service being checked (its [[plugins]] / ZUES_PLUGINS);
+    a configuration that does not load: the built-in plugins only (check_service says
+    why). No service: ZUES_PLUGINS, else every installed plugin."""
+    from zues_scan.plugins.registry import PluginError, Policy, policy_from_env
+
+    if config is None:
+        try:
+            return policy_from_env()
+        except PluginError:
+            return Policy(where="ZUES_PLUGINS")
+    from zues_scan.server.config import ConfigError, load_config
+
+    try:
+        return load_config(config).plugins
+    except ConfigError:
+        return Policy()
+
+
+def check_plugins(policy: Any = None) -> list[Check]:
+    """Plugins from installed packages: allowed, unchanged since they were pinned,
+    loadable, and is the program they run here?"""
     from zues_scan.plugins import registry
 
-    loaded = registry.load()
+    loaded = registry.load(policy=policy)
     checks = [Check("plugins", ERROR, problem) for problem in loaded.problems]
+    for name, reason in sorted(loaded.left_out.items()):
+        if not any(f"plugin {name} (" in problem for problem in loaded.problems):
+            checks.append(Check(f"plugin {name}", INFO, f"not loaded: {reason}"))
     for spec in loaded.plugins.values():
         if spec.source == "built-in":
             continue  # checked one by one above
