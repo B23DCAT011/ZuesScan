@@ -471,6 +471,9 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
   - ✅ Đã có: vai trò `admin`; scope / target / token lưu trong database, kiểm như lúc quét
     trước khi lưu, audit `config` trong chuỗi băm, có hiệu lực ngay; `service.toml` chỉ đọc và
     thắng khi trùng tên; `zues user add` tạo admin đầu tiên / lấy lại quyền.
+  - ✅ Sửa (`fix/scheduler-reload`): scheduler chạy liên tục từng chỉ đọc cấu hình một lần lúc
+    khởi động, nên target thêm trên dashboard **không bao giờ được quét định kỳ** cho tới khi khởi
+    động lại. Nay đọc lại mỗi vòng; có test cho cả target thêm giữa chừng và cấu hình hỏng.
   - Còn lại:
     - **Admin mở rộng được giấy phép quét** (theo yêu cầu của chủ dự án: sửa được cả scope trên
       giao diện). Lớp bảo vệ còn lại là số người giữ token admin và audit trail. Nên có: duyệt

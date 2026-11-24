@@ -202,4 +202,6 @@ rồi độ tin cậy, rồi tiện dụng.
       của phiên; hết khi đăng xuất, 30 phút không dùng, 8 giờ, token bị thu hồi / cấp lại, admin
       kết thúc (Settings → Sessions); 10 token sai / 15 phút → khoá địa chỉ 15 phút (Redis, dự
       phòng trong tiến trình); audit `auth`. Thử bằng Chrome headless trên dịch vụ thật.
+- [x] `fix/scheduler-reload` (G30) — scheduler đọc lại cấu hình mỗi vòng: target thêm trên
+      dashboard trước đây không bao giờ được quét định kỳ nếu không khởi động lại scheduler.
 
