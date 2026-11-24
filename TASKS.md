@@ -204,4 +204,9 @@ rồi độ tin cậy, rồi tiện dụng.
       phòng trong tiến trình); audit `auth`. Thử bằng Chrome headless trên dịch vụ thật.
 - [x] `fix/scheduler-reload` (G30) — scheduler đọc lại cấu hình mỗi vòng: target thêm trên
       dashboard trước đây không bao giờ được quét định kỳ nếu không khởi động lại scheduler.
+- [x] `feat/alert-outbox` (G23) — cảnh báo chờ trong database (schema 16) tới khi gửi được: ghi
+      cùng transaction với run, worker gửi ngay, scheduler gửi lại (backoff, `Retry-After`, bỏ cuộc
+      sau 24 giờ), ký HMAC có timestamp; cảnh báo mới: quét hỏng N lần liền / chạy lại, quét không
+      bắt đầu được, job hỏng, bị khoá đăng nhập; Settings → Alerts; compose truyền biến cảnh báo.
+      Thử thật: webhook 503 → chờ → gửi lại được, chữ ký hợp lệ; nút gửi thử trên Chrome headless.
 

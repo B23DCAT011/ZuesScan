@@ -6,6 +6,30 @@ section of a version as its release notes, so every tag needs one.
 
 ## [Unreleased]
 
+### Added
+- Alerts are no longer lost: they wait in the database (`alert_outbox`, schema 16) until the
+  webhook takes them. A scan's alerts are saved in the same transaction as its run; the
+  worker sends them right away and the scheduler retries what failed at every round (after
+  1, 2, 4 ... minutes, at most an hour apart, `Retry-After` honoured), giving up after 24
+  hours, or at once on a 4xx that retrying cannot change or a redirect. Every retry carries
+  the same `X-ZuesScan-Delivery` id for receivers to deduplicate on.
+- Signed alerts: with `[notify] secret` (or `ZUES_WEBHOOK_SECRET`) every POST carries
+  `X-ZuesScan-Timestamp` and `X-ZuesScan-Signature: sha256=HMAC(secret, "<ts>." + body)`;
+  `zues_scan.server.notify.verify()` is the receiver's check.
+- New alerts: a target's scans failing `failed_scans` times in a row (default 3, once) and
+  working again; a scan not started (refused by its scope, e.g. an expired authorisation;
+  once a day); a scan job that failed without saving a run (RQ's failure callback; once
+  every 6 hours); an address locked out of the dashboard (once an hour); a test alert.
+- Settings → **Alerts**: where alerts go (host only), whether they are signed, each alert's
+  delivery state, **Send now**, **Send a test alert**. API: `GET /api/v1/admin/alerts`,
+  `POST /api/v1/admin/alerts/test`, `POST /api/v1/admin/alerts/{id}/retry`.
+- compose.yaml passes ZUES_WEBHOOK, ZUES_WEBHOOK_SECRET, ZUES_NOTIFY_MIN_PRIORITY and
+  ZUES_NOTIFY_FAILED_SCANS (e.g. from a `.env` file): the three-command install can alert.
+
+### Changed
+- `zues scheduler --once` also sends the alerts that are due, and says how many.
+- The webhook is posted without following redirects (a redirect would drop the POST's body).
+
 ### Fixed
 - The scheduler read its configuration once, at start: a target added or changed in the
   dashboard (or in service.toml) was never scheduled until the scheduler restarted — the

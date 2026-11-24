@@ -318,15 +318,28 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     scheduler có khoá mỗi vòng, cảnh báo webhook (fix giả, xuất hiện lại, finding mới ≥ P2).
     Đã chạy thật: Redis 7.4 (Docker) + `scheduler --once` + `worker --burst` trên Windows quét
     nmap thật 127.0.0.1, hai job → hai run trong DB; webhook nhận payload qua HTTP thật.
-  - **Cảnh báo gửi không được thì mất** (chỉ ghi log). Thực tế: bảng *outbox* trong DB + gửi
-    lại có backoff, đánh dấu đã gửi; hoặc đẩy cảnh báo thành job riêng trong hàng đợi có retry.
+  - ✅ Cảnh báo không mất nữa (`feat/alert-outbox`, schema 16): bảng `alert_outbox`, cảnh báo của
+    run ghi trong cùng transaction với run; worker gửi ngay, scheduler gửi lại mỗi vòng (backoff
+    1 phút → 1 giờ, `Retry-After`, bỏ cuộc sau 24 giờ / ngay với 4xx vô vọng hay redirect); có
+    lease để hai tiến trình không gửi trùng; ký HMAC-SHA256 có timestamp; Settings → Alerts (trạng
+    thái, gửi lại, gửi thử). Đã thử thật: webhook trả 503 → cảnh báo chờ → `scheduler --once` gửi
+    lại, cùng `X-ZuesScan-Delivery`, bên nhận xác minh chữ ký. Còn lại:
+    - Gửi *ít nhất một lần*: POST thành công mà chưa kịp đánh dấu "đã gửi" (tiến trình chết đúng
+      lúc) thì gửi lại — bên nhận phải bỏ trùng theo `X-ZuesScan-Delivery`.
+    - Chỉ có webhook: chưa email / PagerDuty / Teams gốc; chưa định tuyến theo mức (P1 tới kênh
+      trực, P3 tới kênh thường) hay theo target.
+    - Đổi `secret` là đổi ngay: cảnh báo đang chờ được ký bằng khoá mới; chưa có giai đoạn chuyển
+      tiếp hai khoá cùng hợp lệ.
+    - Bảng outbox chưa tự dọn (giữ mọi cảnh báo đã gửi); nhỏ, nhưng nên có hạn giữ.
   - **Worker trên Windows chạy job trong chính tiến trình của nó** (không có `fork()`): một job
     làm sập tiến trình thì sập cả worker; giới hạn thời gian bằng luồng hẹn giờ không ngắt được
     một lời gọi C đang chặn. Đỡ được phần lớn vì plugin tự đặt timeout cho nmap/nuclei (tiến trình
     con bị giết). Thực tế: chạy worker trên Linux (container — `chore/docker`), mỗi job một
     tiến trình con, có supervisor khởi động lại.
-  - Job lỗi chỉ nằm trong *failed registry* của RQ (30 ngày), chưa có ai được báo. Sẽ hiện trên
-    web (`feat/web`); thực tế còn cần cảnh báo "lần quét định kỳ thất bại N lần liền".
+  - ✅ Job lỗi có người được báo (`feat/alert-outbox`): quét hỏng `failed_scans` lần liền (và khi
+    chạy lại được), quét không bắt đầu được (scope từ chối, vd uỷ quyền hết hạn), job hỏng không
+    lưu được run (callback `on_failure` của RQ — cả khi RQ dọn job của worker đã chết). Còn lại:
+    worker bị giết cứng (OOM) chỉ được báo khi RQ dọn registry của nó, có thể chậm vài phút.
   - Lịch chỉ có dạng "mỗi N phút / giờ / ngày", chưa có cron (vd "2 giờ sáng thứ Bảy") — kết
     hợp được với khung giờ `@window` của scope. Lịch tính từ lần quét trước nên trôi dần.
   - ✅ Web (`feat/web`): API + dashboard dùng token.
@@ -339,7 +352,7 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     - Khoá **theo địa chỉ**: mọi người sau cùng một NAT / proxy bị khoá chung khi một người đoán
       sai. Thực tế: khoá theo địa chỉ + theo token (khi biết là token nào), CAPTCHA / bằng chứng
       công việc trước khi khoá cứng, danh sách địa chỉ tin cậy.
-    - Lần bị khoá mới vào log + audit, **chưa đẩy ra webhook** (chờ hàng đợi cảnh báo có gửi lại).
+    - ✅ Lần bị khoá còn được cảnh báo qua webhook (outbox, một lần mỗi giờ mỗi địa chỉ).
     - Token dùng cho script (`Bearer`, MCP) không có phiên, không hết hạn: muốn chặn thì thu hồi.
       Thực tế: token có hạn dùng và phạm vi (chỉ đọc / chỉ một target), xoay vòng định kỳ.
     - Chưa có xác thực hai lớp (TOTP / WebAuthn) hay đăng nhập qua SSO (OIDC) cho người dùng.
@@ -353,8 +366,8 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       `/api/v1/openapi.json` để nhập vào công cụ khác.
     - SQLite dùng chế độ journal mặc định: web đọc trong lúc worker ghi thì phải chờ nhau (tối đa
       5 giây). Nhiều worker + web đông người dùng: bật WAL hoặc chuyển sang PostgreSQL.
-  - Webhook chưa ký (HMAC) nên bên nhận không xác minh được nguồn; URL webhook là bí mật — đừng
-    commit `service.toml` thật.
+  - ✅ Webhook được ký (HMAC-SHA256 + timestamp, `[notify] secret` / `ZUES_WEBHOOK_SECRET`). URL
+    webhook vẫn là bí mật (log chỉ ghi tên host) — đừng commit `service.toml` hay `.env` thật.
 
 - [ ] **G24. nuclei và subfinder chạy thật: những gì đã kiểm và còn thiếu.** (Bài 8)
   - ✅ **`feat/tool-runtime`** (đo bằng nuclei 3.11.1 + templates 10.5.2, subfinder 2.17.0 thật):
