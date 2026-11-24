@@ -50,12 +50,17 @@ class ManagedError(ValueError):
     """What an admin asked to save is not valid; the message says why."""
 
 
+class NotAllowed(ManagedError):
+    """This admin may not take this decision (e.g. approve their own proposal)."""
+
+
 @dataclass(frozen=True)
 class Saved:
     """What was kept, and what the admin should know about it."""
 
     name: str
     warnings: list[str] = field(default_factory=list)
+    proposal: int | None = None  # with scope_approval: the proposal waiting for approval
 
 
 # --- scopes ------------------------------------------------------------------------------------
@@ -89,12 +94,32 @@ def describe_scope(scope: Scope) -> dict[str, Any]:
     }
 
 
-def save_scope(store: Any, config: ServiceConfig, name: str, text: str, actor: str) -> Saved:
+def save_scope(
+    store: Any,
+    config: ServiceConfig,
+    name: str,
+    text: str,
+    actor: str,
+    reason: str | None = None,
+) -> Saved:
+    """Save a dashboard scope — or, with scope_approval, propose it (Saved.proposal)."""
     scope = read_scope(name, text)
     warnings = []
     if not (scope.allow_hosts or scope.allow_nets or scope.allow_wildcards):
         warnings.append("this scope allows nothing: every scan with it will be refused")
-    store.save_managed_scope(name, scope.text, scope.sha256, actor)
+    proposal = None
+    if config.scope_approval:
+        proposal = store.propose_scope(
+            name,
+            action="save",
+            content=scope.text,
+            sha256=scope.sha256,
+            reason=reason,
+            actor=actor,
+            at=_now(),
+        )
+    else:
+        store.save_managed_scope(name, scope.text, scope.sha256, actor)
     # Targets already using it must still be inside it.
     for target in config.targets.values():
         if target.source == DASHBOARD and target.scope == name:
@@ -102,17 +127,100 @@ def save_scope(store: Any, config: ServiceConfig, name: str, text: str, actor: s
                 _inside(scope, target.target, target.discover or bool(target.discoverers), None)
             except ManagedError as exc:
                 warnings.append(f"target {target.name}: {exc}")
-    return Saved(name, warnings)
+    return Saved(name, warnings, proposal)
 
 
-def delete_scope(store: Any, config: ServiceConfig, name: str, actor: str) -> None:
+def delete_scope(
+    store: Any, config: ServiceConfig, name: str, actor: str, reason: str | None = None
+) -> int | None:
+    """Delete a dashboard scope — or, with scope_approval, propose it: the proposal's id."""
+    _check_unused(config, name)
+    if name not in config.scopes:
+        raise LookupError(f"no dashboard scope named {name!r}")
+    if config.scope_approval:
+        return int(
+            store.propose_scope(
+                name,
+                action="delete",
+                content=None,
+                sha256=None,
+                reason=reason,
+                actor=actor,
+                at=_now(),
+            )
+        )
+    if not store.delete_managed("scope", name, actor):
+        raise LookupError(f"no dashboard scope named {name!r}")
+    return None
+
+
+def _check_unused(config: ServiceConfig, name: str) -> None:
     users = sorted(
         t.name for t in config.targets.values() if t.source == DASHBOARD and t.scope == name
     )
     if users:
         raise ManagedError(f"scope {name!r} is used by {', '.join(users)}: change them first")
-    if not store.delete_managed("scope", name, actor):
-        raise LookupError(f"no dashboard scope named {name!r}")
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+# --- two people for a scope change (G30) -------------------------------------------------------
+
+
+def holders(config: ServiceConfig, name: str) -> list[str]:
+    """Who may know the value of token `name`: its holder, whoever issued its value (made or
+    last rotated it), whoever issued theirs, and so on. A token made by an admin is known to
+    that admin until its holder rotates it."""
+    tokens = {t.name: t for t in config.tokens}
+    chain = [name]
+    current = tokens.get(name)
+    while current is not None and current.issued_by and current.issued_by not in chain:
+        chain.append(current.issued_by)
+        current = tokens.get(current.issued_by)
+    return chain
+
+
+def why_not_decide(config: ServiceConfig, proposal: Any, actor: str, decision: str) -> str | None:
+    """Why `actor` may not take `decision` on `proposal` (None: they may)."""
+    if decision == "withdraw":
+        return None if actor == proposal["proposed_by"] else "only who proposed it can withdraw it"
+    if actor == proposal["proposed_by"]:
+        return "a second admin must decide on it, not who proposed it"
+    if decision == "approve" and proposal["proposed_by"] in holders(config, actor):
+        return (
+            f"your token's value was issued by {proposal['proposed_by']}, who proposed this: "
+            "rotate your own token first (Settings → Tokens → Rotate), so that only you know it"
+        )
+    return None
+
+
+def decide_proposal(
+    store: Any,
+    config: ServiceConfig,
+    proposal_id: int,
+    decision: str,
+    actor: str,
+    note: str | None = None,
+) -> Any:
+    """Approve, reject or withdraw a scope proposal, by the rules above."""
+    proposal = store.scope_proposal(proposal_id)
+    if proposal is None:
+        raise LookupError(f"no proposal #{proposal_id}")
+    refused = why_not_decide(config, proposal, actor, decision)
+    if refused:
+        raise NotAllowed(refused)
+    if decision == "reject" and not (note and note.strip()):
+        raise ManagedError("say why it is rejected: the proposer and the audit trail need it")
+    if decision == "approve":
+        if proposal["action"] == "delete":
+            _check_unused(config, proposal["name"])
+        else:
+            read_scope(proposal["name"], proposal["content"])  # still a valid scope
+    return store.decide_scope_proposal(
+        proposal_id, decision=decision, actor=actor, note=(note or "").strip() or None, at=_now()
+    )
 
 
 # --- targets -----------------------------------------------------------------------------------

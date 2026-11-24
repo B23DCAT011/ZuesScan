@@ -639,6 +639,18 @@ Target trên dashboard **không** trỏ được tới file trên máy chủ (cr
 những thứ đó vẫn chỉ khai trong `service.toml`. Target / token trong `service.toml` hiện ra
 nhưng chỉ đọc; trùng tên thì file thắng (mục dashboard bị bỏ và báo lại).
 
+**Hai người cho một thay đổi scope** (`[service] scope_approval = true` hoặc
+`ZUES_SCOPE_APPROVAL=on` — do người chạy máy chủ đặt, dashboard không tắt được): scope là giấy
+phép quét, nên khi bật, sửa / xoá scope trên dashboard chỉ là **đề xuất** (kèm lý do). Một admin
+**khác** xem diff trong Settings → *Scope changes waiting for approval* rồi **Approve** (thay đổi
+có hiệu lực ngay, cùng transaction với audit) hoặc **Reject** (phải ghi lý do); người đề xuất có
+thể **Withdraw**. Không duyệt được đề xuất của chính mình, cũng không duyệt bằng một token mà người
+đề xuất đã thấy giá trị (họ tạo hoặc xoay vòng nó, kể cả gián tiếp qua chuỗi token): admin mới
+nhận token xong phải tự **Rotate** để chỉ mình biết giá trị, rồi mới duyệt được. Đề xuất mới cho
+cùng scope thay đề xuất cũ; đề xuất làm trên một scope đã đổi từ đó thì không duyệt được (đề xuất
+lại). Mỗi bước vào audit và gửi cảnh báo `config_changed`. Ngoài phạm vi: người có quyền vào máy
+chủ (sửa `service.toml`, chạy `zues user`) — lớp kiểm soát đó là quyền hệ điều hành và audit.
+
 Trang **Settings**: bảng target / scope / token (mục của `service.toml` có nhãn riêng, chỉ
 đọc); form scope có sẵn mẫu và cú pháp các chỉ thị; form target chọn scope, profile, lịch quét
 và tool theo từng loại — mỗi tool ghi mức chủ động và báo nếu máy chủ chưa cài. Lỗi (vd target

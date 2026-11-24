@@ -11,6 +11,7 @@ pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
 pytest.importorskip("fakeredis")
 
+from fastapi.testclient import TestClient  # noqa: E402
 from test_server_web import ALICE, BOB, TOKENS, App, _lab, config_text, sha  # noqa: E402,F401
 
 from zues_scan.storage import Storage  # noqa: E402
@@ -374,3 +375,179 @@ def test_every_settings_change_raises_an_alert_with_its_audit_event(svc: App) ->
         "the audit trail",
     ]
     assert made["token"] not in repr(rows) and sha(made["token"]) not in repr(rows)
+
+
+# --- two people for a scope change (G30) ---------------------------------------------------------
+
+
+def with_approval(svc: App, on: bool = True, extra: str = "") -> None:
+    text = config_text(svc.dir.as_posix(), TOKENS + ADMIN) + extra
+    if on:
+        text = text.replace('queue = "web"\n', 'queue = "web"\nscope_approval = true\n', 1)
+    svc.rewrite(text)
+
+
+def admin_token(svc: App, name: str) -> str:
+    made = svc.client(ROOT).post("/api/v1/admin/tokens", json={"name": name, "role": "admin"})
+    assert made.status_code == 201, made.text
+    return str(made.json()["token"])
+
+
+def rotated_admin(svc: App, name: str) -> TestClient:
+    """A second admin who rotated the token root made, so that only they know it."""
+    first = svc.client(admin_token(svc, name))
+    value = first.post(f"/api/v1/admin/tokens/{name}/rotate", json={}).json()["token"]
+    return svc.client(value)
+
+
+def test_with_approval_a_scope_change_waits_for_a_second_admin(svc: App) -> None:
+    with_approval(svc)
+    carol = admin_token(svc, "carol")  # made by root: root has seen its value
+    root = svc.client(ROOT)
+
+    proposed = root.put("/api/v1/admin/scopes/lab2", json={"text": SCOPE, "reason": "PT-9 signed"})
+    assert proposed.status_code == 202, proposed.text
+    pid = proposed.json()["proposal"]
+    settings = root.get("/api/v1/admin/config").json()
+    assert settings["scope_approval"] is True
+    assert [s["name"] for s in settings["scopes"] if s["source"] == "dashboard"] == []  # not yet
+    (pending,) = settings["proposals"]
+    assert (pending["id"], pending["proposed_by"], pending["reason"]) == (
+        pid,
+        "root",
+        "PT-9 signed",
+    )
+    assert pending["can"] == {"approve": False, "reject": False, "withdraw": True}
+
+    own = root.post(f"/api/v1/admin/proposals/{pid}/approve", json={})
+    assert own.status_code == 403 and "second admin" in own.json()["detail"]
+    issued = svc.client(carol).post(f"/api/v1/admin/proposals/{pid}/approve", json={})
+    assert issued.status_code == 403 and "rotate your own token" in issued.json()["detail"]
+
+    rotated = svc.client(carol).post("/api/v1/admin/tokens/carol/rotate", json={})
+    approved = svc.client(rotated.json()["token"]).post(
+        f"/api/v1/admin/proposals/{pid}/approve", json={}
+    )
+
+    assert approved.status_code == 200 and approved.json()["status"] == "approved"
+    scopes = root.get("/api/v1/admin/config").json()["scopes"]
+    assert [s["name"] for s in scopes if s["source"] == "dashboard"] == ["lab2"]
+    with Storage(svc.db) as store:
+        events = [e for _, e, _ in store.audit_events() if e.target == "scope:lab2"]
+    assert [(e.operator, e.detail["action"]) for e in events] == [
+        ("root", "scope change proposed"),
+        ("carol", "scope saved"),
+    ]
+    assert (events[1].detail["proposed_by"], events[1].detail["approved_by"]) == ("root", "carol")
+
+
+def test_a_chain_of_issued_tokens_cannot_approve_for_its_origin(svc: App) -> None:
+    with_approval(svc)
+    carol = svc.client(admin_token(svc, "carol"))  # root -> carol
+    dave = carol.post("/api/v1/admin/tokens", json={"name": "dave", "role": "admin"})
+    root = svc.client(ROOT)
+    pid = root.put("/api/v1/admin/scopes/lab2", json={"text": SCOPE}).json()["proposal"]
+
+    # dave's value was issued by carol, whose value root has seen: root could be dave.
+    refused = svc.client(dave.json()["token"]).post(f"/api/v1/admin/proposals/{pid}/approve")
+    assert refused.status_code == 403
+
+
+def test_a_proposal_against_an_older_scope_is_not_approved(svc: App) -> None:
+    with_approval(svc)
+    carol = rotated_admin(svc, "carol")
+    root = svc.client(ROOT)
+    pid = root.put("/api/v1/admin/scopes/lab2", json={"text": SCOPE}).json()["proposal"]
+    with_approval(svc, on=False)  # the server's operator turns approval off for a moment
+    assert root.put("/api/v1/admin/scopes/lab2", json={"text": SCOPE + "10.0.1.0/24\n"}).is_success
+    with_approval(svc)
+
+    stale = carol.post(f"/api/v1/admin/proposals/{pid}/approve", json={})
+
+    assert stale.status_code == 409 and "changed since" in stale.json()["detail"]
+    (row,) = root.get("/api/v1/admin/proposals", params={"all": True}).json()
+    assert row["status"] == "superseded"
+
+
+def test_reject_needs_a_reason_and_only_the_proposer_withdraws(svc: App) -> None:
+    with_approval(svc)
+    carol = svc.client(admin_token(svc, "carol"))
+    root = svc.client(ROOT)
+    first = root.put("/api/v1/admin/scopes/lab2", json={"text": SCOPE}).json()["proposal"]
+
+    assert carol.post(f"/api/v1/admin/proposals/{first}/reject", json={}).status_code == 422
+    assert carol.post(f"/api/v1/admin/proposals/{first}/withdraw", json={}).status_code == 403
+    rejected = carol.post(
+        f"/api/v1/admin/proposals/{first}/reject", json={"note": "no signed authorisation yet"}
+    )
+    assert rejected.json()["status"] == "rejected"
+    again = carol.post(f"/api/v1/admin/proposals/{first}/reject", json={"note": "x"})
+    assert again.status_code == 409  # decided already
+
+    second = root.put("/api/v1/admin/scopes/lab2", json={"text": SCOPE}).json()["proposal"]
+    third = root.put("/api/v1/admin/scopes/lab2", json={"text": SCOPE + "#v3\n"}).json()
+    statuses = {
+        p["id"]: p["status"]
+        for p in root.get("/api/v1/admin/proposals", params={"all": True}).json()
+    }
+    assert statuses[second] == "superseded" and statuses[third["proposal"]] == "pending"
+    withdrawn = root.post(f"/api/v1/admin/proposals/{third['proposal']}/withdraw", json={})
+    assert withdrawn.json()["status"] == "withdrawn"
+    assert root.get("/api/v1/admin/proposals").json() == []
+
+
+def test_deleting_a_scope_is_a_proposal_too(svc: App) -> None:
+    with_approval(svc, on=False)
+    root = svc.client(ROOT)
+    root.put("/api/v1/admin/scopes/lab2", json={"text": SCOPE})
+    root.put("/api/v1/admin/targets/web", json={"target": "scanme.lab", "scope": "lab2"})
+    with_approval(svc)
+    carol = rotated_admin(svc, "carol")
+
+    in_use = root.delete("/api/v1/admin/scopes/lab2")
+    assert in_use.status_code == 422 and "used by web" in in_use.json()["detail"]
+    root.delete("/api/v1/admin/targets/web")
+    proposed = root.delete("/api/v1/admin/scopes/lab2", params={"reason": "engagement over"})
+    assert proposed.status_code == 202
+    pid = proposed.json()["proposal"]
+    assert any(s["name"] == "lab2" for s in root.get("/api/v1/admin/config").json()["scopes"])
+
+    assert carol.post(f"/api/v1/admin/proposals/{pid}/approve", json={}).status_code == 200
+    scopes = root.get("/api/v1/admin/config").json()["scopes"]
+    assert not any(s["name"] == "lab2" for s in scopes)
+
+
+def test_each_step_of_a_proposal_is_announced(svc: App) -> None:
+    with_approval(svc, extra=NOTIFY)
+    carol = svc.client(admin_token(svc, "carol"))
+    root = svc.client(ROOT)
+    pid = root.put("/api/v1/admin/scopes/lab2", json={"text": SCOPE}).json()["proposal"]
+    carol.post(f"/api/v1/admin/proposals/{pid}/reject", json={"note": "not signed"})
+
+    with Storage(svc.db) as store:
+        texts = [json.loads(r["payload"])["text"] for r in store.alert_rows()]
+    assert (
+        "ZuesScan: root: scope change proposed — scope lab2: it waits for another admin's "
+        "approval; see the audit trail"
+    ) in texts
+    assert (
+        "ZuesScan: carol: scope change rejected — scope lab2: nothing changed; see the audit trail"
+    ) in texts
+
+
+def test_scope_approval_is_set_by_the_server_not_the_dashboard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from zues_scan.server.config import ConfigError, from_environment, load_config
+
+    (tmp_path / "s.toml").write_text(
+        f'[service]\ndb = "{tmp_path.as_posix()}/x.db"\nscope_approval = "yes"\n', encoding="utf-8"
+    )
+    with pytest.raises(ConfigError, match="scope_approval must be true or false"):
+        load_config(tmp_path / "s.toml")
+    monkeypatch.setenv("ZUES_DB", str(tmp_path / "x.db"))
+    monkeypatch.setenv("ZUES_SCOPE_APPROVAL", "on")
+    assert from_environment().scope_approval is True
+    monkeypatch.setenv("ZUES_SCOPE_APPROVAL", "maybe")
+    with pytest.raises(ConfigError, match="ZUES_SCOPE_APPROVAL must be on or off"):
+        from_environment()

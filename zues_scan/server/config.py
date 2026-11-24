@@ -12,6 +12,7 @@ target by its `name`; it never brings its own address, scope file or options.
     dns_wordlist = "/config/words.txt"   # optional: dnsx's wordlist (default: ZuesScan's)
     redis_url = "redis://redis:6379/0"
     queue = "zues"
+    scope_approval = false         # true: a scope change in the dashboard needs a 2nd admin
 
     [[tokens]]                     # who may use the API; `name` is recorded as operator
     name = "alice"
@@ -70,6 +71,9 @@ class Token:
     role: str
     source: str = FILE
     expires_at: datetime | None = None  # not accepted from then on (None: never)
+    # Who last saw this token's value (made or rotated it): a dashboard token's admin, or
+    # its own name once its holder rotated it. None: from service.toml (nobody in ZuesScan).
+    issued_by: str | None = None
 
     def expired(self, at: datetime) -> bool:
         return self.expires_at is not None and at >= self.expires_at
@@ -124,6 +128,9 @@ class ServiceConfig:
     # Dashboard entries left out (e.g. a name service.toml took since): shown to admins.
     problems: tuple[str, ...] = ()
     managed_version: int = 0  # of the dashboard's configuration, when it was read
+    # Two people for a scope change in the dashboard (G30): set by whoever runs the server
+    # (service.toml or ZUES_SCOPE_APPROVAL), never from the dashboard itself.
+    scope_approval: bool = False
 
     def target(self, name: str) -> Target:
         try:
@@ -178,6 +185,7 @@ def from_environment() -> ServiceConfig:
         queue=env.get("ZUES_QUEUE") or "zues",
         cve_cache=env.get("ZUES_CVE_CACHE") or None,
         notify=notify,
+        scope_approval=_switch(env.get("ZUES_SCOPE_APPROVAL"), "ZUES_SCOPE_APPROVAL"),
     )
     return with_dashboard(config)
 
@@ -207,9 +215,13 @@ def load_config(path: str | Path | None = None) -> ServiceConfig:
             "nuclei_templates",
             "subfinder_config",
             "dns_wordlist",
+            "scope_approval",
         },
         "[service]",
     )
+    approval = service.get("scope_approval", False)
+    if not isinstance(approval, bool):
+        raise ConfigError("[service] scope_approval must be true or false")
     if "db" not in service:
         raise ConfigError(f"{path}: [service] needs db = <path of the database>")
     tokens = tuple(_token(t, i) for i, t in enumerate(data.get("tokens", []), start=1))
@@ -236,8 +248,19 @@ def load_config(path: str | Path | None = None) -> ServiceConfig:
         tokens=tokens,
         targets=targets,
         notify=notify,
+        scope_approval=approval,
     )
     return with_dashboard(config)
+
+
+def _switch(value: str | None, name: str) -> bool:
+    """An on/off environment variable; empty or unset: off."""
+    text = (value or "").strip().lower()
+    if text in ("", "0", "off", "false", "no"):
+        return False
+    if text in ("1", "on", "true", "yes"):
+        return True
+    raise ConfigError(f"{name} must be on or off")
 
 
 def _notify(raw: dict[str, Any], where: str) -> Notify:
@@ -324,6 +347,7 @@ def with_dashboard(config: ServiceConfig) -> ServiceConfig:
                 row["role"],
                 source=DASHBOARD,
                 expires_at=datetime.fromisoformat(expires) if expires else None,
+                issued_by=row["rotated_by"] or row["created_by"],
             )
         )
     return replace(

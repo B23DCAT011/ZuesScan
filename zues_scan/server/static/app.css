@@ -195,3 +195,8 @@ section .toolbar h2 { margin-right: 8px; }
 .added { color: var(--sev-critical); }
 .removed { color: var(--sev-none); }
 .changed { color: var(--sev-medium); }
+
+/* A scope proposal's diff: one line per div, + and - coloured as in Compare. */
+pre.diff { padding: 0.5rem 0.75rem; max-height: 24rem; overflow: auto; }
+pre.diff div.added { color: var(--sev-critical); font-weight: 400; }
+pre.diff div.removed { color: var(--sev-none); font-weight: 400; text-decoration: line-through; }
