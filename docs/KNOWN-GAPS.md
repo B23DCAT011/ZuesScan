@@ -340,8 +340,10 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     chạy lại được), quét không bắt đầu được (scope từ chối, vd uỷ quyền hết hạn), job hỏng không
     lưu được run (callback `on_failure` của RQ — cả khi RQ dọn job của worker đã chết). Còn lại:
     worker bị giết cứng (OOM) chỉ được báo khi RQ dọn registry của nó, có thể chậm vài phút.
-  - Lịch chỉ có dạng "mỗi N phút / giờ / ngày", chưa có cron (vd "2 giờ sáng thứ Bảy") — kết
-    hợp được với khung giờ `@window` của scope. Lịch tính từ lần quét trước nên trôi dần.
+  - ✅ Lịch cron + lịch không trôi (`feat/cron-schedule`): `cron = "0 2 * * sat Asia/Ho_Chi_Minh"`
+    (múi giờ IANA có giờ mùa hè, hoặc độ lệch), tối thiểu 5 phút; mốc lịch lưu trong Redis nên
+    `every` không trôi theo thời gian chờ hàng đợi; lỡ nhiều mốc thì bù một lần. Còn lại: Redis mất
+    dữ liệu thì mốc rơi về lịch sử quét (có thể lệch một lần); chưa có "không quét vào ngày lễ".
   - ✅ Web (`feat/web`): API + dashboard dùng token.
   - ✅ Phiên & đăng nhập sai (`feat/web-sessions`, schema 15): cookie chỉ chứa khoá ngẫu nhiên của
     một **phiên do server giữ** (DB lưu SHA-256 của khoá + token đã mở phiên); hết khi đăng xuất

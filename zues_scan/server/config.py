@@ -24,6 +24,7 @@ target by its `name`; it never brings its own address, scope file or options.
     scope = "/config/scope-office.txt"
     profile = "full"
     every = "24h"                  # optional: scheduled scan (m, h or d)
+    # or: cron = "0 2 * * sat Asia/Ho_Chi_Minh"   (at fixed times; not both)
     engagement = "PT-2026-014"
     nuclei = false                 # or: checks = ["nuclei"] (plugin names: zues plugins)
     discover_limit = 1000          # with discover = true: names considered at most
@@ -45,6 +46,8 @@ from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
+
+from zues_scan.server.cron import Cron, CronError
 
 ROLES = ("viewer", "operator", "admin")
 # What each role may do includes what the roles before it may: an admin is an operator too.
@@ -75,6 +78,7 @@ class Target:
     profile: str = "standard"
     config: str | None = None  # TOML with more profiles
     every: timedelta | None = None
+    cron: Cron | None = None  # at fixed times instead of `every`
     engagement: str | None = None
     nuclei: bool = False
     discover: bool = False
@@ -325,6 +329,7 @@ DASHBOARD_KEYS = (
     "scope",
     "profile",
     "every",
+    "cron",
     "engagement",
     "scanners",
     "checks",
@@ -379,6 +384,7 @@ def _target(raw: dict[str, Any], i: int, dashboard_scopes: dict[str, str] | None
         "profile",
         "config",
         "every",
+        "cron",
         "engagement",
         "nuclei",
         "discover",
@@ -409,6 +415,14 @@ def _target(raw: dict[str, Any], i: int, dashboard_scopes: dict[str, str] | None
     engagement = raw.get("engagement")
     if engagement is not None and not isinstance(engagement, str):
         raise ConfigError(f"{where} ({name}): engagement must be text")
+    if raw.get("every") and raw.get("cron"):
+        raise ConfigError(f"{where} ({name}): every or cron, not both")
+    cron = None
+    if raw.get("cron"):
+        try:
+            cron = Cron.parse(str(raw["cron"]))
+        except CronError as exc:
+            raise ConfigError(f"{where} ({name}): {exc}") from None
     return Target(
         name=name,
         target=target,
@@ -416,6 +430,7 @@ def _target(raw: dict[str, Any], i: int, dashboard_scopes: dict[str, str] | None
         profile=str(raw.get("profile", "standard")),
         config=raw.get("config"),
         every=parse_every(raw["every"]) if raw.get("every") else None,
+        cron=cron,
         engagement=raw.get("engagement"),
         nuclei=bool(raw.get("nuclei", False)),
         discover=bool(raw.get("discover", False)),

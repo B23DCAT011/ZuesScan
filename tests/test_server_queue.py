@@ -402,3 +402,41 @@ def test_each_scheduler_round_sends_the_waiting_alerts(
     scheduler.run_forever(service, q, sleep=lambda _: None, rounds=2)
 
     assert flushed == [service.db, service.db]
+
+
+def test_a_cron_target_is_queued_at_its_times(tmp_path: Path) -> None:
+    write_service(tmp_path)
+    with (tmp_path / "service.toml").open("a", encoding="utf-8") as handle:
+        d = tmp_path.as_posix()
+        handle.write(
+            f'\n[[targets]]\nname = "weekly"\ntarget = "scanme.lab"\nscope = "{d}/scope.txt"\n'
+            'profile = "full"\ncron = "0 2 * * sat +07:00"\n'
+        )
+    service = load_config(tmp_path / "service.toml")
+    q = rkqueue.queue(service, connection=fakeredis.FakeRedis())
+    tuesday = datetime(2026, 11, 24, 3, 0, tzinfo=UTC)
+    saturday_2am = datetime(2026, 11, 27, 19, 0, tzinfo=UTC)  # 02:00 +07:00
+
+    assert "weekly" not in scheduler.tick(service, q, now=tuesday)  # added after its time
+    assert "weekly" not in scheduler.tick(service, q, now=saturday_2am - timedelta(minutes=1))
+    assert "weekly" in scheduler.tick(service, q, now=saturday_2am + timedelta(seconds=30))
+    assert "weekly" not in scheduler.tick(service, q, now=saturday_2am + timedelta(minutes=1))
+
+
+def test_cron_and_every_are_checked(tmp_path: Path) -> None:
+    write_service(tmp_path)
+    d = tmp_path.as_posix()
+    base = (tmp_path / "service.toml").read_text(encoding="utf-8")
+    for extra, message in (
+        ('every = "1h"\ncron = "0 2 * * *"\n', "every or cron, not both"),
+        ('cron = "* * * * *"\n', "at least 5 minutes"),
+        ('cron = "0 2 * * sat Mars/Base"\n', "time zone 'Mars/Base'"),
+    ):
+        (tmp_path / "service.toml").write_text(
+            base
+            + f'\n[[targets]]\nname = "x"\ntarget = "scanme.lab"\nscope = "{d}/scope.txt"\n'
+            + extra,
+            encoding="utf-8",
+        )
+        with pytest.raises(ConfigError, match=message):
+            load_config(tmp_path / "service.toml")

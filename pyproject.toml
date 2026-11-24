@@ -25,6 +25,9 @@ server = [
     "uvicorn>=0.29",
     "redis>=5.0",
     "rq>=1.16",
+    # IANA time zones for cron schedules (cron = "0 2 * * sat Europe/Berlin"): Linux and
+    # macOS have them; Windows needs the data as a package.
+    "tzdata; sys_platform == 'win32'",
 ]
 # `zues mcp`: ZuesScan as tools for AI agents (Model Context Protocol), as a client
 # of a running ZuesScan service. Needed only on the machine that runs the agent.

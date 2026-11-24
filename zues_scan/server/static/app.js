@@ -303,7 +303,7 @@
         el("td", null, el("strong", null, t.name)),
         el("td", { class: "mono" }, t.target),
         el("td", null, t.profile),
-        el("td", null, every(t.every_seconds)),
+        el("td", null, t.cron ? el("span", { class: "mono" }, "cron " + t.cron) : every(t.every_seconds)),
         el("td", { class: "nowrap" }, when(t.last_started_at)),
         el("td", null, t.engagement || "-"),
         el("td", null, flags || "-"),
@@ -593,7 +593,7 @@
         el("span", { class: "mono" }, t.target),
         t.scope || el("span", { class: "muted" }, "(file)"),
         t.profile,
-        t.every || el("span", { class: "muted" }, "on demand"),
+        t.cron ? el("span", { class: "mono" }, t.cron) : t.every || el("span", { class: "muted" }, "on demand"),
         tools,
         source(t.source),
         t.source === "dashboard" ? el("a", { href: "#/settings/target/" + encodeURIComponent(t.name) }, "Edit") : "",
@@ -824,7 +824,7 @@
     var isNew = name === "new";
     var t = cfg.targets.filter(function (x) { return x.source === "dashboard" && x.name === name; })[0];
     if (!isNew && !t) throw new Error("no dashboard target named " + name);
-    t = t || { target: "", scope: null, profile: "standard", every: null, engagement: null,
+    t = t || { target: "", scope: null, profile: "standard", every: null, cron: null, engagement: null,
       scanners: ["nmap"], checks: [], discoverers: [], discover_limit: null, ipv4_only: false };
     var scopes = cfg.scopes.filter(function (s) { return s.source === "dashboard"; });
     var nameInput = el("input", { id: "target-name", maxlength: "64", required: true, pattern: NAME_PATTERN,
@@ -837,7 +837,11 @@
     var profile = el("select", { id: "target-profile" }, cfg.profiles.map(function (p) {
       return el("option", { value: p.name, selected: p.name === t.profile ? true : null }, p.name + " — " + p.description);
     }));
-    var every = el("input", { id: "target-every", maxlength: "16", value: t.every || "", placeholder: "e.g. 24h — empty: only when asked" });
+    // One box for both kinds of schedule: "24h" (every), or a cron line (it has spaces).
+    var every = el("input", {
+      id: "target-every", maxlength: "80", value: t.cron || t.every || "",
+      placeholder: "24h, or a cron line: 0 2 * * sat Asia/Ho_Chi_Minh — empty: only when asked",
+    });
     var engagement = el("input", { id: "target-engagement", maxlength: "200", value: t.engagement || "" });
     var limit = el("input", { id: "target-limit", type: "number", min: "1", max: "100000", value: t.discover_limit || "" });
     var ipv4 = el("input", { id: "target-ipv4", type: "checkbox", checked: t.ipv4_only ? true : null });
@@ -860,7 +864,9 @@
       el("label", null, "Target", address),
       el("label", null, "Scope (the authorisation it is checked against)", scope),
       el("label", null, "Profile", profile),
-      el("label", null, "Schedule", every),
+      el("label", null, "Schedule", every,
+        el("span", { class: "muted small" },
+          " every 30m / 6h / 1d, or cron: minute hour day month weekday [time zone], at least 5 minutes apart")),
       el("label", null, "Engagement (recorded with every run)", engagement),
       groups,
       el("label", null, "Names considered at most, with discovery (default 1000)", limit),
@@ -875,7 +881,9 @@
       var target = isNew ? nameInput.value.trim() : name;
       var body = {
         target: address.value.trim(), scope: scope.value, profile: profile.value,
-        every: every.value.trim() || null, engagement: engagement.value.trim() || null,
+        every: /\s/.test(every.value.trim()) ? null : every.value.trim() || null,
+        cron: /\s/.test(every.value.trim()) ? every.value.trim() : null,
+        engagement: engagement.value.trim() || null,
         discover_limit: limit.value ? parseInt(limit.value, 10) : null, ipv4_only: ipv4.checked,
       };
       KINDS.forEach(function (k) {

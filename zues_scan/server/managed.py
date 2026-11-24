@@ -121,7 +121,7 @@ def delete_scope(store: Any, config: ServiceConfig, name: str, actor: str) -> No
 def target_settings(body: dict[str, Any]) -> dict[str, Any]:
     """The settings to keep, from what the dashboard sent (empty values left out)."""
     settings: dict[str, Any] = {}
-    for key in ("target", "scope", "profile", "every", "engagement"):
+    for key in ("target", "scope", "profile", "every", "cron", "engagement"):
         value = body.get(key)
         if isinstance(value, str) and value.strip():
             settings[key] = value.strip()
