@@ -9,6 +9,16 @@ The schema is versioned. Opening a database brings it up to `SCHEMA_VERSION` by
 applying, in order, the migrations it has not seen yet; the `schema_version` table
 records each one. A fresh database simply starts at version 0 and takes the same path,
 so there is one way to build the schema and every migration is exercised by every test.
+
+The database uses write-ahead logging (WAL): the web (reading, recording sessions) and the
+workers (saving runs) do not wait for one another — a long read no longer holds a run's
+save back, and a save no longer blocks readers. The mode is kept in the file; it is set
+when a database is created or migrated, and by the services when they start
+(`prefer_wal`: e.g. after a backup was restored), never by merely opening a database —
+a backup stays byte for byte what its recorded SHA-256 says. WAL needs a local disk
+(shared memory next to the file): on a network share SQLite stays in its default mode,
+which is logged. Writers still take turns; a busy database is waited on for up to
+`BUSY_SECONDS`.
 """
 
 from __future__ import annotations
@@ -45,6 +55,9 @@ log = logging.getLogger(__name__)
 # The schema version this code reads and writes. Bump it together with a new entry
 # in `_MIGRATIONS`; never edit a migration that has already shipped.
 SCHEMA_VERSION = 16
+
+# How long a writer waits for another to finish before "database is locked".
+BUSY_SECONDS = 15.0
 
 
 class StorageError(Exception):
@@ -597,13 +610,14 @@ class Storage:
         # Set when opening this database upgraded an older one: where its copy is.
         self.backup_path: str | None = None
         try:
-            self._conn = sqlite3.connect(self.path)
+            self._conn = sqlite3.connect(self.path, timeout=BUSY_SECONDS)
         except sqlite3.Error as exc:
             raise StorageError(f"cannot open database {self.path}: {exc}") from exc
         self._conn.row_factory = sqlite3.Row
         try:
             before = self.schema_version()
-            self._migrate()
+            if self._migrate():
+                self.use_wal()  # written anyway: created or upgraded
             self._conn.execute("PRAGMA foreign_keys = ON")
             if 0 < before < 11 <= SCHEMA_VERSION:
                 self.rebuild_inventory()  # runs stored before the inventory existed
@@ -637,8 +651,8 @@ class Storage:
         # Version 1 shipped before the schema was versioned: recognise it by its tables.
         return 1 if "scan_run" in tables else 0
 
-    def _migrate(self) -> None:
-        """Bring the database up to `SCHEMA_VERSION`, all or nothing."""
+    def _migrate(self) -> bool:
+        """Bring the database up to `SCHEMA_VERSION`, all or nothing; True if it changed."""
         current = self.schema_version()
         if current > SCHEMA_VERSION:
             # Never touch data written by a newer version: we could corrupt it.
@@ -647,7 +661,7 @@ class Storage:
                 f"understands up to v{SCHEMA_VERSION}; upgrade ZuesScan"
             )
         if current == SCHEMA_VERSION:
-            return
+            return False
         if current > 0:
             self._backup(current)
             log.info(
@@ -690,6 +704,24 @@ class Storage:
         except BaseException:
             conn.rollback()  # DDL is transactional in SQLite: the old schema is intact
             raise
+        return True
+
+    def use_wal(self) -> str:
+        """Switch the database to write-ahead logging (kept in the file); the mode now."""
+        if self.path == ":memory:":
+            return self.journal_mode()
+        mode = str(self._conn.execute("PRAGMA journal_mode = WAL").fetchone()[0]).lower()
+        if mode != "wal":
+            log.warning(
+                "%s cannot use write-ahead logging (journal mode stays %s): readers and "
+                "writers will wait for each other; keep the database on a local disk",
+                self.path,
+                mode,
+            )
+        return mode
+
+    def journal_mode(self) -> str:
+        return str(self._conn.execute("PRAGMA journal_mode").fetchone()[0]).lower()
 
     def _backup(self, version: int) -> None:
         """Copy the database aside before changing its schema."""
@@ -699,6 +731,7 @@ class Storage:
         target = sqlite3.connect(backup_path)
         try:
             self._conn.backup(target)  # a consistent snapshot, unlike copying the file
+            target.execute("PRAGMA journal_mode = DELETE")  # one self-contained file
         finally:
             target.close()
         self.backup_path = backup_path
@@ -1652,6 +1685,19 @@ class Storage:
         """The findings recorded for a run, each with the service it was found on."""
         run = self.load_run(run_id)
         return [f for a in run.assets for f in a.findings] if run else []
+
+
+def prefer_wal(path: str | Path) -> str | None:
+    """At a service's start: the database (if there is one yet) in write-ahead logging,
+    e.g. again after a backup — which is kept in the default mode — was restored."""
+    if not Path(path).is_file():
+        return None  # created later, by the first write, already in WAL
+    try:
+        with Storage(path) as store:
+            return store.use_wal()
+    except (StorageError, sqlite3.Error) as exc:
+        log.warning("could not switch %s to write-ahead logging: %s", path, exc)
+        return None
 
 
 def _service(row: sqlite3.Row) -> Service:

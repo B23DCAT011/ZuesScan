@@ -314,8 +314,21 @@ def check_service(config_path: str) -> list[Check]:
         try:
             conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True)
             conn.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()
+            mode = str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower()
             conn.close()
-            checks.append(Check("database", OK, str(db)))
+            if mode == "wal":
+                checks.append(Check("database", OK, f"{db} (write-ahead logging)"))
+            else:
+                checks.append(
+                    Check(
+                        "database",
+                        WARN,
+                        f"{db}: journal mode {mode}, not write-ahead logging: the web and the "
+                        "workers wait for each other",
+                        "start a service (it switches the database), and keep the database "
+                        "on a local disk: WAL does not work on a network share",
+                    )
+                )
         except sqlite3.Error as exc:
             checks.append(Check("database", ERROR, f"{db}: {exc}", required=True))
     try:

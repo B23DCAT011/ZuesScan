@@ -126,3 +126,19 @@ def test_cli_backup_and_verify(
 
     assert cli.main(["backup", "--db", str(tmp_path / "none.db")]) == 2
     assert cli.main(["backup", "--db", str(db), "--keep", "0"]) == 2
+
+
+def test_a_backup_is_one_file_and_holds_what_the_log_still_has(db: Path, tmp_path: Path) -> None:
+    with Storage(db) as live:  # a service keeps it open: recent writes sit in the -wal
+        assert live.journal_mode() == "wal"
+        live.record_refusal(
+            "10.9.9.9", "not in the scope", operator="alice", engagement=None, scope_sha256=None
+        )
+        made = backups.backup(db, tmp_path / "out")
+
+    copy = Path(made.check.path)
+    header = copy.read_bytes()[18:20]
+    assert header == b"\x01\x01"  # rollback-journal mode: nothing else is needed
+    assert not copy.with_name(copy.name + "-wal").exists()
+    assert made.check.ok and made.check.audit_events == 2  # the refusal is in it
+    assert backups.verify(copy).ok
