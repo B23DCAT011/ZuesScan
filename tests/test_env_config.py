@@ -113,7 +113,9 @@ def test_user_add_list_and_rotate_with_expiry(capsys: pytest.CaptureFixture[str]
     old = first.splitlines()[1]
     assert main(["user", "rotate", "ci", "--expires", "1y"]) == 0
     new = capsys.readouterr().out.splitlines()[1]
-    config = load_config()
-    from zues_scan.server.web import match_token
+    # The core install has no web server: compare the stored hashes directly.
+    import hashlib
 
-    assert match_token(config, old) is None and match_token(config, new) is not None
+    hashes = {t.sha256 for t in load_config().tokens}
+    assert hashlib.sha256(old.encode()).hexdigest() not in hashes
+    assert hashlib.sha256(new.encode()).hexdigest() in hashes
