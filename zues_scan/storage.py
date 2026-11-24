@@ -617,6 +617,9 @@ class Storage:
         self.path = str(path)
         # Set when opening this database upgraded an older one: where its copy is.
         self.backup_path: str | None = None
+        # Set by the service when it has a webhook: each change of a scope, target or token
+        # queues a `config_changed` alert with its audit event (G30).
+        self.config_alerts = False
         try:
             self._conn = sqlite3.connect(self.path, timeout=BUSY_SECONDS)
         except sqlite3.Error as exc:
@@ -1227,7 +1230,7 @@ class Storage:
         event: AuditEvent,
         snapshot: tuple[str, str] | None = None,
     ) -> None:
-        """One change, its audit event and the version bump: all or nothing."""
+        """One change, its audit event, its alert and the version bump: all or nothing."""
         self._conn.execute("BEGIN IMMEDIATE")
         with self._conn:
             self._conn.execute(sql, params)
@@ -1235,6 +1238,8 @@ class Storage:
                 self._keep_scope(*snapshot)
             self._append_audit(event)
             self._conn.execute("UPDATE managed_meta SET value = value + 1 WHERE key = 'version'")
+            if self.config_alerts:
+                self._queue_alert(_config_alert(event), event.at, None)
 
     def _keep_scope(self, sha256: str | None, text: str | None) -> None:
         if sha256 and text is not None:
@@ -1794,6 +1799,40 @@ def _event(row: sqlite3.Row) -> AuditEvent:
         engagement=row["engagement"],
         scope_sha256=row["scope_sha256"],
         detail=json.loads(row["detail"]),
+    )
+
+
+# What a change of each kind means, for the person reading the alert.
+_WHY = {
+    "scope": "what may be scanned changed",
+    "target": "what is scanned, how or when changed",
+    "token": "who may use ZuesScan changed",
+}
+
+
+def _config_alert(event: AuditEvent) -> Alert:
+    """A change made in the dashboard (or with zues user), for whoever watches the webhook:
+    one admin can widen what may be scanned, so the others should know at once."""
+    kind, _, name = event.target.partition(":")
+    action = str(event.detail.get("action", "changed"))
+    extra = ""
+    if kind == "token" and event.detail.get("role"):
+        extra = f" (role {event.detail['role']})"
+    return Alert(
+        "config_changed",
+        {
+            "kind": "config_changed",
+            "text": (
+                f"ZuesScan: {event.operator or 'someone'}: {action} — {kind} {name}{extra}: "
+                f"{_WHY.get(kind, 'the configuration changed')}; see the audit trail"
+            ),
+            "what": kind,
+            "name": name,
+            "action": action,
+            "by": event.operator,
+            "engagement": event.engagement,
+            "scope_sha256": event.scope_sha256,
+        },
     )
 
 
