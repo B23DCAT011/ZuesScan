@@ -925,6 +925,11 @@ def _cmd_scheduler(args: argparse.Namespace) -> int:
             print(f"error: cannot reach Redis at {where}: {exc}", file=sys.stderr)
             return 1
         print(f"enqueued: {', '.join(names) or 'nothing due'}")
+        from zues_scan.server import notify
+
+        sent = notify.flush(config)
+        if sent.sent or sent.retrying or sent.gave_up:
+            print(f"alerts: {sent.sent} sent, {sent.retrying} to retry, {sent.gave_up} given up")
         return 0
     scheduled = [t.name for t in config.targets.values() if t.every]
     print(

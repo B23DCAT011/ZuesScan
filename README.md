@@ -498,6 +498,8 @@ engagement = "PT-2026-014"
 [notify]
 webhook = "https://hooks.slack.com/services/…"   # tuỳ chọn, payload kiểu Slack {"text": …}
 min_priority = "P2"                              # báo finding mới từ mức này trở lên
+secret = "…"          # tuỳ chọn, ≥ 16 ký tự: ký mỗi cảnh báo bằng HMAC-SHA256
+failed_scans = 3      # báo khi các lần quét một target hỏng chừng này lần liền
 ```
 
 ```bash
@@ -524,10 +526,37 @@ zues scheduler --config service.toml --once                      # một vòng r
   đọc lại cấu hình: target thêm / sửa trên dashboard hay trong `service.toml` được lên lịch
   ngay, không cần khởi động lại; cấu hình hỏng thì không xếp gì (ghi log mỗi vòng) cho tới
   khi sửa xong. Chỉ đổi Redis URL / tên queue mới phải khởi động lại.
-- **Cảnh báo** (webhook) chỉ gửi khi bức tranh thay đổi: **fix giả** (đã báo sửa mà vẫn còn),
-  finding **xuất hiện lại**, và finding **mới** có mức ưu tiên từ `min_priority` trở lên. Payload
-  có `text` cho Slack và cả danh sách có cấu trúc (`items`) cho hệ thống khác. Không gửi được thì
-  chỉ ghi cảnh báo vào log — lần quét vẫn được lưu.
+- **Cảnh báo** (webhook) chỉ gửi khi có chuyện cần người xem: **fix giả** (đã báo sửa mà vẫn
+  còn), finding **xuất hiện lại**, finding **mới** từ `min_priority` trở lên (một cảnh báo mỗi
+  run); quét một target **hỏng `failed_scans` lần liền** (một lần, không phải mỗi lần hỏng) và khi
+  nó **chạy lại được**; lần quét **không bắt đầu được** (scope từ chối — vd uỷ quyền đã hết hạn;
+  một lần mỗi ngày); **job hỏng** mà không lưu được run (exception, quá giờ, worker chết; một lần
+  mỗi 6 giờ); địa chỉ **bị khoá** đăng nhập (một lần mỗi giờ); và cảnh báo **thử** từ Settings.
+  Payload có `text` cho Slack và các trường có cấu trúc (`kind`, `items`, …) cho hệ thống khác.
+- **Không mất cảnh báo (outbox):** cảnh báo của một run được ghi vào database **trong cùng
+  transaction** với run, rồi mới gửi — worker gửi ngay sau khi quét, gửi hỏng thì scheduler gửi
+  lại mỗi vòng: sau 1, 2, 4 … phút (cách nhau tối đa 1 giờ; theo `Retry-After` nếu bên nhận yêu
+  cầu), bỏ cuộc sau 24 giờ hoặc ngay khi bên nhận trả lời một lỗi mà gửi lại cũng vô ích (4xx trừ
+  408 / 425 / 429, hay redirect). Gửi *ít nhất một lần*: mọi lần gửi lại mang cùng header
+  `X-ZuesScan-Delivery`, bên nhận dựa vào đó để bỏ trùng. Settings → **Alerts** cho xem trạng thái
+  từng cảnh báo, gửi lại ngay, và gửi thử.
+- **Ký cảnh báo:** có `secret` thì mỗi POST mang `X-ZuesScan-Timestamp` và
+  `X-ZuesScan-Signature: sha256=<HMAC-SHA256(secret, "<timestamp>." + body)>`. Bên nhận tính lại
+  trên **đúng các byte nhận được** và từ chối chữ ký cũ hơn 5 phút (chống phát lại):
+
+  ```python
+  import hashlib, hmac, time
+
+
+  def from_zuesscan(secret: str, body: bytes, timestamp: str, signature: str) -> bool:
+      if abs(time.time() - int(timestamp)) > 300:
+          return False
+      mac = hmac.new(secret.encode(), f"{timestamp}.".encode() + body, hashlib.sha256)
+      return hmac.compare_digest(f"sha256={mac.hexdigest()}", signature)
+  ```
+
+  (`zues_scan.server.notify.verify` làm đúng việc này.) Slack bỏ qua các header này: với Slack,
+  chính URL là bí mật.
 - Lỗi cấu hình (khoá lạ, thiếu file scope, `every` quá ngắn, lưu token thay vì mã băm…) làm
   dịch vụ **không khởi động**, thay vì chạy sai. Redis không kết nối được thì báo một dòng (mật
   khẩu trong `redis_url` được che `***`), không in traceback.
@@ -652,7 +681,9 @@ docker compose logs -f worker
 
 Không có `service.toml`, dịch vụ đọc cài đặt từ biến môi trường (compose đã đặt sẵn):
 `ZUES_DB`, `ZUES_REDIS_URL`, và tuỳ chọn `ZUES_QUEUE`, `ZUES_CVE_CACHE`, `ZUES_WEBHOOK`,
-`ZUES_NOTIFY_MIN_PRIORITY`; target, scope và token nằm trong database (dashboard). Muốn quản lý
+`ZUES_WEBHOOK_SECRET`, `ZUES_NOTIFY_MIN_PRIORITY`, `ZUES_NOTIFY_FAILED_SCANS` (bốn biến cảnh báo
+đặt trong file `.env` cạnh `compose.yaml` — đừng commit file đó); target, scope và token nằm
+trong database (dashboard). Muốn quản lý
 bằng file như trước (vd cấu hình qua git, credentials SSH): đặt file vào `deploy/` (được mount
 vào `/config`) và `ZUES_CONFIG=/config/service.toml` — target của file và của dashboard dùng
 song song; sửa file có hiệu lực ngay, không cần khởi động lại:
@@ -784,7 +815,8 @@ viện kiểm tra riêng; phát hiện chủ yếu theo phiên bản, trừ nucl
 điểm yếu đã biết, kèm hướng nâng cấp theo cách làm thật, nằm ở
 [`docs/KNOWN-GAPS.md`](docs/KNOWN-GAPS.md) — nổi bật: quét có đăng nhập mới có Debian; nuclei
 chưa có kênh OAST (interactsh) riêng; web chưa phân quyền theo target và chưa có xác thực hai
-lớp; cảnh báo webhook không gửi lại khi lỗi; SQLite là giới hạn khi nhiều worker / người dùng.
+lớp; cảnh báo mới chỉ có webhook (chưa email); SQLite là giới hạn khi nhiều worker / người
+dùng.
 
 ## Cho AI dùng ZuesScan (MCP)
 

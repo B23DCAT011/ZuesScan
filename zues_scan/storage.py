@@ -18,11 +18,12 @@ import logging
 import sqlite3
 import zlib
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from zues_scan import inventory_store
+from zues_scan.alerts import Alert, AlertPolicy, RunFacts
 from zues_scan.audit import GENESIS, AuditEvent, AuditKind, ChainReport, chain_hash
 from zues_scan.inventory import Status
 from zues_scan.inventory_store import FindingEvent, FindingRow
@@ -43,7 +44,7 @@ log = logging.getLogger(__name__)
 
 # The schema version this code reads and writes. Bump it together with a new entry
 # in `_MIGRATIONS`; never edit a migration that has already shipped.
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 
 class StorageError(Exception):
@@ -542,6 +543,32 @@ _V15 = (
     "CREATE INDEX idx_audit_run ON audit_event(run_id)",
 )
 
+# Version 16: the alerts' outbox (G23). An alert is queued here — a scan's in the same
+# transaction as its run — and delivered afterwards with retries: `attempts`, when to try
+# next, the last error; `sent_at` or `gave_up_at` once it is over. `dedupe_key` keeps a
+# lasting condition from alerting at every scan.
+_V16 = (
+    """
+    CREATE TABLE alert_outbox (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at   TEXT NOT NULL,
+        kind         TEXT NOT NULL,
+        dedupe_key   TEXT,
+        payload      TEXT NOT NULL,
+        run_id       INTEGER REFERENCES scan_run(id) ON DELETE SET NULL,
+        attempts     INTEGER NOT NULL DEFAULT 0,
+        next_try_at  TEXT NOT NULL,
+        last_error   TEXT,
+        sent_at      TEXT,
+        gave_up_at   TEXT
+    )
+    """,
+    "CREATE INDEX idx_alert_due ON alert_outbox(next_try_at) "
+    "WHERE sent_at IS NULL AND gave_up_at IS NULL",
+    "CREATE INDEX idx_alert_dedupe ON alert_outbox(dedupe_key, created_at)",
+    "CREATE INDEX idx_alert_run ON alert_outbox(run_id)",
+)
+
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: _V1,
     2: _V2,
@@ -558,6 +585,7 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
     13: _V13,
     14: _V14,
     15: _V15,
+    16: _V16,
 }
 
 
@@ -677,8 +705,12 @@ class Storage:
 
     # --- writing -----------------------------------------------------------------------
 
-    def save_run(self, run: ScanRun) -> int:
-        """Persist a whole scan run atomically, with its audit event; return its id."""
+    def save_run(self, run: ScanRun, alerts: AlertPolicy | None = None) -> int:
+        """Persist a whole scan run atomically, with its audit event; return its id.
+
+        With `alerts`, the alerts it decides on are queued in the same transaction: saved
+        together with the run, or not at all (the outbox, G23).
+        """
         # IMMEDIATE: take the write lock before reading the chain's head, so that two
         # processes saving at once cannot both link to the same previous event.
         self._conn.execute("BEGIN IMMEDIATE")
@@ -761,7 +793,138 @@ class Storage:
                 ),
                 run_id=run_id,
             )
+            if alerts is not None:
+                self._queue_run_alerts(alerts, run, run_id)
         return run_id
+
+    def _queue_run_alerts(self, alerts: AlertPolicy, run: ScanRun, run_id: int) -> None:
+        facts = RunFacts(
+            run=run,
+            run_id=run_id,
+            changes=inventory_store.events(self._conn, run_id=run_id),
+            failed_before=self._failed_before(run, run_id),
+        )
+        try:
+            decided = alerts(facts)
+            for alert in decided:
+                json.dumps(alert.payload)  # fails here, not halfway through the inserts
+        except Exception:  # noqa: BLE001 - a broken alert must never lose the run
+            log.exception("deciding the alerts of run #%d failed; the run is saved", run_id)
+            return
+        for alert in decided:
+            self._queue_alert(alert, run.finished_at, run_id)
+
+    def _failed_before(self, run: ScanRun, run_id: int) -> int:
+        """Failed runs of the same target and profile in a row, just before `run_id`."""
+        count = 0
+        for row in self._conn.execute(
+            "SELECT status FROM scan_run WHERE target = ? AND profile IS ? AND id < ? "
+            "ORDER BY id DESC LIMIT 100",
+            (run.target, run.profile, run_id),
+        ):
+            if row["status"] != str(RunStatus.FAILED):
+                break
+            count += 1
+        return count
+
+    # --- alerts' outbox (schema 16) -------------------------------------------------------
+
+    def queue_alert(self, alert: Alert, at: str, run_id: int | None = None) -> int | None:
+        """Queue an alert for delivery; its id, or None if `dedupe_key` held it back."""
+        self._conn.execute("BEGIN IMMEDIATE")
+        with self._conn:
+            return self._queue_alert(alert, at, run_id)
+
+    def _queue_alert(self, alert: Alert, at: str, run_id: int | None) -> int | None:
+        # One format in this table (UTC, to the second), so that text order is time order.
+        moment = datetime.fromisoformat(at).astimezone(UTC)
+        at = moment.isoformat(timespec="seconds")
+        if alert.dedupe_key is not None and alert.dedupe_seconds > 0:
+            since = moment - timedelta(seconds=alert.dedupe_seconds)
+            recent = self._conn.execute(
+                "SELECT 1 FROM alert_outbox WHERE dedupe_key = ? AND created_at > ? LIMIT 1",
+                (alert.dedupe_key, since.isoformat(timespec="seconds")),
+            ).fetchone()
+            if recent is not None:
+                log.info("alert %s held back: the same was queued recently", alert.dedupe_key)
+                return None
+        cur = self._conn.execute(
+            "INSERT INTO alert_outbox (created_at, kind, dedupe_key, payload, run_id, "
+            "next_try_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                at,
+                alert.kind,
+                alert.dedupe_key,
+                json.dumps(alert.payload, ensure_ascii=False, sort_keys=True),
+                run_id,
+                at,
+            ),
+        )
+        return int(cur.lastrowid or 0)
+
+    def claim_alerts(
+        self, *, at: str, lease_until: str, limit: int, ids: list[int] | None = None
+    ) -> list[sqlite3.Row]:
+        """Take the alerts due at `at` for delivery (at most `limit`): each one's next try
+        moves to `lease_until`, so that another process does not send it meanwhile."""
+        self._conn.execute("BEGIN IMMEDIATE")
+        with self._conn:
+            sql = (
+                "SELECT * FROM alert_outbox WHERE sent_at IS NULL AND gave_up_at IS NULL "
+                "AND next_try_at <= ?"
+            )
+            params: list[Any] = [at]
+            if ids is not None:
+                sql += f" AND id IN ({', '.join('?' for _ in ids)})"
+                params.extend(ids)
+            rows = self._conn.execute(f"{sql} ORDER BY id LIMIT ?", (*params, limit)).fetchall()
+            self._conn.executemany(
+                "UPDATE alert_outbox SET attempts = attempts + 1, next_try_at = ? WHERE id = ?",
+                [(lease_until, r["id"]) for r in rows],
+            )
+        return rows
+
+    def alert_sent(self, alert_id: int, at: str) -> None:
+        with self._conn:
+            self._conn.execute(
+                "UPDATE alert_outbox SET sent_at = ?, last_error = NULL WHERE id = ?",
+                (at, alert_id),
+            )
+
+    def alert_failed(self, alert_id: int, error: str, *, retry_at: str | None, at: str) -> None:
+        """A delivery failed: try again at `retry_at`, or give up (None)."""
+        with self._conn:
+            if retry_at is None:
+                self._conn.execute(
+                    "UPDATE alert_outbox SET last_error = ?, gave_up_at = ? WHERE id = ?",
+                    (error[:500], at, alert_id),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE alert_outbox SET last_error = ?, next_try_at = ? WHERE id = ?",
+                    (error[:500], retry_at, alert_id),
+                )
+
+    def retry_alert(self, alert_id: int, at: str) -> bool:
+        """Make an alert that was not delivered due now (again); False if none / sent."""
+        with self._conn:
+            cur = self._conn.execute(
+                "UPDATE alert_outbox SET gave_up_at = NULL, next_try_at = ? "
+                "WHERE id = ? AND sent_at IS NULL",
+                (at, alert_id),
+            )
+        return cur.rowcount == 1
+
+    def alert_rows(self, limit: int = 50, ids: list[int] | None = None) -> list[sqlite3.Row]:
+        """The newest alerts (or those with `ids`), whatever their state."""
+        if ids is not None:
+            marks = ", ".join("?" for _ in ids)
+            return self._conn.execute(
+                f"SELECT * FROM alert_outbox WHERE id IN ({marks}) ORDER BY id DESC", ids
+            ).fetchall()
+        return self._conn.execute(
+            "SELECT * FROM alert_outbox ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
 
     def record_refusal(
         self,
@@ -866,10 +1029,15 @@ class Storage:
             )
         return cur.rowcount
 
-    def record_lockout(self, client: str, *, failures: int, seconds: int, at: str) -> None:
-        """An address was locked out after too many failed sign-ins (G23)."""
+    def record_lockout(
+        self, client: str, *, failures: int, seconds: int, at: str, alert: Alert | None = None
+    ) -> None:
+        """An address was locked out after too many failed sign-ins (G23); with `alert`,
+        queued with the audit event."""
         self._conn.execute("BEGIN IMMEDIATE")
         with self._conn:
+            if alert is not None:
+                self._queue_alert(alert, at, None)
             self._append_audit(
                 _auth_event(
                     at,

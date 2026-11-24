@@ -571,6 +571,7 @@
       view.appendChild(settingsScopes(cfg));
       view.appendChild(settingsTokens(cfg));
       view.appendChild(settingsSessions(cfg));
+      view.appendChild(settingsAlerts(cfg.alerts));
     });
   }
 
@@ -689,6 +690,69 @@
         "A session ends when its owner signs out, after 30 minutes without use, 8 hours after " +
         "signing in, when its token is revoked, or here. Tokens used by scripts (Bearer) have " +
         "no session: revoke the token to stop them."));
+  }
+
+  var ALERT_KINDS = {
+    run: "findings", scan_failed: "scans failing", scan_recovered: "scans work again",
+    not_started: "scan not started", job_failed: "job failed", locked_out: "locked out",
+    test: "test",
+  };
+
+  function settingsAlerts(alerts) {
+    var where = alerts.webhook
+      ? ["Sent to ", el("strong", { class: "mono" }, alerts.webhook), alerts.signed
+        ? " · signed (HMAC-SHA256, X-ZuesScan-Signature)"
+        : el("span", { class: "error" }, " · not signed: set [notify] secret or ZUES_WEBHOOK_SECRET")]
+      : el("span", { class: "muted" },
+        "No webhook: set [notify] webhook in service.toml, or ZUES_WEBHOOK. Nothing is queued until then.");
+    var test = el("button", {
+      type: "button", class: "primary", disabled: alerts.webhook ? null : true,
+      on: { click: function () { sendTest(test); } },
+    }, "Send a test alert");
+    var rows = alerts.latest.map(function (a) {
+      var state = a.state === "sent" ? el("span", { class: "state state-finished" }, "sent " + when(a.sent_at))
+        : a.state === "gave up" ? el("span", { class: "state state-failed" }, "gave up")
+        : el("span", { class: "state state-queued" }, "waiting · next " + when(a.next_try_at));
+      var retry = a.state === "sent" ? "" : el("button", {
+        type: "button", class: "link", on: { click: function () { retryAlert(a.id); } },
+      }, "Send now");
+      return [
+        "#" + a.id, when(a.created_at), ALERT_KINDS[a.kind] || a.kind,
+        el("span", { class: "wrap" }, a.summary), state, String(a.attempts),
+        a.last_error ? el("span", { class: "error small" }, a.last_error) : "", retry,
+      ];
+    });
+    return el("section", null,
+      el("div", { class: "toolbar" }, el("h2", null, "Alerts (webhook)"), test),
+      el("p", { class: "small" }, where),
+      table(["#", "Raised", "Kind", "What", "Delivery", "Tries", "Last error", ""], rows.map(row),
+        "No alert yet."),
+      el("p", { class: "muted small" },
+        "Alerts wait in the database until the webhook takes them: retried after 1, 2, 4 … minutes " +
+        "(at most an hour apart), given up after 24 hours. New findings from " + alerts.min_priority +
+        ", fake fixes, reappeared findings, scans failing " + alerts.failed_scans + " times in a row, " +
+        "scans not started, failed jobs and sign-in lock-outs raise one."));
+  }
+
+  function sendTest(button) {
+    button.disabled = true;
+    api("POST", "/admin/alerts/test")
+      .then(function (a) {
+        flash(a.state === "sent" ? "Test alert #" + a.id + " delivered."
+          : "Test alert #" + a.id + " not delivered: " + (a.last_error || a.state), a.state !== "sent");
+        route();
+      })
+      .catch(function (err) { flash(err.message, true); button.disabled = false; });
+  }
+
+  function retryAlert(id) {
+    api("POST", "/admin/alerts/" + id + "/retry")
+      .then(function (a) {
+        flash(a.state === "sent" ? "Alert #" + id + " delivered."
+          : "Alert #" + id + " still not delivered: " + (a.last_error || a.state), a.state !== "sent");
+        route();
+      })
+      .catch(function (err) { flash(err.message, true); });
   }
 
   function endSession(s) {

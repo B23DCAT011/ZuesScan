@@ -140,6 +140,9 @@ def test_only_configured_targets_can_be_named(tmp_path: Path) -> None:
         ('[service]\ndb = "x"\n[notify]\nmin_priority = "high"\n', r"P1, P2, P3 or P4"),
         ('[service]\ndb = "x"\n[notify]\nwebhook = "file:///etc/passwd"\n', r"http\(s\) URL"),
         ('[service]\ndb = "x"\n[notify]\nemail = "a@b"\n', r"unknown key\(s\) email"),
+        ('[service]\ndb = "x"\n[notify]\nsecret = "short"\n', r"secret must be at least 16"),
+        ('[service]\ndb = "x"\n[notify]\nfailed_scans = 0\n', r"failed_scans must be a whole"),
+        ('[service]\ndb = "x"\n[notify]\nfailed_scans = true\n', r"failed_scans must be a"),
         ("[service\n", r"cannot read service config"),
     ],
 )

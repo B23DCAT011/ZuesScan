@@ -20,7 +20,16 @@ from zues_scan.storage import Storage
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    for name in ("ZUES_CONFIG", "ZUES_REDIS_URL", "ZUES_QUEUE", "ZUES_CVE_CACHE", "ZUES_WEBHOOK"):
+    for name in (
+        "ZUES_CONFIG",
+        "ZUES_REDIS_URL",
+        "ZUES_QUEUE",
+        "ZUES_CVE_CACHE",
+        "ZUES_WEBHOOK",
+        "ZUES_WEBHOOK_SECRET",
+        "ZUES_NOTIFY_MIN_PRIORITY",
+        "ZUES_NOTIFY_FAILED_SCANS",
+    ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("ZUES_DB", str(tmp_path / "zues.db"))
 
@@ -50,6 +59,26 @@ def test_settings_come_from_the_environment(
     assert config.targets == {} and config.tokens == ()
     monkeypatch.setenv("ZUES_WEBHOOK", "ftp://nope")
     with pytest.raises(ConfigError, match="ZUES_WEBHOOK"):
+        from_environment()
+
+
+def test_alert_settings_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    # compose passes every variable, set or not: empty means "not set".
+    for name in ("ZUES_WEBHOOK", "ZUES_WEBHOOK_SECRET", "ZUES_NOTIFY_FAILED_SCANS"):
+        monkeypatch.setenv(name, "")
+    notify = from_environment().notify
+    assert (notify.webhook, notify.secret, notify.failed_scans) == (None, None, 3)
+
+    monkeypatch.setenv("ZUES_WEBHOOK_SECRET", "0123456789abcdef-xyz")
+    monkeypatch.setenv("ZUES_NOTIFY_FAILED_SCANS", "5")
+    notify = from_environment().notify
+    assert (notify.secret, notify.failed_scans) == ("0123456789abcdef-xyz", 5)
+    monkeypatch.setenv("ZUES_WEBHOOK_SECRET", "short")
+    with pytest.raises(ConfigError, match="ZUES_WEBHOOK_SECRET must be at least 16"):
+        from_environment()
+    monkeypatch.setenv("ZUES_WEBHOOK_SECRET", "0123456789abcdef-xyz")
+    monkeypatch.setenv("ZUES_NOTIFY_FAILED_SCANS", "0")
+    with pytest.raises(ConfigError, match="ZUES_NOTIFY_FAILED_SCANS must be a whole number"):
         from_environment()
 
 

@@ -3,6 +3,10 @@
 Standard library + the core only, so that RQ can import it in any worker. The job
 receives names, not settings: the service configuration is re-read in the worker, so
 what is scanned is always what `service.toml` says *now*.
+
+Alerts are queued in the database with the run (`notify.RunAlerts`), then sent right
+away; what cannot be sent now waits for the scheduler's next round. A job that fails
+without saving a run alerts through RQ's failure callback (`job_failed`).
 """
 
 from __future__ import annotations
@@ -48,18 +52,37 @@ def scan_target(config_path: str, target_name: str, operator: str) -> dict[str, 
     config = load_config(config_path)
     target = config.target(target_name)
     log.info("job: scanning %s (%s) for %s", target.name, target.target, operator)
-    outcome = execute(spec_for(config, target, operator))
+    policy = notify.RunAlerts(config.notify, target.name)
+    spec = spec_for(config, target, operator)
+    spec.alerts = policy
+    outcome = execute(spec)
     summary: dict[str, Any] = {
         "target": target.name,
         "code": outcome.code,
         "run_id": outcome.run_id,
         "status": None if outcome.run is None else str(outcome.run.status),
         "messages": outcome.messages,
-        "alerts": 0,
+        "alerts": len(policy.items),
     }
-    if outcome.run is not None and outcome.run_id is not None and outcome.code == 0:
-        items = notify.alerts(outcome.run, outcome.changes, config.notify.min_priority)
-        summary["alerts"] = len(items)
-        if items and config.notify.webhook:
-            notify.send(config.notify.webhook, notify.message(target.name, outcome.run_id, items))
+    if outcome.run_id is None and outcome.code in (2, 3):
+        # Refused by its scope (an authorisation that expired, an address that moved out
+        # of it) or a setting that no longer holds: nothing was scanned, someone must know.
+        reason = outcome.messages[0] if outcome.messages else f"exit code {outcome.code}"
+        notify.queue(config, notify.not_started(target.name, reason))
+    notify.flush(config)
     return summary
+
+
+def job_failed(job: Any, connection: Any, kind: Any, value: Any, traceback: Any) -> None:
+    """RQ's failure callback: the job raised, timed out or its worker died, so no run
+    tells what happened. Never raises (RQ would only log it)."""
+    try:
+        config_path, target_name = str(job.args[0]), str(job.args[1])
+        config = load_config(config_path)
+    except Exception:  # noqa: BLE001 - e.g. the configuration itself is broken now
+        log.exception("could not alert on the failed job %s", getattr(job, "id", "?"))
+        return
+    error = f"{getattr(kind, '__name__', kind)}: {value}" if value else str(kind)
+    log.error("scan job of %s failed without saving a run: %s", target_name, error)
+    notify.queue(config, notify.job_failed(target_name, error))
+    notify.flush(config)

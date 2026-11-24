@@ -6,6 +6,10 @@ scheduler restart, or two schedulers by mistake, do not enqueue the same scan tw
 while it waits in the queue. Stored runs are matched on target *and* profile: a
 quick hourly scan of a network must not make its daily full scan look done.
 
+Each round also sends the alerts still waiting in the outbox (`notify.flush`): those a
+worker could not deliver right after its scan, and those raised elsewhere (the web's
+lock-outs).
+
 `due()` is a pure function; `tick()` does one round; `run_forever()` loops, re-reading
 the configuration at every round: a target added or changed in the dashboard (or in
 service.toml) is scheduled without restarting. A configuration that has become invalid
@@ -25,6 +29,7 @@ from pathlib import Path
 from redis import Redis
 from rq import Queue
 
+from zues_scan.server import notify
 from zues_scan.server.config import ConfigError, ServiceConfig, Target
 from zues_scan.server.queue import enqueue_scan
 from zues_scan.storage import Storage, StorageError
@@ -118,6 +123,7 @@ def run_forever(
             current = _reloaded(config, reload)
             if current is not None:
                 tick(current, q)
+                notify.flush(current)  # alerts that could not be sent yet
         except Exception:  # noqa: BLE001 - keep scheduling; the next round may succeed
             log.exception("scheduler round failed")
         done += 1

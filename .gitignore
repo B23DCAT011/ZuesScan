@@ -44,3 +44,6 @@ backups/
 
 # The lab: its config gets an operator token
 lab/service.toml
+
+# Secrets for docker compose (webhook URL, its HMAC secret): never committed
+.env

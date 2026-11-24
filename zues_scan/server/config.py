@@ -31,6 +31,8 @@ target by its `name`; it never brings its own address, scope file or options.
     [notify]
     webhook = "https://hooks.example.com/..."   # optional; Slack-compatible {"text": ...}
     min_priority = "P2"                          # new findings at least this urgent
+    secret = "..."             # optional: sign each alert (HMAC-SHA256), at least 16 chars
+    failed_scans = 3           # alert when a target's scans fail this many times in a row
 """
 
 from __future__ import annotations
@@ -92,6 +94,8 @@ class Target:
 class Notify:
     webhook: str | None = None
     min_priority: str = "P2"
+    secret: str | None = None  # signs every alert (X-ZuesScan-Signature), when set
+    failed_scans: int = 3  # failed runs in a row that raise an alert
 
 
 @dataclass(frozen=True)
@@ -148,19 +152,23 @@ def from_environment() -> ServiceConfig:
     image sets them), its targets, scopes and tokens from the dashboard (`zues user add`
     makes the first admin)."""
     env = os.environ
-    min_priority = env.get("ZUES_NOTIFY_MIN_PRIORITY", "P2")
-    if min_priority not in ("P1", "P2", "P3", "P4"):
-        raise ConfigError("ZUES_NOTIFY_MIN_PRIORITY must be P1, P2, P3 or P4")
-    webhook = env.get("ZUES_WEBHOOK") or None
-    if webhook is not None and not webhook.startswith(("https://", "http://")):
-        raise ConfigError("ZUES_WEBHOOK must be an http(s) URL")
+    notify = _notify(
+        {
+            "webhook": env.get("ZUES_WEBHOOK") or None,
+            # Empty counts as unset: compose passes every variable, set or not.
+            "min_priority": env.get("ZUES_NOTIFY_MIN_PRIORITY") or "P2",
+            "secret": env.get("ZUES_WEBHOOK_SECRET") or None,
+            "failed_scans": env.get("ZUES_NOTIFY_FAILED_SCANS") or "3",
+        },
+        "environment: ZUES_",
+    )
     config = ServiceConfig(
         path=ENVIRONMENT,
         db=env.get("ZUES_DB") or "zues.db",
         redis_url=env.get("ZUES_REDIS_URL") or "redis://localhost:6379/0",
         queue=env.get("ZUES_QUEUE") or "zues",
         cve_cache=env.get("ZUES_CVE_CACHE") or None,
-        notify=Notify(webhook=webhook, min_priority=min_priority),
+        notify=notify,
     )
     return with_dashboard(config)
 
@@ -204,13 +212,9 @@ def load_config(path: str | Path | None = None) -> ServiceConfig:
         if target.name in targets:
             raise ConfigError(f"{path}: two targets are named {target.name!r}")
         targets[target.name] = target
-    notify = data.get("notify") or {}
-    _only(notify, {"webhook", "min_priority"}, "[notify]")
-    if notify.get("min_priority", "P2") not in ("P1", "P2", "P3", "P4"):
-        raise ConfigError("[notify] min_priority must be P1, P2, P3 or P4")
-    webhook = notify.get("webhook")
-    if webhook is not None and not str(webhook).startswith(("https://", "http://")):
-        raise ConfigError("[notify] webhook must be an http(s) URL")
+    notify_table = data.get("notify") or {}
+    _only(notify_table, {"webhook", "min_priority", "secret", "failed_scans"}, "[notify]")
+    notify = _notify(notify_table, "[notify] ")
     config = ServiceConfig(
         path=str(path),
         db=str(service["db"]),
@@ -222,9 +226,49 @@ def load_config(path: str | Path | None = None) -> ServiceConfig:
         dns_wordlist=service.get("dns_wordlist"),
         tokens=tokens,
         targets=targets,
-        notify=Notify(webhook=webhook, min_priority=notify.get("min_priority", "P2")),
+        notify=notify,
     )
     return with_dashboard(config)
+
+
+def _notify(raw: dict[str, Any], where: str) -> Notify:
+    """[notify] (or the ZUES_ variables), checked. `where` prefixes each message."""
+    names = {
+        "webhook": "webhook",
+        "min_priority": "min_priority",
+        "secret": "secret",
+        "failed_scans": "failed_scans",
+    }
+    if where.startswith("environment"):
+        names = {
+            "webhook": "WEBHOOK",
+            "min_priority": "NOTIFY_MIN_PRIORITY",
+            "secret": "WEBHOOK_SECRET",
+            "failed_scans": "NOTIFY_FAILED_SCANS",
+        }
+        where = "ZUES_"
+    min_priority = str(raw.get("min_priority") or "P2")
+    if min_priority not in ("P1", "P2", "P3", "P4"):
+        raise ConfigError(f"{where}{names['min_priority']} must be P1, P2, P3 or P4")
+    webhook = raw.get("webhook")
+    if webhook is not None and not str(webhook).startswith(("https://", "http://")):
+        raise ConfigError(f"{where}{names['webhook']} must be an http(s) URL")
+    secret = raw.get("secret")
+    if secret is not None and (not isinstance(secret, str) or len(secret) < 16):
+        raise ConfigError(f"{where}{names['secret']} must be at least 16 characters")
+    failed = raw.get("failed_scans", 3)
+    try:
+        failed_scans = int(failed)
+    except (TypeError, ValueError):
+        failed_scans = 0
+    if isinstance(failed, bool) or failed_scans < 1:
+        raise ConfigError(f"{where}{names['failed_scans']} must be a whole number of at least 1")
+    return Notify(
+        webhook=str(webhook) if webhook else None,
+        min_priority=min_priority,
+        secret=secret,
+        failed_scans=failed_scans,
+    )
 
 
 def with_dashboard(config: ServiceConfig) -> ServiceConfig:

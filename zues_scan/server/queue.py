@@ -14,7 +14,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from redis import Redis
 from redis import exceptions as redis_errors
-from rq import Queue, SimpleWorker, Worker
+from rq import Callback, Queue, SimpleWorker, Worker
 from rq.job import Job
 from rq.timeouts import TimerDeathPenalty
 
@@ -22,6 +22,7 @@ from zues_scan.profiles import load_profiles
 from zues_scan.server.config import ServiceConfig
 
 JOB = "zues_scan.server.jobs.scan_target"
+JOB_FAILED = "zues_scan.server.jobs.job_failed"  # alerts when a job fails without a run
 
 # Redis is down or unreachable: the commands say so in one line instead of a traceback.
 UNREACHABLE = (redis_errors.ConnectionError, redis_errors.TimeoutError)
@@ -59,6 +60,7 @@ def enqueue_scan(q: Queue, config: ServiceConfig, target_name: str, operator: st
         failure_ttl=30 * 86400,
         description=f"scan {target_name} for {operator}",
         meta={"target": target_name, "operator": operator},
+        on_failure=Callback(JOB_FAILED),
     )
 
 
