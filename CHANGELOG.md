@@ -6,6 +6,13 @@ section of a version as its release notes, so every tag needs one.
 
 ## [Unreleased]
 
+### Fixed
+- nuclei missed network flaws on busy servers: its network checks (SSH, TLS handshakes) ran
+  with the HTTP settings, 10 s per request and one retry. Against a CPU-starved SSH server it
+  missed Terrapin (CVE-2023-48795) on 4 of 10 runs — the lab's CI job failed twice that way.
+  The network run now waits 30 s with 3 retries (5 of 5); web checks keep 10 s / 1, and the
+  check's overall time budget is unchanged.
+
 ### Security
 - Tokens expire. A token made in the dashboard or with `zues user add` is accepted for 90
   days by default (30 days, 1 year, up to 2 years, or `never` for a monitored service
