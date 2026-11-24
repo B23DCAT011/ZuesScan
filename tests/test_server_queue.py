@@ -318,3 +318,52 @@ def test_two_schedulers_never_run_a_round_at_once(q: Queue, service: ServiceConf
     q.connection.delete("zues:scheduler:lock:test")
     assert scheduler.tick(service, q, now=NOW) == ["hourly", "daily"]
     assert q.connection.get("zues:scheduler:lock:test") is None  # freed after the round
+
+
+def test_the_scheduler_picks_up_a_target_added_while_it_runs(
+    service: ServiceConfig, q: Queue, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A target added in the dashboard (or service.toml) is scheduled without a restart."""
+    from zues_scan.server import managed
+
+    rounds: list[list[str]] = []
+    real_tick = scheduler.tick
+    monkeypatch.setattr(
+        scheduler, "tick", lambda config, queue: rounds.append(real_tick(config, queue, NOW))
+    )
+
+    def nap(seconds: float) -> None:  # between round 1 and 2, an admin adds a target
+        if len(rounds) == 1:
+            with Storage(service.db) as store:
+                config = load_config(tmp_path / "service.toml")
+                managed.save_scope(store, config, "lab", "scanme.lab\n10.0.0.0/24\n", "root")
+                config = load_config(tmp_path / "service.toml")
+                settings = {"target": "scanme.lab", "scope": "lab", "every": "6h"}
+                managed.save_target(store, config, "added", settings, "root")
+
+    scheduler.run_forever(
+        service, q, sleep=nap, rounds=2, reload=lambda: load_config(tmp_path / "service.toml")
+    )
+
+    assert rounds == [["hourly", "daily"], ["added"]]
+
+
+def test_an_invalid_configuration_stops_the_scheduling(
+    service: ServiceConfig,
+    q: Queue,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    (tmp_path / "service.toml").write_text("[service\n", encoding="utf-8")  # a broken edit
+
+    with caplog.at_level(logging.ERROR, logger="zues_scan.server.scheduler"):
+        scheduler.run_forever(
+            service,
+            q,
+            sleep=lambda _: None,
+            rounds=1,
+            reload=lambda: load_config(tmp_path / "service.toml"),
+        )
+
+    assert q.count == 0  # not the old targets: nothing until the file is fixed
+    assert "scheduling nothing until it is fixed" in caplog.text

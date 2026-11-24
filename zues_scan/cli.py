@@ -927,8 +927,15 @@ def _cmd_scheduler(args: argparse.Namespace) -> int:
         print(f"enqueued: {', '.join(names) or 'nothing due'}")
         return 0
     scheduled = [t.name for t in config.targets.values() if t.every]
-    print(f"scheduler started for: {', '.join(scheduled) or 'no target'}", file=sys.stderr)
-    scheduler.run_forever(config, q)
+    print(
+        f"scheduler started for: {', '.join(scheduled) or 'no target yet'} "
+        "(targets added or changed later are picked up at the next round)",
+        file=sys.stderr,
+    )
+    from zues_scan.server.config import load_config
+
+    path = config.path  # service.toml, or ENVIRONMENT: read the same way at every round
+    scheduler.run_forever(config, q, reload=lambda: load_config(path))
     return 0
 
 

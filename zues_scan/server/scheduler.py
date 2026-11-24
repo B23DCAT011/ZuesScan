@@ -6,7 +6,11 @@ scheduler restart, or two schedulers by mistake, do not enqueue the same scan tw
 while it waits in the queue. Stored runs are matched on target *and* profile: a
 quick hourly scan of a network must not make its daily full scan look done.
 
-`due()` is a pure function; `tick()` does one round; `run_forever()` loops.
+`due()` is a pure function; `tick()` does one round; `run_forever()` loops, re-reading
+the configuration at every round: a target added or changed in the dashboard (or in
+service.toml) is scheduled without restarting. A configuration that has become invalid
+stops the scheduling (logged at every round) until it is fixed — never "keep scheduling
+the old targets". Only the Redis URL and the queue's name need a restart.
 """
 
 from __future__ import annotations
@@ -21,7 +25,7 @@ from pathlib import Path
 from redis import Redis
 from rq import Queue
 
-from zues_scan.server.config import ServiceConfig, Target
+from zues_scan.server.config import ConfigError, ServiceConfig, Target
 from zues_scan.server.queue import enqueue_scan
 from zues_scan.storage import Storage, StorageError
 
@@ -105,13 +109,33 @@ def run_forever(
     interval: timedelta = timedelta(minutes=1),
     sleep: Callable[[float], None] = time.sleep,
     rounds: int | None = None,
+    reload: Callable[[], ServiceConfig] | None = None,
 ) -> None:
+    """Run rounds until stopped; with `reload`, each round reads the configuration anew."""
     done = 0
     while rounds is None or done < rounds:
         try:
-            tick(config, q)
+            current = _reloaded(config, reload)
+            if current is not None:
+                tick(current, q)
         except Exception:  # noqa: BLE001 - keep scheduling; the next round may succeed
             log.exception("scheduler round failed")
         done += 1
         if rounds is None or done < rounds:
             sleep(interval.total_seconds())
+
+
+def _reloaded(
+    started: ServiceConfig, reload: Callable[[], ServiceConfig] | None
+) -> ServiceConfig | None:
+    """The configuration for this round; None (nothing scheduled) if it is invalid now."""
+    if reload is None:
+        return started
+    try:
+        config = reload()
+    except ConfigError as exc:
+        log.error("service configuration is invalid, scheduling nothing until it is fixed: %s", exc)
+        return None
+    if (config.redis_url, config.queue) != (started.redis_url, started.queue):
+        log.warning("the Redis URL or the queue changed: restart the scheduler to use them")
+    return config
