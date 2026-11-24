@@ -172,12 +172,32 @@ def run_forever(
             current = _reloaded(config, reload)
             if current is not None:
                 tick(current, q)
+                warn_expiring_tokens(current)
                 notify.flush(current)  # alerts that could not be sent yet
         except Exception:  # noqa: BLE001 - keep scheduling; the next round may succeed
             log.exception("scheduler round failed")
         done += 1
         if rounds is None or done < rounds:
             sleep(interval.total_seconds())
+
+
+# A token this close to its end raises an alert (once a day): what uses it (a CI job, an
+# agent) must not stop on a Monday morning without warning.
+EXPIRY_WARNING = timedelta(days=7)
+
+
+def warn_expiring_tokens(config: ServiceConfig, now: datetime | None = None) -> list[str]:
+    """Queue an alert for each token expiring within EXPIRY_WARNING; their names."""
+    now = now or datetime.now(UTC)
+    soon = [
+        t
+        for t in config.tokens
+        if t.expires_at is not None and now < t.expires_at <= now + EXPIRY_WARNING
+    ]
+    for token in soon:
+        assert token.expires_at is not None
+        notify.queue(config, notify.token_expiring(token.name, token.role, token.expires_at))
+    return [t.name for t in soon]
 
 
 def _reloaded(

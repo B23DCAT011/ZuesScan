@@ -54,7 +54,7 @@ log = logging.getLogger(__name__)
 
 # The schema version this code reads and writes. Bump it together with a new entry
 # in `_MIGRATIONS`; never edit a migration that has already shipped.
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 # How long a writer waits for another to finish before "database is locked".
 BUSY_SECONDS = 15.0
@@ -582,6 +582,13 @@ _V16 = (
     "CREATE INDEX idx_alert_run ON alert_outbox(run_id)",
 )
 
+# Version 17: dashboard tokens expire (G30): `expires_at` (NULL: never), and are rotated —
+# a new value under the same name, the old one (and its sessions) over at once.
+_V17 = (
+    "ALTER TABLE managed_token ADD COLUMN expires_at TEXT",
+    "ALTER TABLE managed_token ADD COLUMN rotated_at TEXT",
+)
+
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: _V1,
     2: _V2,
@@ -599,6 +606,7 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
     14: _V14,
     15: _V15,
     16: _V16,
+    17: _V17,
 }
 
 
@@ -1099,7 +1107,8 @@ class Storage:
 
     def managed_tokens(self) -> list[sqlite3.Row]:
         return self._conn.execute(
-            "SELECT name, sha256, role, created_at, created_by FROM managed_token ORDER BY name"
+            "SELECT name, sha256, role, created_at, created_by, expires_at, rotated_at "
+            "FROM managed_token ORDER BY name"
         ).fetchall()
 
     def save_managed_scope(self, name: str, content: str, sha256: str, actor: str) -> None:
@@ -1149,12 +1158,14 @@ class Storage:
             ),
         )
 
-    def save_managed_token(self, name: str, sha256: str, role: str, actor: str) -> None:
+    def save_managed_token(
+        self, name: str, sha256: str, role: str, actor: str, expires_at: str | None = None
+    ) -> None:
         now = datetime.now(UTC).isoformat()
         self._managed_change(
-            "INSERT INTO managed_token (name, sha256, role, created_at, created_by) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (name, sha256, role, now, actor),
+            "INSERT INTO managed_token (name, sha256, role, created_at, created_by, expires_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (name, sha256, role, now, actor, expires_at),
             AuditEvent(
                 at=now,
                 kind=AuditKind.CONFIG,
@@ -1162,7 +1173,27 @@ class Storage:
                 operator=actor,
                 engagement=None,
                 scope_sha256=None,
-                detail={"action": "token created", "role": role},  # never the token
+                # Never the token, nor its hash.
+                detail={"action": "token created", "role": role, "expires_at": expires_at},
+            ),
+        )
+
+    def rotate_managed_token(
+        self, name: str, sha256: str, actor: str, expires_at: str | None
+    ) -> None:
+        """A new value for a dashboard token: the old one stops working at once."""
+        now = datetime.now(UTC).isoformat()
+        self._managed_change(
+            "UPDATE managed_token SET sha256 = ?, expires_at = ?, rotated_at = ? WHERE name = ?",
+            (sha256, expires_at, now, name),
+            AuditEvent(
+                at=now,
+                kind=AuditKind.CONFIG,
+                target=f"token:{name}",
+                operator=actor,
+                engagement=None,
+                scope_sha256=None,
+                detail={"action": "token rotated", "expires_at": expires_at},
             ),
         )
 

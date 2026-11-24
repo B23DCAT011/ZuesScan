@@ -748,34 +748,62 @@
       table(["Name", "Allows", "@activity", "Expires", "Used by", "Source", ""], rows.map(row), "No scope yet."));
   }
 
+  var VALIDITY = [["90", "90 days"], ["30", "30 days"], ["365", "1 year"], ["", "no end (revoke by hand)"]];
+
+  function validitySelect(id) {
+    return el("select", { id: id }, VALIDITY.map(function (v) { return el("option", { value: v[0] }, v[1]); }));
+  }
+
+  function validDays(select) {
+    return select.value ? parseInt(select.value, 10) : null;
+  }
+
+  function expiryCell(t) {
+    if (!t.expires_at) return el("span", { class: "muted" }, "never");
+    var left = (Date.parse(t.expires_at) - Date.now()) / 86400000;
+    if (left <= 0) return el("span", { class: "error" }, "expired " + when(t.expires_at));
+    return el("span", { class: left < 14 ? "state state-queued" : null }, when(t.expires_at));
+  }
+
+  function showToken(shown, text, value) {
+    clear(shown);
+    append(shown, [
+      el("strong", null, text),
+      el("pre", { class: "mono" }, value),
+      el("button", { type: "button", on: { click: function () { route(); } } }, "Done"),
+    ]);
+    shown.hidden = false;
+  }
+
   function settingsTokens(cfg) {
+    var shown = el("div", { class: "panel", hidden: true });
     var rows = cfg.tokens.map(function (t) {
-      var remove = t.source === "dashboard" && !t.you ? el("button", {
+      var own = t.source === "dashboard";
+      var rotate = own ? el("button", {
+        type: "button", class: "link",
+        on: { click: function () { rotateToken(t, shown); } },
+      }, "Rotate") : "";
+      var remove = own && !t.you ? el("button", {
         type: "button", class: "link",
         on: { click: function () { removeToken(t.name); } },
       }, "Revoke") : "";
-      return [el("strong", null, t.name), t.role, source(t.source), t.you ? "you" : "", remove];
+      return [el("strong", null, t.name), t.role, source(t.source), expiryCell(t), t.you ? "you" : "", [rotate, " ", remove]];
     });
     var name = el("input", { id: "token-name", maxlength: "64", required: true, placeholder: "who it is for" });
     var role = el("select", { id: "token-role" }, ["viewer", "operator", "admin"].map(function (r) {
       return el("option", { value: r }, r);
     }));
-    var shown = el("div", { class: "panel", hidden: true });
+    var validity = validitySelect("token-validity");
     var button = el("button", { type: "submit", class: "primary" }, "Create token");
     var form = el("form", { class: "toolbar" },
-      el("label", null, "Name ", name), el("label", null, "Role ", role), button);
+      el("label", null, "Name ", name), el("label", null, "Role ", role),
+      el("label", null, "Valid for ", validity), button);
     form.addEventListener("submit", function (event) {
       event.preventDefault();
       button.disabled = true;
-      api("POST", "/admin/tokens", { name: name.value.trim(), role: role.value })
+      api("POST", "/admin/tokens", { name: name.value.trim(), role: role.value, valid_days: validDays(validity) })
         .then(function (made) {
-          clear(shown);
-          append(shown, [
-            el("strong", null, "Token for " + made.name + " (" + made.role + "): copy it now, it is shown only once."),
-            el("pre", { class: "mono" }, made.token),
-            el("button", { type: "button", on: { click: function () { route(); } } }, "Done"),
-          ]);
-          shown.hidden = false;
+          showToken(shown, "Token for " + made.name + " (" + made.role + "): copy it now, it is shown only once.", made.token);
           name.value = "";
           button.disabled = false;
         })
@@ -785,10 +813,23 @@
         });
     });
     return el("section", null, el("h2", null, "Tokens (who may sign in)"),
-      table(["Name", "Role", "Source", "", ""], rows.map(row), "No token."),
+      table(["Name", "Role", "Source", "Expires (UTC)", "", ""], rows.map(row), "No token."),
       el("p", { class: "muted small" },
-        "viewer: reads; operator: also scans and records decisions; admin: also changes these settings."),
+        "viewer: reads; operator: also scans and records decisions; admin: also changes these settings. " +
+        "A token stops working at its date (a week before, an alert goes out); Rotate gives it a new " +
+        "value and date — the old value, and every session opened with it, stop at once."),
       form, shown);
+  }
+
+  function rotateToken(t, shown) {
+    api("POST", "/admin/tokens/" + encodeURIComponent(t.name) + "/rotate", { valid_days: 90 })
+      .then(function (made) {
+        var text = "New token for " + made.name + " (90 days): copy it now, it is shown only once." +
+          (made.you ? " It is yours: sign in again with it." : " Give it to whoever uses " + made.name + ".");
+        showToken(shown, text, made.token);
+        shown.scrollIntoView();
+      })
+      .catch(function (err) { flash(err.message, true); });
   }
 
   function settingsSessions(cfg) {
@@ -814,7 +855,7 @@
   var ALERT_KINDS = {
     run: "findings", scan_failed: "scans failing", scan_recovered: "scans work again",
     not_started: "scan not started", job_failed: "job failed", locked_out: "locked out",
-    test: "test",
+    token_expiring: "token expiring", test: "test",
   };
 
   function settingsAlerts(alerts) {

@@ -95,3 +95,25 @@ def test_a_fresh_install_from_first_admin_to_a_target(capsys: pytest.CaptureFixt
         )
     target = load_config().targets["nas"]
     assert (target.scope, target.scope_text) == ("home", "10.0.0.0/24\n")
+
+
+def test_user_add_list_and_rotate_with_expiry(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["user", "add", "ci", "--role", "viewer", "--expires", "30d"]) == 0
+    first = capsys.readouterr().out
+    assert "accepted until" in first
+    assert main(["user", "add", "siem", "--expires", "never"]) == 0
+    assert "does not expire" in capsys.readouterr().out
+    assert main(["user", "add", "x", "--expires", "soon"]) == 2
+    assert "--expires 'soon'" in capsys.readouterr().err
+
+    assert main(["user", "list"]) == 0
+    listed = {line.split()[0]: line for line in capsys.readouterr().out.splitlines()[1:]}
+    assert listed["siem"].endswith("never") and listed["ci"].split()[-2].startswith("20")
+
+    old = first.splitlines()[1]
+    assert main(["user", "rotate", "ci", "--expires", "1y"]) == 0
+    new = capsys.readouterr().out.splitlines()[1]
+    config = load_config()
+    from zues_scan.server.web import match_token
+
+    assert match_token(config, old) is None and match_token(config, new) is not None

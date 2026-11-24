@@ -355,8 +355,10 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       sai. Thực tế: khoá theo địa chỉ + theo token (khi biết là token nào), CAPTCHA / bằng chứng
       công việc trước khi khoá cứng, danh sách địa chỉ tin cậy.
     - ✅ Lần bị khoá còn được cảnh báo qua webhook (outbox, một lần mỗi giờ mỗi địa chỉ).
-    - Token dùng cho script (`Bearer`, MCP) không có phiên, không hết hạn: muốn chặn thì thu hồi.
-      Thực tế: token có hạn dùng và phạm vi (chỉ đọc / chỉ một target), xoay vòng định kỳ.
+    - ✅ Token có hạn dùng và xoay vòng được (`feat/token-expiry`, schema 17): mặc định 90 ngày,
+      cảnh báo một tuần trước hạn, Rotate thu hồi giá trị cũ và phiên của nó ngay. Còn lại: chưa
+      có phạm vi theo target (một token chỉ thấy / quét một target) — đi cùng phân quyền theo
+      target bên dưới.
     - Chưa có xác thực hai lớp (TOTP / WebAuthn) hay đăng nhập qua SSO (OIDC) cho người dùng.
     - **Không tự làm TLS**: `zues web` mặc định chỉ nghe 127.0.0.1; ra mạng thì phải đặt sau
       reverse proxy có TLS (cookie tự bật `Secure` khi proxy báo `X-Forwarded-Proto: https`).
@@ -503,7 +505,8 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       giao diện). Lớp bảo vệ còn lại là số người giữ token admin và audit trail. Nên có: duyệt
       hai người cho thay đổi scope (một người đề xuất, người khác chấp thuận), và thông báo
       webhook mỗi lần scope đổi.
-    - Token chưa có hạn dùng và chưa có đăng nhập SSO / OIDC; token admin nên đổi định kỳ.
+    - ✅ Token có hạn dùng + Rotate (`feat/token-expiry`). Còn lại: chưa có đăng nhập SSO /
+      OIDC; chưa ép đổi token admin theo chu kỳ (hạn dùng là trần, không phải chính sách riêng).
     - Target trên dashboard chưa dùng được credentials SSH hay file profile riêng (cố ý: không
       trỏ tới file trên máy chủ); chỉ các profile dựng sẵn.
     - Chưa có lịch sử phiên bản scope để xem / khôi phục trên giao diện (đã có trong audit +

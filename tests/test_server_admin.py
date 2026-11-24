@@ -261,3 +261,83 @@ def test_a_dashboard_target_can_run_on_a_cron_schedule(svc: App) -> None:
     assert listed["weekdays"]["every_seconds"] is None
     settings = {t["name"]: t for t in root.get("/api/v1/admin/config").json()["targets"]}
     assert settings["weekdays"]["cron"] == "30 1 * * mon-fri +07:00"
+
+
+def test_tokens_expire_and_are_rotated(svc: App) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from test_server_web import CSRF, sign_in
+
+    root = svc.client(ROOT)
+    made = root.post(
+        "/api/v1/admin/tokens", json={"name": "ci", "role": "viewer", "valid_days": 30}
+    )
+    forever = root.post(
+        "/api/v1/admin/tokens", json={"name": "siem", "role": "viewer", "valid_days": None}
+    )
+    assert made.status_code == forever.status_code == 201
+    listed = {t["name"]: t for t in root.get("/api/v1/admin/config").json()["tokens"]}
+    expires = datetime.fromisoformat(listed["ci"]["expires_at"])
+    assert abs(expires - (datetime.now(UTC) + timedelta(days=30))) < timedelta(minutes=1)
+    assert listed["siem"]["expires_at"] is None and listed["root"]["expires_at"] is None
+    too_long = {"name": "x", "role": "viewer", "valid_days": 3650}
+    assert root.post("/api/v1/admin/tokens", json=too_long).status_code == 422
+
+    old = made.json()["token"]
+    browser = sign_in(svc, old)
+    assert svc.client(ALICE).post("/api/v1/admin/tokens/ci/rotate", json={}).status_code == 403
+    rotated = root.post("/api/v1/admin/tokens/ci/rotate", json={"valid_days": 90}).json()
+
+    assert svc.client(old).get("/api/v1/me").status_code == 401  # the old value: over
+    assert browser.get("/api/v1/me").status_code == 401  # and its session
+    assert svc.client(rotated["token"]).get("/api/v1/me").json()["name"] == "ci"
+    assert root.post("/api/v1/admin/tokens/root/rotate", json={}).status_code == 404  # a file's
+    with Storage(svc.db) as store:
+        actions = [e.detail["action"] for _, e, _ in store.audit_events() if e.target == "token:ci"]
+    assert actions == ["token created", "signed in", "token rotated"]
+    assert rotated["token"] not in repr(actions) and old not in repr(actions)
+    assert browser.delete("/api/v1/session", headers=CSRF).status_code == 204
+
+
+def test_an_expired_token_is_refused_plainly_and_is_not_a_guess(svc: App) -> None:
+    from fastapi.testclient import TestClient
+
+    from zues_scan.server import sessions
+
+    expired = (
+        TOKENS
+        + ADMIN
+        + '[[tokens]]\nname = "old"\nsha256 = "'
+        + sha("old-token-0123456789abcdef")
+        + '"\nrole = "viewer"\nexpires = 2020-01-31\n\n'
+    )
+    svc.rewrite(config_text(svc.dir.as_posix(), expired))
+    holder = TestClient(svc.app, client=("192.0.2.80", 1))
+
+    for _ in range(sessions.LIMIT + 2):
+        refused = holder.get(
+            "/api/v1/me", headers={"Authorization": "Bearer old-token-0123456789abcdef"}
+        )
+        assert refused.status_code == 401  # never 429: whoever has it is not guessing
+    assert "expired on 2020-02-01 00:00 UTC" in refused.json()["detail"]
+    login = holder.post("/api/v1/session", json={"token": "old-token-0123456789abcdef"})
+    assert login.status_code == 401 and "expired" in login.json()["detail"]
+
+
+def test_a_session_ends_when_its_token_expires(svc: App, monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from test_server_web import sign_in
+
+    from zues_scan.server import sessions
+
+    made = svc.client(ROOT).post(
+        "/api/v1/admin/tokens", json={"name": "short", "role": "viewer", "valid_days": 1}
+    )
+    browser = sign_in(svc, made.json()["token"])
+    assert browser.get("/api/v1/me").status_code == 200
+
+    later = datetime.now(UTC) + timedelta(days=1, minutes=1)
+    monkeypatch.setattr(sessions, "now", lambda: later)
+
+    assert browser.get("/api/v1/me").status_code == 401

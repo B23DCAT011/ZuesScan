@@ -251,6 +251,23 @@ def locked_out(client: str, failures: int, seconds: int) -> Alert:
     )
 
 
+def token_expiring(name: str, role: str, expires_at: datetime) -> Alert:
+    return Alert(
+        "token_expiring",
+        {
+            "kind": "token_expiring",
+            "text": (
+                f"ZuesScan: the {role} token {name} expires on {expires_at:%Y-%m-%d %H:%M} UTC: "
+                "rotate it (Settings → Tokens, or zues user rotate) before what uses it stops"
+            ),
+            "token": name,
+            "expires_at": expires_at.isoformat(),
+        },
+        dedupe_key=f"token_expiring:{name}:{expires_at.isoformat()}",
+        dedupe_seconds=DAY,
+    )
+
+
 def delivery_test(actor: str) -> Alert:
     return Alert(
         "test",

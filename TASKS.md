@@ -223,4 +223,7 @@ rồi độ tin cậy, rồi tiện dụng.
 - [x] `feat/evidence-redaction` (G24) — request / response của nuclei được che trước khi lưu và
       băm (header đăng nhập / phiên, mẫu bí mật, thân response 2 KB); không có gì để che thì giữ
       nguyên từng byte; `zues_scan/redact.py` chỉ dùng thư viện chuẩn.
+- [x] `feat/token-expiry` (G23, G30) — token có hạn dùng (schema 17, mặc định 90 ngày, `expires` trong
+      service.toml), hết hạn thì từ chối rõ ràng + phiên kết thúc, cảnh báo một tuần trước hạn;
+      Rotate trên Settings / `zues user rotate` / API. Thử trên Chrome headless.
 

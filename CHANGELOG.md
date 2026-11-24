@@ -7,6 +7,20 @@ section of a version as its release notes, so every tag needs one.
 ## [Unreleased]
 
 ### Security
+- Tokens expire. A token made in the dashboard or with `zues user add` is accepted for 90
+  days by default (30 days, 1 year, up to 2 years, or `never` for a monitored service
+  account; schema 17); `service.toml` tokens take an optional `expires = 2027-06-30`. An
+  expired token is refused with its date (not counted as a guess), and the sessions opened
+  with it end. A week before, the scheduler raises a `token_expiring` alert.
+- Tokens are rotated: Settings → Tokens → **Rotate**, `zues user rotate NAME`,
+  `POST /api/v1/admin/tokens/{name}/rotate` give a new value under the same name and role;
+  the old value, and every session opened with it, stop working at once. Audited.
+
+### Changed
+- `zues user add` takes `--expires` (default 90d); `zues user list` shows when each token
+  expires.
+
+### Security
 - Evidence is masked before it is stored and hashed: the requests and responses nuclei
   keeps when it confirms a flaw no longer carry the target's credentials and secrets
   (`Authorization`, `Cookie` / `Set-Cookie` values, headers named after tokens, secrets or

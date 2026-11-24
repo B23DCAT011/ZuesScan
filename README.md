@@ -612,8 +612,18 @@ tiên tạo bằng dòng lệnh trên máy chủ — cũng là cách lấy lại
 
 ```bash
 zues user --config service.toml add tôi --role admin     # in token MỘT lần, lưu SHA-256 vào database
-zues user --config service.toml list                     # token của service.toml và của dashboard
+zues user --config service.toml add ci --expires 30d     # hạn dùng: 30d, 90d (mặc định), 1y, never
+zues user --config service.toml rotate ci                # giá trị mới; giá trị cũ thôi dùng được ngay
+zues user --config service.toml list                     # token của service.toml và của dashboard, hạn dùng
 ```
+
+**Token có hạn dùng** (mặc định 90 ngày; tối đa 2 năm, hoặc `never` cho tài khoản dịch vụ được
+theo dõi): hết hạn thì bị từ chối kèm lý do rõ ràng (không bị tính là đoán sai), phiên mở bằng nó
+cũng kết thúc; một tuần trước hạn, scheduler gửi cảnh báo (webhook). **Rotate** (Settings →
+Tokens, hoặc `zues user rotate`) cấp giá trị mới cho cùng tên và vai trò: giá trị cũ và mọi phiên
+mở bằng nó thôi dùng được ngay — cách đổi token định kỳ hoặc khi nghi bị lộ, mà không phải tạo
+lại quyền. Token trong `service.toml` có `expires = 2027-06-30` tuỳ chọn (dùng được hết ngày đó,
+UTC).
 
 Những gì admin sửa trên dashboard nằm trong **database**, cạnh `service.toml` (file không bị
 ghi): scope (nội dung file scope — allow/deny, `@expires`, `@window`, `@activity`), target
