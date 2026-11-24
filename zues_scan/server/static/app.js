@@ -6,9 +6,11 @@
    eval. The page's CSP allows only this file and app.css, and requests only to this
    server.
 
-   Authentication: the token is sent once to /api/v1/session, which sets an HttpOnly
-   cookie this script cannot read. Every request carries the X-ZuesScan header, which
-   the server requires (with the cookie) for anything that changes data: CSRF defence. */
+   Authentication: the token is sent once to /api/v1/session, which opens a session on
+   the server and sets an HttpOnly cookie (the session's secret, not the token) this
+   script cannot read. Every request carries the X-ZuesScan header, which the server
+   requires (with the cookie) for anything that changes data: CSRF defence. The periodic
+   refresh also sends X-ZuesScan-Refresh, so that a tab left open still goes idle. */
 (function () {
   "use strict";
 
@@ -120,9 +122,12 @@
 
   /* --- the API ------------------------------------------------------------------ */
 
-  function api(method, path, body) {
+  // refresh: a request the page makes by itself (a timer), not the person: it does not
+  // keep the session from going idle.
+  function api(method, path, body, refresh) {
     var headers = { Accept: "application/json", "X-ZuesScan": "1" };
     if (body !== undefined) headers["Content-Type"] = "application/json";
+    if (refresh) headers["X-ZuesScan-Refresh"] = "1";
     return fetch("/api/v1" + path, {
       method: method,
       headers: headers,
@@ -257,7 +262,7 @@
         view.appendChild(jobsBox);
         drawJobs(jobsBox, results[1]);
         timer = setInterval(function () {
-          api("GET", "/jobs").then(function (jobs) {
+          api("GET", "/jobs", undefined, true).then(function (jobs) {
             drawJobs(jobsBox, jobs);
           }, function () {});
         }, 5000);
@@ -565,6 +570,7 @@
       view.appendChild(settingsTargets(cfg));
       view.appendChild(settingsScopes(cfg));
       view.appendChild(settingsTokens(cfg));
+      view.appendChild(settingsSessions(cfg));
     });
   }
 
@@ -663,6 +669,32 @@
       el("p", { class: "muted small" },
         "viewer: reads; operator: also scans and records decisions; admin: also changes these settings."),
       form, shown);
+  }
+
+  function settingsSessions(cfg) {
+    var rows = cfg.sessions.map(function (s) {
+      var end = s.you ? el("span", { class: "muted" }, "this browser") : el("button", {
+        type: "button", class: "link",
+        on: { click: function () { endSession(s); } },
+      }, "End");
+      return [
+        el("strong", null, s.name), s.role, el("span", { class: "mono" }, s.client || "-"),
+        when(s.created_at), when(s.last_seen_at), when(s.idle_until), end,
+      ];
+    });
+    return el("section", null, el("h2", null, "Sessions (signed in now)"),
+      table(["Name", "Role", "From", "Signed in", "Last active", "Ends if idle until", ""],
+        rows.map(row), "Nobody is signed in with a browser."),
+      el("p", { class: "muted small" },
+        "A session ends when its owner signs out, after 30 minutes without use, 8 hours after " +
+        "signing in, when its token is revoked, or here. Tokens used by scripts (Bearer) have " +
+        "no session: revoke the token to stop them."));
+  }
+
+  function endSession(s) {
+    api("DELETE", "/admin/sessions/" + s.id)
+      .then(function () { flash("Session of " + s.name + " ended."); route(); })
+      .catch(function (err) { flash(err.message, true); });
   }
 
   function removeToken(name) {
@@ -832,6 +864,9 @@
           deleted: "deleted run #" + d.run_id,
           finding: "finding #" + d.finding_id + ": " + (d.action || "") + " (" + (d.from || "") + " → " + (d.to || "") + ")",
           config: d.action || "config",
+          auth: (d.action || "auth") + (d.session ? " (session #" + d.session + ")" : "") +
+            (d.failures ? " after " + d.failures + " failed sign-ins" : "") +
+            (d.client ? " from " + d.client : ""),
         }[e.kind] || e.kind;
         return el(
           "tr",

@@ -18,9 +18,10 @@
     <input id="token" name="token" type="password" autocomplete="current-password" required>
     <button type="submit" class="primary">Sign in</button>
     <p id="login-error" class="error" hidden></p>
-    <p class="muted small">An administrator makes a token with <code>zues token</code> and
-      adds its hash to <code>service.toml</code>. The browser keeps it in a cookie that page
-      scripts cannot read.</p>
+    <p class="muted small">An administrator gives you a token (Settings, or
+      <code>zues user add</code>). Signing in opens a session on the server: the browser
+      keeps only the session's key, in a cookie page scripts cannot read, never the token.
+      It ends when you sign out, after 30 minutes without use, or after 8 hours.</p>
   </form>
 </div>
 

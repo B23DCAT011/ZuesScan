@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sqlite3
 import time
+from contextlib import closing
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +26,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from rq import SimpleWorker  # noqa: E402
 
 from zues_scan.schema import Service  # noqa: E402
+from zues_scan.server import sessions  # noqa: E402
 from zues_scan.server.config import ConfigError  # noqa: E402
 from zues_scan.server.web import COOKIE, DASHBOARD_CSP, create_app  # noqa: E402
 from zues_scan.storage import Storage  # noqa: E402
@@ -30,6 +34,7 @@ from zues_scan.storage import Storage  # noqa: E402
 ALICE = "alice-operator-token-0123456789abcdefghijkl"
 BOB = "bob-viewer-token-0123456789abcdefghijklmnop"
 VSFTPD = Service(port=21, name="ftp", product="vsftpd", version="2.3.4")  # CVE-2011-2523: P2
+CSRF = {"X-ZuesScan": "1"}
 
 
 def sha(token: str) -> str:
@@ -184,8 +189,184 @@ def test_the_browser_session_is_an_httponly_strict_cookie(svc: App) -> None:
     assert "Secure" not in cookie  # plain http in this test; https sets it
     assert browser.get("/api/v1/me").json()["name"] == "bob"
 
-    assert browser.delete("/api/v1/session").status_code == 204
+    assert browser.delete("/api/v1/session").status_code == 403  # the CSRF header, again
+    assert browser.delete("/api/v1/session", headers=CSRF).status_code == 204
     assert browser.get("/api/v1/me").status_code == 401
+
+
+def sign_in(svc: App, token: str, client: tuple[str, int] = ("testclient", 50000)) -> TestClient:
+    browser = TestClient(svc.app, client=client)
+    response = browser.post("/api/v1/session", json={"token": token})
+    assert response.status_code == 200, response.text
+    return browser
+
+
+def test_the_cookie_holds_a_session_secret_never_the_token(svc: App) -> None:
+    browser = sign_in(svc, BOB)
+    secret = browser.cookies[COOKIE]
+
+    assert secret != BOB and len(secret) >= 43  # 256 random bits
+    with closing(sqlite3.connect(svc.db)) as conn:
+        dump = "\n".join(conn.iterdump())
+    assert secret not in dump and BOB not in dump  # only their SHA-256
+    assert sha(secret) in dump
+
+
+def test_signing_out_ends_the_session_on_the_server(svc: App) -> None:
+    browser = sign_in(svc, BOB)
+    stolen = browser.cookies[COOKIE]  # e.g. copied from the browser before signing out
+    assert browser.delete("/api/v1/session", headers=CSRF).status_code == 204
+
+    replay = TestClient(svc.app, cookies={COOKIE: stolen}).get("/api/v1/me")
+
+    assert replay.status_code == 401 and "session has ended" in replay.json()["detail"]
+    assert "Max-Age=0" in replay.headers["set-cookie"]  # the browser forgets it
+
+
+def test_a_session_ends_when_its_token_is_revoked_or_reissued(svc: App) -> None:
+    alice, bob = sign_in(svc, ALICE), sign_in(svc, BOB)
+    reissued = "bob-new-viewer-token-0123456789abcdefghijk"
+    tokens = (
+        f'[[tokens]]\nname = "alice"\nsha256 = "{sha(ALICE)}"\nrole = "operator"\n\n'
+        f'[[tokens]]\nname = "bob"\nsha256 = "{sha(reissued)}"\nrole = "viewer"\n\n'
+    )
+    svc.rewrite(config_text(svc.dir.as_posix(), tokens))
+
+    assert bob.get("/api/v1/me").status_code == 401  # same name, another token: over
+    assert alice.get("/api/v1/me").status_code == 200
+    svc.rewrite(config_text(svc.dir.as_posix(), tokens.split("\n\n")[1] + "\n\n"))
+    assert alice.get("/api/v1/me").status_code == 401  # alice's token is gone
+
+
+class Clock:
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.at = datetime(2026, 11, 24, 9, 0, tzinfo=UTC)
+        monkeypatch.setattr(sessions, "now", lambda: self.at)
+
+    def wait(self, **delta: float) -> None:
+        self.at += timedelta(**delta)
+
+
+def test_an_idle_session_ends_and_the_page_refresh_does_not_count(
+    svc: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = Clock(monkeypatch)
+    browser = sign_in(svc, BOB)
+    for _ in range(3):  # a tab left open: the overview refreshes the jobs by itself
+        clock.wait(minutes=9)
+        refresh = browser.get("/api/v1/jobs", headers={"X-ZuesScan-Refresh": "1"})
+        assert refresh.status_code == 200
+    clock.wait(minutes=3)
+
+    assert browser.get("/api/v1/me").status_code == 401  # 30 minutes without the person
+
+
+def test_a_session_in_use_lasts_8_hours_from_signing_in(
+    svc: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = Clock(monkeypatch)
+    browser = sign_in(svc, BOB)
+    for _ in range(23):  # someone using it every 20 minutes
+        clock.wait(minutes=20)
+        assert browser.get("/api/v1/me").status_code == 200
+    clock.wait(minutes=20)  # 8 hours
+
+    assert browser.get("/api/v1/me").status_code == 401
+
+
+def test_signing_in_again_replaces_the_browsers_session(svc: App) -> None:
+    browser = sign_in(svc, BOB)
+    first = browser.cookies[COOKIE]
+    assert browser.post("/api/v1/session", json={"token": ALICE}).status_code == 200
+
+    assert browser.get("/api/v1/me").json()["name"] == "alice"
+    assert TestClient(svc.app, cookies={COOKIE: first}).get("/api/v1/me").status_code == 401
+    with Storage(svc.db) as store:
+        assert [r["token_name"] for r in store.sessions()] == ["alice"]
+
+
+def test_sign_ins_and_outs_are_audited_without_secrets(svc: App) -> None:
+    browser = sign_in(svc, BOB)
+    secret = browser.cookies[COOKIE]
+    browser.delete("/api/v1/session", headers=CSRF)
+
+    with Storage(svc.db) as store:
+        events = [e for _, e, _ in store.audit_events()]
+        assert store.verify_audit().intact
+    assert [(e.kind, e.target, e.operator, e.detail["action"]) for e in events] == [
+        ("auth", "token:bob", "bob", "signed in"),
+        ("auth", "token:bob", "bob", "signed out"),
+    ]
+    assert events[0].detail["client"] == "testclient"
+    assert secret not in repr(events) and BOB not in repr(events)
+
+
+# --- failed sign-ins ---------------------------------------------------------------------------
+
+
+def test_ten_wrong_tokens_lock_the_address_out(svc: App) -> None:
+    attacker = TestClient(svc.app, client=("203.0.113.9", 4444))
+    for _ in range(sessions.LIMIT):
+        assert attacker.post("/api/v1/session", json={"token": "guess"}).status_code == 401
+
+    locked = attacker.post("/api/v1/session", json={"token": BOB})  # even the right one
+
+    assert locked.status_code == 429 and "too many failed sign-ins" in locked.json()["detail"]
+    assert 0 < int(locked.headers["retry-after"]) <= sessions.LOCKOUT
+    bearer = attacker.get("/api/v1/me", headers={"Authorization": f"Bearer {BOB}"})
+    assert bearer.status_code == 429
+    sign_in(svc, BOB, client=("198.51.100.7", 5555))  # another address is not affected
+    with Storage(svc.db) as store:
+        (event,) = [e for _, e, _ in store.audit_events() if e.detail["action"] == "locked out"]
+    assert (event.kind, event.target, event.detail["failures"]) == (
+        "auth",
+        "client:203.0.113.9",
+        sessions.LIMIT,
+    )
+
+
+def test_wrong_bearer_tokens_count_as_failed_sign_ins(svc: App) -> None:
+    script = TestClient(svc.app, client=("203.0.113.10", 4444))
+    for _ in range(sessions.LIMIT):
+        script.get("/api/v1/me", headers={"Authorization": "Bearer guess"})
+
+    assert script.get("/api/v1/me", headers={"Authorization": f"Bearer {ALICE}"}).status_code == 429
+
+
+def test_a_right_sign_in_starts_the_count_again(svc: App) -> None:
+    person = TestClient(svc.app, client=("192.0.2.1", 1))
+    for _ in range(2):
+        for _ in range(sessions.LIMIT - 1):
+            assert person.post("/api/v1/session", json={"token": "typo"}).status_code == 401
+        assert person.post("/api/v1/session", json={"token": BOB}).status_code == 200
+
+
+def test_without_redis_failures_are_counted_in_the_process(tmp_path: Path) -> None:
+    server = fakeredis.FakeServer()
+    server.connected = False  # every Redis command fails: ConnectionError
+    svc = App(tmp_path)
+    svc.app = create_app(str(svc.config), redis=fakeredis.FakeRedis(server=server))
+    attacker = TestClient(svc.app, client=("203.0.113.11", 1))
+    for _ in range(sessions.LIMIT):
+        assert attacker.post("/api/v1/session", json={"token": "guess"}).status_code == 401
+
+    assert attacker.post("/api/v1/session", json={"token": BOB}).status_code == 429
+
+
+def test_a_lock_out_in_the_process_ends_by_itself(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    counter = sessions.MemoryCounter()
+    for _ in range(3):
+        counter.fail("a")
+    counter.lock("a", 60)
+    assert counter.locked("a") == 60 and counter.locked("b") == 0
+
+    clock[0] += 60
+    assert counter.locked("a") == 0
+    assert counter.fail("a") == 1  # the failures before the lock were forgotten
+    clock[0] += sessions.WINDOW
+    assert counter.fail("a") == 1  # and these expire with their window
 
 
 def test_the_cookie_over_https_is_secure(svc: App) -> None:
