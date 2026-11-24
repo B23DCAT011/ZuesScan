@@ -344,3 +344,25 @@ def test_delivery_over_http(
         SECRET, body, headers["X-Zuesscan-Timestamp"], headers["X-Zuesscan-Signature"]
     )
     assert report.gave_up == 1 and "HTTP 302" in row(tmp_path, moved)["last_error"]
+
+
+def test_a_token_about_to_expire_raises_an_alert_once_a_day(tmp_path: Path) -> None:
+    pytest.importorskip("rq")
+    from dataclasses import replace
+
+    from zues_scan.server import scheduler
+    from zues_scan.server.config import Token
+
+    soon = Token("ci", "0" * 64, "viewer", expires_at=T0 + timedelta(days=3))
+    later = Token("siem", "1" * 64, "viewer", expires_at=T0 + timedelta(days=30))
+    service = replace(config(tmp_path), tokens=(soon, later))
+    with Storage(tmp_path / "zues.db"):
+        pass
+
+    assert scheduler.warn_expiring_tokens(service, now=T0) == ["ci"]
+    scheduler.warn_expiring_tokens(service, now=T0)  # the next round: held back
+
+    with Storage(tmp_path / "zues.db") as store:
+        (alert,) = store.alert_rows()
+    assert alert["kind"] == "token_expiring"
+    assert "the viewer token ci expires on 2026-11-27 09:00 UTC" in alert["payload"]

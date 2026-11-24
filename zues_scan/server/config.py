@@ -17,6 +17,7 @@ target by its `name`; it never brings its own address, scope file or options.
     name = "alice"
     sha256 = "9f86d08..."          # of the token (zues token), never the token
     role = "operator"              # "viewer": read only; "operator": scans, decisions
+    expires = 2027-06-30           # optional: not accepted after that day (UTC)
 
     [[targets]]
     name = "office-lan"
@@ -43,7 +44,7 @@ import os
 import re
 import tomllib
 from dataclasses import dataclass, field, replace
-from datetime import timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +69,10 @@ class Token:
     sha256: str
     role: str
     source: str = FILE
+    expires_at: datetime | None = None  # not accepted from then on (None: never)
+
+    def expired(self, at: datetime) -> bool:
+        return self.expires_at is not None and at >= self.expires_at
 
 
 @dataclass(frozen=True, slots=True)
@@ -311,7 +316,16 @@ def with_dashboard(config: ServiceConfig) -> ServiceConfig:
         if row["name"] in taken or row["role"] not in ROLES:
             problems.append(f"dashboard token {row['name']!r} left out: name taken or bad role")
             continue
-        tokens.append(Token(row["name"], row["sha256"], row["role"], source=DASHBOARD))
+        expires = row["expires_at"]
+        tokens.append(
+            Token(
+                row["name"],
+                row["sha256"],
+                row["role"],
+                source=DASHBOARD,
+                expires_at=datetime.fromisoformat(expires) if expires else None,
+            )
+        )
     return replace(
         config,
         targets=targets,
@@ -359,7 +373,7 @@ def _token(raw: dict[str, Any], i: int) -> Token:
     if "token" in raw or "secret" in raw:
         # Checked first: the helpful message, not just "unknown key".
         raise ConfigError(f"{where}: store the token's sha256, never the token")
-    _only(raw, {"name", "sha256", "role"}, where)
+    _only(raw, {"name", "sha256", "role", "expires"}, where)
     try:
         name, digest, role = (
             str(raw["name"]),
@@ -372,7 +386,23 @@ def _token(raw: dict[str, Any], i: int) -> Token:
         raise ConfigError(f"{where}: sha256 must be 64 hex characters")
     if role not in ROLES:
         raise ConfigError(f"{where}: role must be one of {', '.join(ROLES)}")
-    return Token(name, digest, role)
+    return Token(name, digest, role, expires_at=_expires(raw.get("expires"), where))
+
+
+def _expires(value: object, where: str) -> datetime | None:
+    """`expires = 2027-06-30` (TOML date or text): valid through that day, UTC."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        value = value.date()
+    if isinstance(value, str):
+        try:
+            value = date.fromisoformat(value.strip())
+        except ValueError:
+            raise ConfigError(f"{where}: expires must be a date, e.g. 2027-06-30") from None
+    if not isinstance(value, date):
+        raise ConfigError(f"{where}: expires must be a date, e.g. 2027-06-30")
+    return datetime.combine(value + timedelta(days=1), time(0), tzinfo=UTC)
 
 
 def _target(raw: dict[str, Any], i: int, dashboard_scopes: dict[str, str] | None = None) -> Target:

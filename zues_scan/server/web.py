@@ -42,6 +42,7 @@ import threading
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
+from datetime import timedelta
 from importlib import resources
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -259,13 +260,26 @@ def _wrong_token(request: Request, config: ServiceConfig) -> None:
         log.error("could not audit the lock-out of %s: %s", client, exc)
 
 
+def _refuse_expired(token: Token) -> None:
+    """A right token past its date: said plainly (whoever sends it holds the token), and
+    not counted as a guess."""
+    if token.expired(sessions.now()):
+        assert token.expires_at is not None
+        raise HTTPException(
+            401,
+            f"this token expired on {token.expires_at:%Y-%m-%d %H:%M} UTC: ask an admin to "
+            "rotate it (Settings → Tokens)",
+            {"WWW-Authenticate": "Bearer"},
+        )
+
+
 def _token_of(config: ServiceConfig, session: Session) -> Token | None:
-    """The token a session was opened with, if it is still configured unchanged."""
+    """The token a session was opened with, if it is still configured unchanged and valid."""
     for token in config.tokens:
         if token.name == session.token_name and hmac.compare_digest(
             token.sha256, session.token_sha256
         ):
-            return token
+            return None if token.expired(sessions.now()) else token
     return None  # revoked, or re-issued under the same name: the session is over
 
 
@@ -300,6 +314,7 @@ def caller(request: Request, config: Annotated[ServiceConfig, Depends(current_co
         if token is None:
             _wrong_token(request, config)
             raise HTTPException(401, "a valid token is required", {"WWW-Authenticate": "Bearer"})
+        _refuse_expired(token)
         return Caller(token.name, token.role)
     if COOKIE in request.cookies:
         who = _session_caller(request, config)
@@ -385,6 +400,17 @@ class TokenBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=64)
     role: Literal["viewer", "operator", "admin"]
+    # How many days it is accepted; null: without end (e.g. a monitored service account).
+    valid_days: int | None = Field(default=90, ge=1, le=730)
+
+
+class RotateBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    valid_days: int | None = Field(default=90, ge=1, le=730)
+
+
+def _validity(days: int | None) -> timedelta | None:
+    return None if days is None else timedelta(days=days)
 
 
 class Decision(BaseModel):
@@ -406,6 +432,7 @@ def login(body: Login, request: Request, response: Response, config: Config) -> 
     if token is None:
         _wrong_token(request, config)
         raise HTTPException(401, "unknown token")
+    _refuse_expired(token)
     throttle: sessions.Throttle = request.app.state.throttle
     throttle.succeeded(*_throttle_args(request, config))
     secret = sessions.new_secret()
@@ -683,7 +710,13 @@ def admin_config(who: Admin, config: Config) -> dict[str, Any]:
             _target_settings(t) for t in sorted(config.targets.values(), key=lambda t: t.name)
         ],
         "tokens": [
-            {"name": t.name, "role": t.role, "source": t.source, "you": t.name == who.name}
+            {
+                "name": t.name,
+                "role": t.role,
+                "source": t.source,
+                "you": t.name == who.name,
+                "expires_at": t.expires_at.isoformat() if t.expires_at else None,
+            }
             for t in sorted(config.tokens, key=lambda t: t.name)
         ],
         "plugins": [
@@ -794,12 +827,26 @@ def delete_target(name: str, who: Admin, config: Config) -> None:
 def post_token(body: TokenBody, who: Admin, config: Config) -> dict[str, Any]:
     try:
         with _writable(config) as store:
-            token = managed.create_token(store, config, body.name, body.role, who.name)
+            token = managed.create_token(
+                store, config, body.name, body.role, who.name, _validity(body.valid_days)
+            )
     except managed.ManagedError as exc:
         raise _refused(exc) from None
     log.info("%s created the %s token %s", who.name, body.role, body.name)
     # Shown this once: only its SHA-256 is kept.
     return {"name": body.name.strip(), "role": body.role, "token": token}
+
+
+@api.post("/admin/tokens/{name}/rotate")
+def rotate_token(name: str, body: RotateBody, who: Admin, config: Config) -> dict[str, Any]:
+    """A new value for the token; the old one and its sessions stop working now."""
+    try:
+        with _writable(config) as store:
+            token = managed.rotate_token(store, config, name, who.name, _validity(body.valid_days))
+    except (managed.ManagedError, LookupError) as exc:
+        raise _refused(exc) from None
+    log.info("%s rotated the token %s", who.name, name)
+    return {"name": name, "token": token, "you": name == who.name}
 
 
 @api.delete("/admin/tokens/{name}", status_code=204)

@@ -24,6 +24,7 @@ import re
 import secrets
 import sys
 from collections import Counter
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -852,24 +853,58 @@ def _cmd_user(args: argparse.Namespace) -> int:
     try:
         with Storage(config.db) as store:
             if args.user_command == "list":
-                print(f"{'NAME':<24} {'ROLE':<9} SOURCE")
+                print(f"{'NAME':<24} {'ROLE':<9} {'SOURCE':<10} EXPIRES (UTC)")
                 for t in sorted(config.tokens, key=lambda t: t.name):
-                    print(f"{t.name:<24} {t.role:<9} {t.source}")
+                    print(f"{t.name:<24} {t.role:<9} {t.source:<10} {_token_expiry(t)}")
                 for problem in config.problems:
                     print(f"note: {problem}")
                 return 0
+            valid_for = _validity(getattr(args, "expires", "90d"))  # not for remove
             if args.user_command == "add":
-                token = managed.create_token(store, config, args.name, args.role, actor)
+                token = managed.create_token(store, config, args.name, args.role, actor, valid_for)
                 print(f"{args.role} token for {args.name} (shown once, keep it secret):")
                 print(token)
                 print("\nsign in to the dashboard with it; it is recorded as the operator's name")
+                print(_until(valid_for))
+                return 0
+            if args.user_command == "rotate":
+                token = managed.rotate_token(store, config, args.name, actor, valid_for)
+                print(f"new token for {args.name} (shown once; the old one no longer works):")
+                print(token)
+                print(_until(valid_for))
                 return 0
             managed.delete_token(store, config, args.name, actor)
             print(f"token {args.name} removed")
             return 0
-    except (managed.ManagedError, LookupError, StorageError) as exc:
+    except (managed.ManagedError, LookupError, StorageError, ValueError) as exc:
         print(f"error: {str(exc).strip(chr(39))}", file=sys.stderr)
         return 2
+
+
+def _validity(text: str) -> timedelta | None:
+    """--expires: "90d", "1y", "never"."""
+    text = text.strip().lower()
+    if text == "never":
+        return None
+    match = re.fullmatch(r"(\d+)\s*([dy])", text)
+    if match is None:
+        raise ValueError(f"--expires {text!r}: e.g. 30d, 90d, 1y or never")
+    days = int(match.group(1)) * (365 if match.group(2) == "y" else 1)
+    return timedelta(days=days)
+
+
+def _until(valid_for: timedelta | None) -> str:
+    if valid_for is None:
+        return "it does not expire: revoke it when it is no longer needed"
+    end = datetime.now(UTC) + valid_for
+    return f"it is accepted until {end:%Y-%m-%d %H:%M} UTC (zues user rotate NAME renews it)"
+
+
+def _token_expiry(token: Any) -> str:
+    if token.expires_at is None:
+        return "never"
+    late = " (EXPIRED)" if token.expired(datetime.now(UTC)) else ""
+    return f"{token.expires_at:%Y-%m-%d %H:%M}{late}"
 
 
 def _cmd_enqueue(args: argparse.Namespace) -> int:
@@ -927,6 +962,9 @@ def _cmd_scheduler(args: argparse.Namespace) -> int:
             return 1
         print(f"enqueued: {', '.join(names) or 'nothing due'}")
         from zues_scan.server import notify
+
+        for name in scheduler.warn_expiring_tokens(config):
+            print(f"warning: the token {name} expires within a week (zues user rotate {name})")
 
         sent = notify.flush(config)
         if sent.sent or sent.retrying or sent.gave_up:
@@ -1387,6 +1425,13 @@ def build_parser() -> argparse.ArgumentParser:
     add = users.add_parser("add", help="create a token; it is printed once")
     add.add_argument("name", help="who it is for (recorded as operator)")
     add.add_argument("--role", choices=["viewer", "operator", "admin"], default="viewer")
+    expires_help = "how long it is accepted: 30d, 90d (default), 1y, ... or never"
+    add.add_argument("--expires", default="90d", help=expires_help)
+    rotate = users.add_parser(
+        "rotate", help="a new value for a dashboard token: the old one stops working"
+    )
+    rotate.add_argument("name")
+    rotate.add_argument("--expires", default="90d", help=expires_help)
     users.add_parser("list", help="every token: service.toml's and the dashboard's")
     remove = users.add_parser("remove", help="revoke a dashboard token")
     remove.add_argument("name")

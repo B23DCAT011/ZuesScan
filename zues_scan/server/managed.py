@@ -26,7 +26,7 @@ import hashlib
 import ipaddress
 import secrets
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from zues_scan.plugins import registry as plugin_registry
@@ -232,7 +232,29 @@ def _found(binary: str) -> bool:
 # --- tokens ------------------------------------------------------------------------------------
 
 
-def create_token(store: Any, config: ServiceConfig, name: str, role: str, actor: str) -> str:
+# How long a new token is accepted, unless asked otherwise: long enough not to be a chore,
+# short enough that a forgotten or leaked one stops working by itself (G30).
+DEFAULT_VALIDITY = timedelta(days=90)
+MAX_VALIDITY = timedelta(days=730)
+
+
+def expiry(valid_for: timedelta | None) -> str | None:
+    """When a token made now stops being accepted (None: never), checked."""
+    if valid_for is None:
+        return None
+    if not timedelta(days=1) <= valid_for <= MAX_VALIDITY:
+        raise ManagedError("a token is valid for 1 day to 2 years (or without end)")
+    return (datetime.now(UTC) + valid_for).isoformat(timespec="seconds")
+
+
+def create_token(
+    store: Any,
+    config: ServiceConfig,
+    name: str,
+    role: str,
+    actor: str,
+    valid_for: timedelta | None = DEFAULT_VALIDITY,
+) -> str:
     """Create a token; return it. Only its SHA-256 is kept: it is shown this once."""
     name = name.strip()
     if not name or len(name) > 64 or not all(c.isalnum() or c in "._@-" for c in name):
@@ -241,9 +263,30 @@ def create_token(store: Any, config: ServiceConfig, name: str, role: str, actor:
         raise ManagedError(f"role must be one of {', '.join(ROLES)}")
     if any(t.name == name for t in config.tokens):
         raise ManagedError(f"a token named {name!r} exists already")
+    expires_at = expiry(valid_for)
     token = secrets.token_urlsafe(32)
-    store.save_managed_token(name, hashlib.sha256(token.encode()).hexdigest(), role, actor)
+    store.save_managed_token(
+        name, hashlib.sha256(token.encode()).hexdigest(), role, actor, expires_at
+    )
     return token
+
+
+def rotate_token(
+    store: Any,
+    config: ServiceConfig,
+    name: str,
+    actor: str,
+    valid_for: timedelta | None = DEFAULT_VALIDITY,
+) -> str:
+    """A new value for a dashboard token (same name and role); the old value, and every
+    session opened with it, stop working at once. Return the new value (shown once)."""
+    token = next((t for t in config.tokens if t.name == name), None)
+    if token is None or token.source != DASHBOARD:
+        raise LookupError(f"no dashboard token named {name!r}")
+    expires_at = expiry(valid_for)
+    value = secrets.token_urlsafe(32)
+    store.rotate_managed_token(name, hashlib.sha256(value.encode()).hexdigest(), actor, expires_at)
+    return value
 
 
 def delete_token(store: Any, config: ServiceConfig, name: str, actor: str) -> None:
