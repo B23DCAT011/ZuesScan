@@ -30,6 +30,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from importlib import metadata
@@ -37,6 +38,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from zues_scan.cve.cache import CveCache
+from zues_scan.plugins.base import ScanError
 from zues_scan.plugins.dnsx import DnsxPlugin
 from zues_scan.plugins.httpx import HttpxPlugin
 from zues_scan.plugins.naabu import NaabuPlugin
@@ -230,6 +232,16 @@ class Pin:
         """As one ZUES_PLUGINS item."""
         return f"{self.name}:{self.activity}:{self.package}=={self.version}:{self.sha256}"
 
+    def wire(self) -> dict[str, str]:
+        """As the child process that runs the plugin receives it (to check it again)."""
+        return {
+            "name": self.name,
+            "package": self.package,
+            "version": self.version,
+            "sha256": self.sha256,
+            "activity": str(self.activity),
+        }
+
     def toml(self) -> str:
         """As a [[plugins]] table of service.toml."""
         return (
@@ -398,9 +410,10 @@ def _modules(dist: Any) -> set[str]:
     return names
 
 
-def _verify(entry: Any, pin: Pin) -> None:
-    """Raises PinError unless `entry` comes from exactly the package `pin` names.
-    Decided from the installed files, before anything of the package is imported."""
+def verify(entry: Any, pin: Pin) -> str:
+    """Raises PinError unless `entry` comes from exactly the package `pin` names; returns
+    the digest of its files. Decided from the installed files, before anything of the
+    package is imported (by the registry, then again by the child process that runs it)."""
     dist = getattr(entry, "dist", None)
     if dist is None:
         raise PinError("its package cannot be identified, so it cannot be held to its pin")
@@ -423,6 +436,7 @@ def _verify(entry: Any, pin: Pin) -> None:
         raise PinError(
             f"its entry point names the module {module!r}, which {dist.name} does not install"
         )
+    return digest
 
 
 def pin_for(name: str, entry_points: EntryPoints | None = None) -> Pin:
@@ -444,7 +458,7 @@ def pin_for(name: str, entry_points: EntryPoints | None = None) -> Pin:
     if dist is None:
         raise PinError(f"the package of {name!r} cannot be identified")
     pin = make_pin(name, "active", dist.name, dist.version, package_digest(dist), f"plugin {name}")
-    _verify(entry, pin)  # its entry point names a module of its own package
+    verify(entry, pin)  # its entry point names a module of its own package
     return pin
 
 
@@ -512,11 +526,65 @@ def _entry_points() -> list[Any]:
     return list(metadata.entry_points(group=GROUP))
 
 
-def load(entry_points: EntryPoints | None = None, policy: Policy | None = None) -> Registry:
+def spec_of(loaded: Any) -> PluginSpec:
+    """What an entry point names: a PluginSpec, or a function returning one."""
+    spec = loaded() if callable(loaded) and not isinstance(loaded, PluginSpec) else loaded
+    if not isinstance(spec, PluginSpec):
+        raise PluginError("the entry point must name a PluginSpec (or a function returning one)")
+    return spec
+
+
+# Specs read from child processes, by entry point and digest of the package's files: the
+# same files give the same spec, so a service reads each one once, not on every request.
+_DESCRIBED: dict[tuple[str, str, str], PluginSpec] = {}
+
+
+def _package_spec(entry: Any, pin: Pin | None, digest: str | None, in_process: bool) -> PluginSpec:
+    """The spec of a package's plugin. Read in a child process, whose factory builds a
+    stand-in that runs every call of the plugin in a child too (`process`, G25); the
+    package's code never runs here. `in_process` (tests only): import it here."""
+    if in_process:
+        return spec_of(entry.load())
+    from zues_scan.plugins import process
+
+    key = (entry.name, entry.value, digest) if digest is not None else None
+    if key is not None and key in _DESCRIBED:
+        return _DESCRIBED[key]
+    ref = process.Ref(
+        entry.name,
+        entry.value,
+        pin.wire() if pin is not None else None,
+        tuple(p for p in sys.path if p),
+    )
+    try:
+        facts = process.describe(ref)
+    except ScanError as exc:
+        raise PluginError(str(exc)) from None
+    spec = PluginSpec(
+        facts["name"],
+        facts["kind"],
+        facts["activity"],
+        facts["summary"],
+        process.factory(ref, facts["name"], facts["activity"]),
+        binary=facts["binary"],
+        needs=facts["needs"],
+    )
+    if key is not None:
+        _DESCRIBED[key] = spec
+    return spec
+
+
+def load(
+    entry_points: EntryPoints | None = None,
+    policy: Policy | None = None,
+    *,
+    in_process: bool = False,
+) -> Registry:
     """The built-in plugins and those installed packages declare.
 
     With a `policy`, a package's plugin loads only if the policy pins it and the installed
     files match the pin; anything else installed is left out without being imported.
+    A package's plugin runs in child processes (`process`), never in this one.
     """
     registry = Registry({spec.name: spec for spec in BUILTINS})
     allowed_in = policy.where if policy is not None else ""
@@ -525,6 +593,7 @@ def load(entry_points: EntryPoints | None = None, policy: Policy | None = None) 
         where = f"{entry.name} ({entry.value})"
         seen.add(entry.name)
         pin = None
+        digest = None
         if policy is not None:
             if entry.name in registry.plugins:
                 registry.problems.append(
@@ -541,18 +610,13 @@ def load(entry_points: EntryPoints | None = None, policy: Policy | None = None) 
                 )
                 continue
             try:
-                _verify(entry, pin)
+                digest = verify(entry, pin)
             except PinError as exc:
                 registry.left_out[entry.name] = str(exc)
                 registry.problems.append(f"plugin {where} left out: {exc}")
                 continue
         try:
-            loaded = entry.load()
-            spec = loaded() if callable(loaded) and not isinstance(loaded, PluginSpec) else loaded
-            if not isinstance(spec, PluginSpec):
-                raise PluginError(
-                    "the entry point must name a PluginSpec (or a function returning one)"
-                )
+            spec = _package_spec(entry, pin, digest, in_process)
         except Exception as exc:  # noqa: BLE001 - a broken package must not break ZuesScan
             registry.problems.append(f"plugin {where} left out: {exc}")
             continue

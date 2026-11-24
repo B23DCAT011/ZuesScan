@@ -108,7 +108,7 @@ def test_a_package_adds_a_plugin_and_a_broken_one_is_left_out() -> None:
         Entry("wrong", object()),
         Entry("nmap", spec("nmap", "scanner")),  # may not replace a built-in
     ]
-    loaded = registry.load(lambda: entries)
+    loaded = registry.load(lambda: entries, in_process=True)
 
     assert loaded.plugins["probe"].source == "zues-probe"
     assert loaded.plugins["lazy"].source == "zues-lazy"
@@ -134,7 +134,7 @@ def test_a_spec_is_checked(args: tuple[Any, Any, Any], error: str) -> None:
 
 
 def test_build_by_name_and_kind() -> None:
-    loaded = registry.load(lambda: [Entry("probe", spec())])
+    loaded = registry.load(lambda: [Entry("probe", spec())], in_process=True)
     built = loaded.build(["probe", "probe"], "check", PluginContext())
     assert len(built) == 1 and built[0].name == "probe"
     with pytest.raises(PluginError, match=r"unknown check plugin 'nope' \(available: nuclei, "):
@@ -145,7 +145,7 @@ def test_build_by_name_and_kind() -> None:
 
 def test_a_plugin_cannot_claim_less_than_it_does() -> None:
     lying = PluginSpec("probe", "check", Activity.PASSIVE, "x", lambda ctx: Check())
-    loaded = registry.load(lambda: [Entry("probe", lying)])
+    loaded = registry.load(lambda: [Entry("probe", lying)], in_process=True)
     with pytest.raises(PluginError, match="its activity differs"):
         loaded.build(["probe"], "check", PluginContext())
 
@@ -377,7 +377,8 @@ def test_the_example_plugin_finds_an_exposed_repository(
 
 
 def test_the_example_plugin_registers_through_its_entry_point(example: Any) -> None:
-    loaded = registry.load(lambda: [Entry("exposed-git", example.PLUGIN, "zues-exposed-git")])
+    entry = Entry("exposed-git", example.PLUGIN, "zues-exposed-git")
+    loaded = registry.load(lambda: [entry], in_process=True)
     spec = loaded.get("exposed-git", "check")
     assert (spec.activity, spec.source) == (Activity.ACTIVE, "zues-exposed-git")
     text = (EXAMPLE / "pyproject.toml").read_text(encoding="utf-8")

@@ -78,7 +78,7 @@ PLUGIN = PluginSpec(
     kind="check",
     activity=Activity.ACTIVE,
     summary=".git directories served over HTTP",
-    factory=lambda ctx: ExposedGitCheck(),  # ctx: profile, nuclei_templates, ...
+    factory=lambda ctx: ExposedGitCheck(),  # ctx: profile, nuclei_templates, dns_wordlist
     binary=None,  # hoặc tên chương trình cần có (doctor kiểm)
 )
 ```
@@ -87,6 +87,35 @@ Gói hỏng (lỗi import, không phải `PluginSpec`, trùng tên plugin dựng
 trong `zues plugins` / `zues doctor` — không bao giờ làm hỏng các plugin khác.
 
 Ví dụ đầy đủ, chạy được: [`examples/zues-exposed-git`](../examples/zues-exposed-git).
+
+## Plugin của gói khác chạy ở tiến trình riêng
+
+Code của một gói plugin **không bao giờ chạy trong tiến trình của ZuesScan** — kể cả lúc đọc
+`PluginSpec` của nó. Mỗi lời gọi (đọc spec, `is_available` + `version`, `scan` / `check` /
+`discover`) là một tiến trình con `python -I -m zues_scan.plugins.process`, nhận lời gọi bằng JSON
+trên stdin, trả lời trên stdout:
+
+| Tiến trình con nhận | Tiến trình con **không** nhận |
+|---|---|
+| dữ liệu của lời gọi: địa chỉ scope đã duyệt, các host cần kiểm | biến môi trường của ZuesScan (`ZUES_*`: database, Redis, secret webhook, token…) |
+| profile quét, đường dẫn templates nuclei và wordlist DNS | database, CVE cache, credentials SSH, API key của subfinder |
+| `PATH` và vài biến hệ thống cần để chạy chương trình | thư mục làm việc của dịch vụ: nó chạy trong một thư mục tạm rỗng, cũng là `HOME` |
+
+- **Giới hạn**: thời gian = `timeout` của profile + 60 s; hết giờ thì cả nhóm tiến trình bị giết
+  (kể cả công cụ nó đã khởi động); trả lời tối đa 128 MiB; giữ 64 KiB cuối của stderr.
+- **Trước khi import**, tiến trình con kiểm lại gói theo pin (nếu dịch vụ ghim nó), từ file trên đĩa.
+- **Câu trả lời là dữ liệu không tin cậy**: đọc từng trường theo kiểu của schema (trường lạ, sai
+  kiểu, thiếu → lỗi), rồi qua cùng các kiểm tra như mọi plugin (host ngoài scope bị bỏ).
+- Lỗi của plugin (exception, `sys.exit`, kết quả sai kiểu) thành `ScanError` có lý do; `ScanError`
+  của chính plugin được giữ nguyên (thông báo, stderr, output).
+
+Với người viết plugin, điều này có nghĩa:
+
+- **Mỗi lời gọi là một tiến trình mới**: không giữ trạng thái từ `is_available()` sang `scan()`.
+- `print()` không làm hỏng gì (stdout của plugin được chuyển sang stderr).
+- `PluginContext` chỉ có `profile`, `nuclei_templates`, `dns_wordlist` — không có credentials hay
+  CVE cache.
+- Mọi thứ trong `ScanResult` phải là kiểu của `zues_scan.schema` (dataclass, không phải dict).
 
 ## Kiểm tra hợp đồng trong test của plugin
 
@@ -155,7 +184,10 @@ báo lỗi; target dùng nó dừng với lý do rõ ràng thay vì quét thiế
 
 ## Giới hạn
 
-Plugin được ghim vẫn chạy **trong cùng tiến trình** với ZuesScan và có mọi quyền của nó: pin
-bảo đảm đó đúng là code bạn đã đọc, không bảo đảm code đó vô hại. Phụ thuộc của plugin (gói
-khác nó import) không nằm trong pin — ghim chúng khi dựng image (`pip install --require-hashes`).
-Xem G25 trong [`KNOWN-GAPS.md`](KNOWN-GAPS.md).
+Tiến trình riêng tách plugin khỏi **bộ nhớ và môi trường** của ZuesScan, không khỏi **hệ điều
+hành**: nó vẫn chạy dưới cùng user, nên đọc được file mà user đó đọc được nếu đoán ra đường dẫn
+(vd database ở `/data/zues.db` trong image), và kết nối được tới bất cứ đâu. Muốn chặn cả hai cần
+user / container riêng chỉ có mạng tới mục tiêu. Pin bảo đảm đó đúng là code bạn đã đọc, không
+bảo đảm code đó vô hại. Phụ thuộc của plugin (gói khác nó import) không nằm trong pin — ghim
+chúng khi dựng image (`pip install --require-hashes`). Xem G25 trong
+[`KNOWN-GAPS.md`](KNOWN-GAPS.md).
