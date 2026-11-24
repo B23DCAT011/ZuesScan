@@ -213,4 +213,8 @@ rồi độ tin cậy, rồi tiện dụng.
       chứng), chờ ghi 15 giây; bật khi tạo / migrate DB và khi dịch vụ khởi động, không bao giờ chỉ
       vì mở DB (bản backup giữ nguyên mã băm); backup là một file; doctor báo chế độ; README khôi
       phục xoá `-wal` / `-shm` cũ.
+- [x] `feat/cron-schedule` (G23) — `cron = "0 2 * * sat Asia/Ho_Chi_Minh"` (crontab 5 trường, múi
+      giờ IANA / độ lệch, ≥ 5 phút) trong service.toml, API, dashboard; scheduler giữ mốc lịch nên
+      `every` không còn trôi theo thời gian chờ; lỡ nhiều mốc thì bù một lần. Thử trên Chrome
+      headless (lưu, từ chối `*/2`, trang Edit, Overview).
 

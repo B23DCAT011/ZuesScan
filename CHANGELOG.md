@@ -6,6 +6,20 @@ section of a version as its release notes, so every tag needs one.
 
 ## [Unreleased]
 
+### Added
+- `cron` schedules for targets, instead of `every`: `cron = "0 2 * * sat Asia/Ho_Chi_Minh"`
+  — the five crontab fields (lists, ranges, steps, month and day names; day of month OR day
+  of week when both are set), with an optional time zone (IANA name with daylight saving
+  time, `UTC` or `+07:00`). At least 5 minutes between scans. In service.toml, the API and
+  the dashboard (the Schedule box takes `24h` or a cron line). `zues-scan[server]` installs
+  `tzdata` on Windows, which has no time zone data of its own.
+
+### Fixed
+- Scheduled scans drifted: a target was due `every` after its last scan *started* (or was
+  queued), so a scan that waited 40 minutes in the queue moved every later one by 40
+  minutes. The scheduler now keeps each target's slot: due at the last slot + `every`,
+  whenever the scan actually ran; several missed slots are made up with one scan.
+
 ### Changed
 - The database uses write-ahead logging: a long read (the dashboard, a report) no longer
   holds back the save of a run, and saves no longer block readers; a busy database is

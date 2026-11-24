@@ -493,6 +493,8 @@ target = "10.0.0.0/24"
 scope = "/config/scope-office.txt"      # vẫn qua scope guard như lệnh scan
 profile = "full"
 every = "24h"                           # tuỳ chọn: quét định kỳ (m / h / d, tối thiểu 5m)
+# hoặc vào giờ cố định (không dùng cùng every): 2 giờ sáng thứ Bảy, giờ Việt Nam
+# cron = "0 2 * * sat Asia/Ho_Chi_Minh"
 engagement = "PT-2026-014"
 
 [notify]
@@ -522,7 +524,16 @@ zues scheduler --config service.toml --once                      # một vòng r
 - **Scheduler**: một target đến hạn khi cả lần quét gần nhất (cùng target **và** cùng profile —
   quét nhanh mỗi giờ không làm lần quét đầy đủ mỗi ngày tưởng là đã xong) lẫn lần xếp hàng gần
   nhất (ghi trong Redis) đều cũ hơn `every`. Mỗi vòng giữ một khoá ngắn trong Redis, nên lỡ chạy
-  hai scheduler cũng không xếp trùng một lần quét; khởi động lại scheduler cũng vậy. Mỗi vòng
+  hai scheduler cũng không xếp trùng một lần quét; khởi động lại scheduler cũng vậy.
+- **Lịch không trôi:** scheduler nhớ *mốc* của lần quét định kỳ trước (trong Redis), không nhớ lúc
+  nó chạy: quét hằng ngày lúc 02:00 thì mãi là 02:00, dù lần trước phải chờ trong hàng đợi 40 phút
+  hay một lần quét tay chen vào. Lỡ nhiều mốc (scheduler tắt) thì quét bù **một** lần.
+- **`cron`** — quét vào giờ cố định thay cho `every`: 5 trường như crontab (phút giờ ngày tháng
+  thứ: `*`, `1-5`, `*/15`, `1,15`, `mon-fri`, `jan`), thêm múi giờ tuỳ chọn (tên IANA như
+  `Asia/Ho_Chi_Minh` / `Europe/Berlin` — có giờ mùa hè, `UTC`, hay `+07:00`; mặc định UTC). Khi
+  đặt cả ngày trong tháng lẫn thứ thì khớp **một trong hai** (như crontab). Ít nhất 5 phút giữa
+  hai lần quét. Kết hợp với `@window` của scope để chắc lần quét rơi vào khung giờ được phép. Trên
+  dashboard, ô *Schedule* nhận cả hai: `24h` hoặc một dòng cron. Mỗi vòng
   đọc lại cấu hình: target thêm / sửa trên dashboard hay trong `service.toml` được lên lịch
   ngay, không cần khởi động lại; cấu hình hỏng thì không xếp gì (ghi log mỗi vòng) cho tới
   khi sửa xong. Chỉ đổi Redis URL / tên queue mới phải khởi động lại.
