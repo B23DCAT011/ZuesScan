@@ -2,22 +2,27 @@
 
     GET  /                               the dashboard (static page, no build step)
     GET  /healthz                        liveness for Docker / a load balancer (no auth)
-    POST /api/v1/session                 log in with a token: sets an HttpOnly cookie
+    POST /api/v1/session                 sign in with a token: opens a session (cookie)
+    DELETE /api/v1/session               sign out: ends it on the server
     GET  /api/v1/me | targets | jobs | runs | findings | hosts | audit   (viewer)
     GET  /api/v1/runs/{id}[/report.html|/sarif]                          (viewer)
     POST /api/v1/scans  {"target": "<name in service.toml>"}             (operator)
     POST /api/v1/findings/{id}/decision  {"action": "claim_fixed", ...}  (operator)
+    GET|PUT|DELETE /api/v1/admin/...     settings and sessions           (admin)
 
-Who may do what comes from `service.toml`: a token (sent as `Authorization: Bearer`,
-or once to `/api/v1/session` by the browser) is hashed and compared with the stored
-SHA-256 digests. The file is re-read when it changes, so a revoked token or a removed
-target stops working at the next request; if an edit breaks the file, the API refuses
-every request until it is fixed (fail closed, never "keep the old tokens").
+Who may do what comes from `service.toml` and the dashboard's settings: a token (sent as
+`Authorization: Bearer`, or once to `/api/v1/session` by the browser) is hashed and
+compared with the stored SHA-256 digests. The configuration is re-read when it changes,
+so a revoked token or a removed target stops working at the next request; if an edit
+breaks the file, the API refuses every request until it is fixed (fail closed, never
+"keep the old tokens"). Wrong tokens are counted per address; too many lock it out for a
+while (`sessions.Throttle`).
 
-The browser keeps the token in an HttpOnly, SameSite=Strict cookie that page scripts
-cannot read. Requests that change something and arrive with that cookie must also
-carry the `X-ZuesScan: 1` header, which another site cannot add without a CORS
-preflight this server never grants: that is the CSRF defence.
+The browser never keeps the token: signing in opens a session held by the server
+(`sessions`), and the HttpOnly, SameSite=Strict cookie holds only that session's random
+secret, which page scripts cannot read. Requests that change something and arrive with
+that cookie must also carry the `X-ZuesScan: 1` header, which another site cannot add
+without a CORS preflight this server never grants: that is the CSRF defence.
 
 A scan request names a configured target; it cannot bring an address, a scope or
 options (the request model forbids extra fields). What is scanned is decided by
@@ -57,17 +62,19 @@ from zues_scan.profiles import BUILTIN as BUILTIN_PROFILES
 from zues_scan.report import render_html, stored_model
 from zues_scan.report.html import page_csp
 from zues_scan.report.sarif import to_sarif
-from zues_scan.server import managed
+from zues_scan.server import managed, sessions
 from zues_scan.server import queue as rkqueue
 from zues_scan.server.config import DASHBOARD, ConfigError, ServiceConfig, Token, load_config
+from zues_scan.server.sessions import Session, stamp
 from zues_scan.storage import Storage, StorageError
 
 log = logging.getLogger(__name__)
 
 COOKIE = "zues_session"
 CSRF_HEADER = "X-ZuesScan"
-SESSION_SECONDS = 8 * 3600
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+# Sent with a 401 for a cookie that no longer opens a session: the browser forgets it.
+CLEAR_COOKIE = f"{COOKIE}=; Max-Age=0; Path=/; HttpOnly; SameSite=strict"
 
 # The dashboard loads only its own files and talks only to this server.
 DASHBOARD_CSP = "; ".join(
@@ -172,6 +179,7 @@ class LiveConfig:
 class Caller:
     name: str
     role: str
+    session: int | None = None  # the session's id when signed in with the browser
 
 
 def match_token(config: ServiceConfig, token: str) -> Token | None:
@@ -193,26 +201,108 @@ def current_config(holder: Annotated[LiveConfig, Depends(live)]) -> ServiceConfi
     return holder.get()
 
 
+def client_address(request: Request) -> str:
+    """The caller's address (behind a trusted proxy: the one it forwarded)."""
+    return request.client.host if request.client else "unknown"
+
+
+def _throttle_args(request: Request, config: ServiceConfig) -> tuple[Any, str, str]:
+    holder: LiveConfig = request.app.state.live
+    redis = holder.queue(config).connection  # no round trip yet: failures are handled later
+    return redis, f"zues:{config.queue}:auth", client_address(request)
+
+
+def _brake(request: Request, config: ServiceConfig) -> None:
+    """Refuse a sign-in from a locked-out address before looking at its token (429)."""
+    throttle: sessions.Throttle = request.app.state.throttle
+    seconds = throttle.locked(*_throttle_args(request, config))
+    if seconds:
+        minutes = max(1, -(-seconds // 60))
+        raise HTTPException(
+            429,
+            f"too many failed sign-ins from your address; try again in {minutes} minute(s)",
+            {"Retry-After": str(seconds)},
+        )
+
+
+def _wrong_token(request: Request, config: ServiceConfig) -> None:
+    """Count a wrong token; lock the address out (logged, audited) if it was one too many."""
+    throttle: sessions.Throttle = request.app.state.throttle
+    redis, prefix, client = _throttle_args(request, config)
+    log.warning("failed sign-in from %s", client, extra={"event": "auth.failed"})
+    failures = throttle.failed(redis, prefix, client)
+    if not failures:
+        return
+    log.warning(
+        "%s locked out for %d s after %d failed sign-ins",
+        client,
+        sessions.LOCKOUT,
+        failures,
+        extra={"event": "auth.locked"},
+    )
+    try:
+        with _writable(config) as store:
+            store.record_lockout(
+                client, failures=failures, seconds=sessions.LOCKOUT, at=stamp(sessions.now())
+            )
+    except (StorageError, sqlite3.Error) as exc:  # the lock holds; only the record is lost
+        log.error("could not audit the lock-out of %s: %s", client, exc)
+
+
+def _token_of(config: ServiceConfig, session: Session) -> Token | None:
+    """The token a session was opened with, if it is still configured unchanged."""
+    for token in config.tokens:
+        if token.name == session.token_name and hmac.compare_digest(
+            token.sha256, session.token_sha256
+        ):
+            return token
+    return None  # revoked, or re-issued under the same name: the session is over
+
+
+def _session_caller(request: Request, config: ServiceConfig) -> Caller | None:
+    secret = request.cookies.get(COOKIE, "")
+    if not secret or len(secret) > 128:
+        return None
+    with opened(config) as store:
+        row = store.session_by_secret(sessions.digest(secret)) if store else None
+        if store is None or row is None:
+            return None
+        session = Session.from_row(row)
+        at = sessions.now()
+        token = _token_of(config, session)
+        if session.ended(at) or token is None:
+            return None  # the row goes at the next sign-in's clean-up
+        refresh = request.headers.get(sessions.REFRESH_HEADER) == "1"
+        if not refresh and at - session.last_seen_at >= sessions.TOUCH_EVERY:
+            try:
+                store.touch_session(session.id, stamp(at))
+            except sqlite3.Error as exc:  # busy: the next request touches it instead
+                log.warning("could not record the use of session #%d: %s", session.id, exc)
+    return Caller(token.name, token.role, session=session.id)
+
+
 def caller(request: Request, config: Annotated[ServiceConfig, Depends(current_config)]) -> Caller:
     header = request.headers.get("authorization", "")
     scheme, _, value = header.partition(" ")
-    via_cookie = False
     if scheme.lower() == "bearer" and value.strip():
+        _brake(request, config)
         token = match_token(config, value.strip())
-    elif COOKIE in request.cookies:
-        token = match_token(config, request.cookies[COOKIE])
-        via_cookie = True
-    else:
-        token = None
-    if token is None:
-        raise HTTPException(401, "a valid token is required", {"WWW-Authenticate": "Bearer"})
-    if (
-        via_cookie
-        and request.method not in SAFE_METHODS
-        and (request.headers.get(CSRF_HEADER) != "1")
-    ):
-        raise HTTPException(403, f"missing the {CSRF_HEADER} header")
-    return Caller(token.name, token.role)
+        if token is None:
+            _wrong_token(request, config)
+            raise HTTPException(401, "a valid token is required", {"WWW-Authenticate": "Bearer"})
+        return Caller(token.name, token.role)
+    if COOKIE in request.cookies:
+        who = _session_caller(request, config)
+        if who is None:
+            raise HTTPException(
+                401,
+                "your session has ended; sign in again",
+                {"WWW-Authenticate": "Bearer", "Set-Cookie": CLEAR_COOKIE},
+            )
+        if request.method not in SAFE_METHODS and request.headers.get(CSRF_HEADER) != "1":
+            raise HTTPException(403, f"missing the {CSRF_HEADER} header")
+        return who
+    raise HTTPException(401, "a valid token is required", {"WWW-Authenticate": "Bearer"})
 
 
 def operator(who: Annotated[Caller, Depends(caller)]) -> Caller:
@@ -300,26 +390,63 @@ api = APIRouter(prefix="/api/v1")
 
 @api.post("/session")
 def login(body: Login, request: Request, response: Response, config: Config) -> dict[str, str]:
+    _brake(request, config)
     token = match_token(config, body.token)
     if token is None:
-        client = request.client.host if request.client else "?"
-        log.warning("failed login from %s", client)
+        _wrong_token(request, config)
         raise HTTPException(401, "unknown token")
+    throttle: sessions.Throttle = request.app.state.throttle
+    throttle.succeeded(*_throttle_args(request, config))
+    secret = sessions.new_secret()
+    at = sessions.now()
+    client = client_address(request)
+    with _writable(config) as store:
+        store.prune_sessions(expired_before=stamp(at), idle_before=stamp(at - sessions.IDLE))
+        # Signing in again from this browser replaces its session: one at a time.
+        old = request.cookies.get(COOKIE, "")
+        row = store.session_by_secret(sessions.digest(old)) if 0 < len(old) <= 128 else None
+        if row is not None:
+            store.close_session(
+                int(row["id"]), actor=row["token_name"], action="signed out", at=stamp(at)
+            )
+        session_id = store.open_session(
+            secret_sha256=sessions.digest(secret),
+            token_name=token.name,
+            token_sha256=token.sha256,
+            at=stamp(at),
+            expires_at=stamp(at + sessions.LIFETIME),
+            client=client,
+            user_agent=request.headers.get("user-agent", "")[:200] or None,
+        )
     response.set_cookie(
         COOKIE,
-        body.token,
-        max_age=SESSION_SECONDS,
+        secret,
+        max_age=int(sessions.LIFETIME.total_seconds()),
         httponly=True,
         samesite="strict",
         secure=request.url.scheme == "https",
         path="/",
     )
-    log.info("%s logged in", token.name)
+    log.info("%s signed in from %s (session #%d)", token.name, client, session_id)
     return {"name": token.name, "role": token.role}
 
 
 @api.delete("/session", status_code=204)
-def logout(response: Response) -> None:
+def logout(request: Request, response: Response, config: Config) -> None:
+    secret = request.cookies.get(COOKIE, "")
+    if 0 < len(secret) <= 128:
+        if request.headers.get(CSRF_HEADER) != "1":
+            raise HTTPException(403, f"missing the {CSRF_HEADER} header")
+        with opened(config) as store:
+            row = store.session_by_secret(sessions.digest(secret)) if store else None
+            if store is not None and row is not None:
+                store.close_session(
+                    int(row["id"]),
+                    actor=row["token_name"],
+                    action="signed out",
+                    at=stamp(sessions.now()),
+                )
+                log.info("%s signed out (session #%d)", row["token_name"], row["id"])
     response.delete_cookie(COOKIE, path="/", httponly=True, samesite="strict")
 
 
@@ -521,6 +648,7 @@ def admin_config(who: Admin, config: Config) -> dict[str, Any]:
         "profiles": [
             {"name": p.name, "description": p.description} for p in BUILTIN_PROFILES.values()
         ],
+        "sessions": _live_sessions(config, who),
         "problems": list(config.problems),
     }
 
@@ -630,6 +758,37 @@ def delete_token(name: str, who: Admin, config: Config) -> None:
     log.info("%s deleted the token %s", who.name, name)
 
 
+def _live_sessions(config: ServiceConfig, who: Caller) -> list[dict[str, Any]]:
+    """The sessions still open: not ended by time, their token unchanged."""
+    at = sessions.now()
+    with opened(config) as store:
+        rows = store.sessions() if store else []
+    found = []
+    for row in rows:
+        session = Session.from_row(row)
+        token = _token_of(config, session)
+        if token is None or session.ended(at):
+            continue
+        found.append({**session.as_dict(), "role": token.role, "you": session.id == who.session})
+    return found
+
+
+@api.get("/admin/sessions")
+def admin_sessions(who: Admin, config: Config) -> list[dict[str, Any]]:
+    return _live_sessions(config, who)
+
+
+@api.delete("/admin/sessions/{session_id}", status_code=204)
+def end_session(session_id: int, who: Admin, config: Config) -> None:
+    with opened(config) as store:
+        ended = store is not None and store.close_session(
+            session_id, actor=who.name, action="session ended", at=stamp(sessions.now())
+        )
+    if not ended:
+        raise HTTPException(404, f"no session #{session_id}")
+    log.info("%s ended session #%d", who.name, session_id)
+
+
 @api.get("/hosts")
 def hosts(who: Viewer, config: Config) -> list[dict[str, Any]]:
     with opened(config) as store:
@@ -672,6 +831,7 @@ def create_app(config_path: str, *, redis: Redis | None = None) -> FastAPI:
         openapi_url="/api/v1/openapi.json",
     )
     app.state.live = LiveConfig(config_path, redis)
+    app.state.throttle = sessions.Throttle()
     app.include_router(api)
 
     @app.exception_handler(StorageError)

@@ -127,3 +127,48 @@ def test_the_dashboard_has_a_settings_page_for_admins(svc: App) -> None:
     assert "settings: settings" in script and '"/admin/config"' in script
     # The name pattern compiles in browsers' "v" mode: "-" escaped in the class.
     assert r'var NAME_PATTERN = "[a-z0-9][a-z0-9_\\-]*";' in script
+
+
+def test_an_admin_sees_who_is_signed_in_and_ends_a_session(svc: App) -> None:
+    from test_server_web import CSRF, sign_in
+
+    root = sign_in(svc, ROOT)
+    bob = sign_in(svc, BOB, client=("192.0.2.44", 1))
+    assert svc.client(ALICE).get("/api/v1/admin/sessions").status_code == 403
+
+    listed = root.get("/api/v1/admin/sessions").json()
+    assert [(s["name"], s["role"], s["client"], s["you"]) for s in listed] == [
+        ("root", "admin", "testclient", True),
+        ("bob", "viewer", "192.0.2.44", False),
+    ]
+    assert listed == root.get("/api/v1/admin/config").json()["sessions"]
+    assert not {"secret_sha256", "token_sha256"} & set(listed[0])
+
+    bob_id = listed[1]["id"]
+    assert root.delete(f"/api/v1/admin/sessions/{bob_id}").status_code == 403  # CSRF
+    assert root.delete(f"/api/v1/admin/sessions/{bob_id}", headers=CSRF).status_code == 204
+    assert bob.get("/api/v1/me").status_code == 401
+    assert root.delete(f"/api/v1/admin/sessions/{bob_id}", headers=CSRF).status_code == 404
+    with Storage(svc.db) as store:
+        last = store.audit_events()[-1][1]
+    assert (last.kind, last.target, last.operator, last.detail["action"]) == (
+        "auth",
+        "token:bob",
+        "root",
+        "session ended",
+    )
+
+
+def test_revoking_a_dashboard_token_ends_its_sessions(svc: App) -> None:
+    from test_server_web import CSRF, sign_in
+
+    root = svc.client(ROOT)
+    made = root.post("/api/v1/admin/tokens", json={"name": "carol", "role": "viewer"}).json()
+    carol = sign_in(svc, made["token"])
+    assert carol.get("/api/v1/me").status_code == 200
+
+    assert root.delete("/api/v1/admin/tokens/carol").status_code == 204
+
+    assert carol.get("/api/v1/me").status_code == 401
+    assert [s["name"] for s in root.get("/api/v1/admin/sessions").json()] == []
+    assert carol.delete("/api/v1/session", headers=CSRF).status_code == 204

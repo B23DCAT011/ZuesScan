@@ -329,13 +329,20 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     web (`feat/web`); thực tế còn cần cảnh báo "lần quét định kỳ thất bại N lần liền".
   - Lịch chỉ có dạng "mỗi N phút / giờ / ngày", chưa có cron (vd "2 giờ sáng thứ Bảy") — kết
     hợp được với khung giờ `@window` của scope. Lịch tính từ lần quét trước nên trôi dần.
-  - ✅ Web (`feat/web`): API + dashboard dùng token. Còn lại ở phần web:
-    - **Không giới hạn số lần đăng nhập sai** (chỉ ghi log cảnh báo kèm IP). Token 256 bit nên
-      đoán mò không khả thi, nhưng thực tế vẫn nên có rate limit / khoá tạm ở reverse proxy
-      hoặc trong app, và cảnh báo khi một IP thử sai liên tục.
-    - **Cookie chứa chính token** (HttpOnly, SameSite=Strict, 8 giờ): đăng xuất chỉ xoá cookie
-      ở trình duyệt; muốn vô hiệu hoá thật thì gỡ token khỏi `service.toml`. Thực tế: phiên
-      phía server (id ngẫu nhiên trong Redis, hết hạn khi không dùng, thu hồi được từng phiên).
+  - ✅ Web (`feat/web`): API + dashboard dùng token.
+  - ✅ Phiên & đăng nhập sai (`feat/web-sessions`, schema 15): cookie chỉ chứa khoá ngẫu nhiên của
+    một **phiên do server giữ** (DB lưu SHA-256 của khoá + token đã mở phiên); hết khi đăng xuất
+    (xoá ở server), 30 phút không dùng (lần tự làm mới của trang không tính), 8 giờ, token bị thu
+    hồi / cấp lại, hoặc admin kết thúc ở Settings → Sessions. 10 token sai / 15 phút từ một địa chỉ
+    → khoá 15 phút (429, kể cả token đúng), log + audit `auth`; đếm trong Redis, Redis hỏng thì
+    trong tiến trình. Đã thử bằng Chrome headless trên dịch vụ thật. Còn lại:
+    - Khoá **theo địa chỉ**: mọi người sau cùng một NAT / proxy bị khoá chung khi một người đoán
+      sai. Thực tế: khoá theo địa chỉ + theo token (khi biết là token nào), CAPTCHA / bằng chứng
+      công việc trước khi khoá cứng, danh sách địa chỉ tin cậy.
+    - Lần bị khoá mới vào log + audit, **chưa đẩy ra webhook** (chờ hàng đợi cảnh báo có gửi lại).
+    - Token dùng cho script (`Bearer`, MCP) không có phiên, không hết hạn: muốn chặn thì thu hồi.
+      Thực tế: token có hạn dùng và phạm vi (chỉ đọc / chỉ một target), xoay vòng định kỳ.
+    - Chưa có xác thực hai lớp (TOTP / WebAuthn) hay đăng nhập qua SSO (OIDC) cho người dùng.
     - **Không tự làm TLS**: `zues web` mặc định chỉ nghe 127.0.0.1; ra mạng thì phải đặt sau
       reverse proxy có TLS (cookie tự bật `Secure` khi proxy báo `X-Forwarded-Proto: https`).
     - Phân quyền mới có hai vai trò cho toàn bộ dịch vụ; chưa có quyền theo từng target /

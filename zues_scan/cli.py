@@ -349,6 +349,18 @@ def _cmd_profiles(args: argparse.Namespace) -> int:
     return 0
 
 
+def _auth_text(detail: dict[str, Any]) -> str:
+    """A dashboard sign-in event in one line: what, which session, how many, from where."""
+    text = str(detail.get("action", "auth"))
+    if detail.get("session"):
+        text += f" (session #{detail['session']})"
+    if detail.get("failures"):
+        text += f" after {detail['failures']} failed sign-ins"
+    if detail.get("client"):
+        text += f" from {detail['client']}"
+    return text
+
+
 def _cmd_audit(args: argparse.Namespace) -> int:
     """Print the audit trail, verify it, or show a recorded scope file."""
     if not _db_exists(args.db):
@@ -377,6 +389,7 @@ def _cmd_audit(args: argparse.Namespace) -> int:
             "refused": f"refused: {detail.get('reason', '')}",
             "deleted": f"deleted run #{detail.get('run_id')}",
             "config": str(detail.get("action", "config")),
+            "auth": _auth_text(detail),
         }.get(event.kind, event.kind)
         scope = f" scope {event.scope_sha256[:12]}" if event.scope_sha256 else ""
         engagement = f" [{event.engagement}]" if event.engagement else ""

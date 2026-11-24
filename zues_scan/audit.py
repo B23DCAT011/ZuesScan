@@ -33,6 +33,9 @@ class AuditKind:
     DELETED = "deleted"  # a stored run was deleted
     FINDING = "finding"  # a person changed a finding's status (claimed fixed, accepted, ...)
     CONFIG = "config"  # a person changed a scope, a target or a token in the dashboard
+    # The dashboard: signed in / out, a session ended by an admin, an address locked out
+    # after failed sign-ins.
+    AUTH = "auth"
 
 
 @dataclass(frozen=True, slots=True)

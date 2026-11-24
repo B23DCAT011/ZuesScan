@@ -558,3 +558,43 @@ def test_run_notes_are_stored(tmp_path: Path) -> None:
         bare = store.load_run(store.save_run(_make_run()))
     assert loaded is not None and loaded.notes == run.notes
     assert bare is not None and bare.notes == []
+
+
+def test_v14_audit_trail_survives_the_sessions_migration(tmp_path: Path) -> None:
+    """v15 rebuilds audit_event (a new kind, 'auth'): every event, its hash and the chain stay."""
+    from zues_scan.storage import _MIGRATIONS
+
+    db = tmp_path / "v14.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT)")
+    for version in range(1, 15):
+        for statement in _MIGRATIONS[version]:
+            conn.execute(statement)
+        conn.execute("INSERT INTO schema_version VALUES (?, 'then')", (version,))
+    conn.commit()
+    conn.close()
+    with Storage(tmp_path / "scratch.db") as scratch:  # write events the v14 way
+        scratch.save_managed_scope("lab", "10.0.0.0/24\n", "ab" * 32, "root")
+        scratch.save_run(_make_run())
+        rows = scratch._conn.execute("SELECT * FROM audit_event ORDER BY id").fetchall()
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "INSERT INTO scan_run (id, target, status, started_at, finished_at) "
+        "VALUES (1, 'x', 'completed', 'a', 'b')"
+    )
+    conn.executemany(
+        "INSERT INTO audit_event VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [tuple(r) for r in rows],
+    )
+    conn.commit()
+    conn.close()
+
+    with Storage(db) as store:
+        assert store.schema_version() == SCHEMA_VERSION
+        events = store.audit_events()
+        assert [e.kind for _, e, _ in events] == ["config", "scan"]
+        assert [h for _, _, h in events] == [r["hash"] for r in rows]
+        store.record_lockout("203.0.113.9", failures=10, seconds=900, at="2026-11-24T09:00:00")
+        report = store.verify_audit()
+    assert report.events == 3
+    assert not [p for p in report.problems if "follow" in p or "changed" in p]

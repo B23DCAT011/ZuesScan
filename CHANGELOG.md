@@ -6,6 +6,26 @@ section of a version as its release notes, so every tag needs one.
 
 ## [Unreleased]
 
+### Security
+- The dashboard's sessions are held by the server: the cookie carries only a random
+  session key (its SHA-256 is stored, never the key, never the token). A session ends when
+  its owner signs out (on the server: a copied cookie stops working), after 30 minutes
+  without use (the page's own refresh does not count), 8 hours after signing in, when its
+  token is revoked or re-issued, or when an admin ends it. Database schema 15.
+- Failed sign-ins are braked: 10 wrong tokens (sign-in form or `Authorization: Bearer`)
+  within 15 minutes lock the address out for 15 minutes (429 with Retry-After, even for a
+  right token). Counted in Redis, in the process when Redis is down; logged
+  (`auth.locked`) and audited.
+
+### Added
+- Settings → **Sessions**: who is signed in, from where, since when, until when; **End**
+  ends a session. API: `GET /api/v1/admin/sessions`, `DELETE /api/v1/admin/sessions/{id}`.
+- Audit kind `auth`: signed in, signed out, session ended (by whom), address locked out.
+
+### Changed
+- `DELETE /api/v1/session` with the session cookie needs the `X-ZuesScan: 1` header, like
+  every other change made with the cookie.
+
 ## [0.2.0] - 2026-11-24
 
 The first release meant to be installed by others: a service with a web dashboard where

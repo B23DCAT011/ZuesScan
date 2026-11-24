@@ -43,7 +43,7 @@ log = logging.getLogger(__name__)
 
 # The schema version this code reads and writes. Bump it together with a new entry
 # in `_MIGRATIONS`; never edit a migration that has already shipped.
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 
 class StorageError(Exception):
@@ -500,6 +500,48 @@ _V14 = (
     "CREATE INDEX idx_audit_run ON audit_event(run_id)",
 )
 
+# Version 15: the dashboard's sessions, held by the server (G23). The browser's cookie is
+# a random secret; only its SHA-256 is stored, with the token the session was opened with
+# (revoking or re-issuing that token ends it), when it ends at the latest and when it was
+# last used (an idle session ends too). Signing in and out, sessions ended by an admin
+# and addresses locked out after failed sign-ins are audited: kind 'auth'.
+_V15 = (
+    """
+    CREATE TABLE web_session (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        secret_sha256 TEXT NOT NULL UNIQUE,
+        token_name    TEXT NOT NULL,
+        token_sha256  TEXT NOT NULL,
+        created_at    TEXT NOT NULL,
+        last_seen_at  TEXT NOT NULL,
+        expires_at    TEXT NOT NULL,
+        client        TEXT,
+        user_agent    TEXT
+    )
+    """,
+    "CREATE INDEX idx_web_session_token ON web_session(token_name)",
+    """
+    CREATE TABLE audit_event_new (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        at            TEXT NOT NULL,
+        kind          TEXT NOT NULL
+                      CHECK (kind IN ('scan', 'refused', 'deleted', 'finding', 'config', 'auth')),
+        run_id        INTEGER REFERENCES scan_run(id) ON DELETE SET NULL,
+        target        TEXT NOT NULL,
+        operator      TEXT,
+        engagement    TEXT,
+        scope_sha256  TEXT,
+        detail        TEXT NOT NULL,
+        prev_hash     TEXT NOT NULL UNIQUE,
+        hash          TEXT NOT NULL UNIQUE
+    )
+    """,
+    "INSERT INTO audit_event_new SELECT * FROM audit_event",
+    "DROP TABLE audit_event",
+    "ALTER TABLE audit_event_new RENAME TO audit_event",
+    "CREATE INDEX idx_audit_run ON audit_event(run_id)",
+)
+
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: _V1,
     2: _V2,
@@ -515,6 +557,7 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
     12: _V12,
     13: _V13,
     14: _V14,
+    15: _V15,
 }
 
 
@@ -744,6 +787,95 @@ class Storage:
                     engagement=engagement,
                     scope_sha256=scope_sha256,
                     detail={"reason": reason},
+                )
+            )
+
+    # --- the dashboard's sessions (schema 15) ----------------------------------------------
+
+    def open_session(
+        self,
+        *,
+        secret_sha256: str,
+        token_name: str,
+        token_sha256: str,
+        at: str,
+        expires_at: str,
+        client: str | None,
+        user_agent: str | None,
+    ) -> int:
+        """Record a session opened by signing in, with its audit event; return its id."""
+        self._conn.execute("BEGIN IMMEDIATE")
+        with self._conn:
+            cur = self._conn.execute(
+                "INSERT INTO web_session (secret_sha256, token_name, token_sha256, created_at, "
+                "last_seen_at, expires_at, client, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (secret_sha256, token_name, token_sha256, at, at, expires_at, client, user_agent),
+            )
+            session_id = int(cur.lastrowid or 0)
+            self._append_audit(
+                _auth_event(
+                    at,
+                    f"token:{token_name}",
+                    token_name,
+                    {"action": "signed in", "session": session_id, "client": client},
+                )
+            )
+        return session_id
+
+    def session_by_secret(self, secret_sha256: str) -> sqlite3.Row | None:
+        row: sqlite3.Row | None = self._conn.execute(
+            "SELECT * FROM web_session WHERE secret_sha256 = ?", (secret_sha256,)
+        ).fetchone()
+        return row
+
+    def sessions(self) -> list[sqlite3.Row]:
+        return self._conn.execute("SELECT * FROM web_session ORDER BY id").fetchall()
+
+    def touch_session(self, session_id: int, at: str) -> None:
+        with self._conn:
+            self._conn.execute(
+                "UPDATE web_session SET last_seen_at = ? WHERE id = ?", (at, session_id)
+            )
+
+    def close_session(self, session_id: int, *, actor: str, action: str, at: str) -> bool:
+        """End a session (signed out, or ended by an admin); False if there was none."""
+        self._conn.execute("BEGIN IMMEDIATE")
+        with self._conn:
+            row = self._conn.execute(
+                "SELECT token_name, client FROM web_session WHERE id = ?", (session_id,)
+            ).fetchone()
+            if row is None:
+                return False
+            self._conn.execute("DELETE FROM web_session WHERE id = ?", (session_id,))
+            self._append_audit(
+                _auth_event(
+                    at,
+                    f"token:{row['token_name']}",
+                    actor,
+                    {"action": action, "session": session_id, "client": row["client"]},
+                )
+            )
+        return True
+
+    def prune_sessions(self, *, expired_before: str, idle_before: str) -> int:
+        """Forget sessions that have ended on their own (not audited: nobody acted)."""
+        with self._conn:
+            cur = self._conn.execute(
+                "DELETE FROM web_session WHERE expires_at <= ? OR last_seen_at <= ?",
+                (expired_before, idle_before),
+            )
+        return cur.rowcount
+
+    def record_lockout(self, client: str, *, failures: int, seconds: int, at: str) -> None:
+        """An address was locked out after too many failed sign-ins (G23)."""
+        self._conn.execute("BEGIN IMMEDIATE")
+        with self._conn:
+            self._append_audit(
+                _auth_event(
+                    at,
+                    f"client:{client}",
+                    None,
+                    {"action": "locked out", "failures": failures, "seconds": seconds},
                 )
             )
 
@@ -1416,4 +1548,16 @@ def _event(row: sqlite3.Row) -> AuditEvent:
         engagement=row["engagement"],
         scope_sha256=row["scope_sha256"],
         detail=json.loads(row["detail"]),
+    )
+
+
+def _auth_event(at: str, target: str, operator: str | None, detail: dict[str, Any]) -> AuditEvent:
+    return AuditEvent(
+        at=at,
+        kind=AuditKind.AUTH,
+        target=target,
+        operator=operator,
+        engagement=None,
+        scope_sha256=None,
+        detail=detail,
     )
