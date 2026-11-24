@@ -66,6 +66,13 @@ EXCLUDED_TAGS = ("dos", "fuzz", "intrusive", "bruteforce")
 EXCLUDED_SEVERITIES = ("info",)
 NETWORK_PROTOCOLS = ("javascript", "tcp", "ssl")  # nuclei's -pt names for non-web checks
 DEFAULT_RATE = 50
+# Seconds per request, and retries. A network check (an SSH or TLS handshake) is heavier and
+# slower than an HTTP request, and a busy server answers it late: with 10 s and one retry,
+# nuclei missed Terrapin on 4 of 10 runs against a CPU-starved sshd (the lab's CI job failed
+# twice that way); with 30 s and three retries, 5 of 5. A missed flaw costs more than a
+# slower check, and the whole check keeps its time budget either way.
+HTTP_TIMEOUT, HTTP_RETRIES = 10, 1
+NETWORK_TIMEOUT, NETWORK_RETRIES = 30, 3
 # Where the Docker image (or an administrator) says the pinned templates are.
 TEMPLATES_ENV = "ZUES_NUCLEI_TEMPLATES"
 VERSION_FILE = ".zues-version"
@@ -180,9 +187,9 @@ class NucleiPlugin:
             "-rl",
             str(self.rate),
             "-timeout",
-            "10",
+            str(NETWORK_TIMEOUT if network else HTTP_TIMEOUT),
             "-retries",
-            "1",
+            str(NETWORK_RETRIES if network else HTTP_RETRIES),
         ]
         if self.templates is not None:
             command += ["-t", self.templates]

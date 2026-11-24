@@ -149,8 +149,16 @@ jobs:
           grep -Eq '^ +[0-9]+ +accepted .*CVE-2018-15473' demo.txt
       - name: nuclei confirmed what the versions suggested
         run: |
-          grep -Eq '^ +[0-9]+ +(new|open) .*CVE-2023-48795' demo.txt  # Terrapin, on SSH
-          grep -q 'confidence: confirmed' demo.txt                # Apache CVE-2021-41773
+          fail=0
+          if ! grep -Eq '^ +[0-9]+ +(new|open) .*CVE-2023-48795' demo.txt; then
+            echo "::error title=lab::nuclei did not report Terrapin (CVE-2023-48795) on the SSH server"
+            fail=1
+          fi
+          if ! grep -q 'confidence: confirmed' demo.txt; then
+            echo "::error title=lab::nuclei did not confirm Apache CVE-2021-41773"
+            fail=1
+          fi
+          exit "$fail"
       - name: each run records the checks' versions, and httpx saw the web services
         run: |
           docker compose -p zues-lab exec -T worker python -c "
@@ -176,6 +184,9 @@ jobs:
         if: failure()
         run: |
           sed -n '/== what the scans say now/,$p' demo.txt | head -80
+          # The job's log needs a GitHub login; annotations do not: the findings table, so
+          # that anyone can see why without re-running the lab.
+          sed -n '/== what the scans say now/,/^$/p' demo.txt | sed -n '2,10p'             | while IFS= read -r line; do echo "::warning title=lab finding::$line"; done
           docker compose -p zues-lab exec -T worker zues runs --db /data/zues.db || true
           docker compose -p zues-lab logs --no-color --tail 80 worker || true
       - if: always()

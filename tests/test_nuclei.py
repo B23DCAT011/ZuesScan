@@ -126,6 +126,14 @@ def test_check_runs_once_per_virtual_host_and_ties_findings_to_services(
     ]
     assert "-pt" not in calls[0]["command"]
     assert calls[1]["command"][-2:] == ["-pt", "javascript,tcp,ssl"]
+    # A handshake is slower than an HTTP request: the network run waits and retries more.
+    web, network = calls[0]["command"], calls[1]["command"]
+    assert web[web.index("-timeout") + 1 : web.index("-retries") + 2] == ["10", "-retries", "1"]
+    assert network[network.index("-timeout") + 1 : network.index("-retries") + 2] == [
+        "30",
+        "-retries",
+        "3",
+    ]
     assert "Host: www.example.com" in calls[2]["command"]
     assert len(result.raw) == 3 and result.raw[0].format == "nuclei-jsonl"
     assert result.raw[0].command[-2:] == ("<", "http://10.0.0.5:8080")
