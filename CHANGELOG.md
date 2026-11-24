@@ -7,6 +7,16 @@ section of a version as its release notes, so every tag needs one.
 ## [Unreleased]
 
 ### Added
+- Compare runs in the dashboard: a run's **Changes** (against the run of the same target
+  before it) or any two runs ticked in Runs: hosts that appeared or went away, ports opened
+  or closed, software versions that changed, findings that appeared or went away, with the
+  caveats `zues diff` gives when runs are not comparable. API:
+  `GET /api/v1/runs/{id}/diff[?against=<id>]`; MCP tool `compare_runs`.
+- Pages: `GET /api/v1/runs?before=<id>` (the dashboard's **Older runs**) and
+  `GET /api/v1/findings?limit=&offset=` with `X-Total-Count` (**Show more**). Without them the
+  answers are what they were.
+
+### Added
 - `cron` schedules for targets, instead of `every`: `cron = "0 2 * * sat Asia/Ho_Chi_Minh"`
   — the five crontab fields (lists, ranges, steps, month and day names; day of month OR day
   of week when both are set), with an optional time zone (IANA name with daylight saving

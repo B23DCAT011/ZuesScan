@@ -7,11 +7,34 @@ having changed; `RunDiff.caveats` says so instead of hiding it.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import Any, Protocol
 
+from zues_scan import priority
 from zues_scan.inventory import cve_data_kind, host_key
 from zues_scan.orchestrator import RunStatus, ScanRun
 from zues_scan.schema import Asset, Finding, Service
+
+
+class _Summary(Protocol):
+    @property
+    def id(self) -> int: ...
+    @property
+    def target(self) -> str: ...
+    @property
+    def status(self) -> RunStatus: ...
+
+
+def previous_run(runs: Sequence[_Summary], after: int | None = None) -> tuple[int, int] | None:
+    """(earlier, later): the newest run (or run #after) and the run of the same target
+    just before it, failed runs left out (they have nothing to compare); None if none."""
+    usable = sorted((r for r in runs if r.status != RunStatus.FAILED), key=lambda r: -r.id)
+    newest = next((r for r in usable if after is None or r.id == after), None)
+    if newest is None:
+        return None
+    earlier = next((r for r in usable if r.target == newest.target and r.id < newest.id), None)
+    return None if earlier is None else (earlier.id, newest.id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +56,29 @@ class RunDiff:
     findings_added: list[tuple[str, Finding]] = field(default_factory=list)
     findings_removed: list[tuple[str, Finding]] = field(default_factory=list)
     caveats: list[str] = field(default_factory=list)
+
+    def as_dict(self) -> dict[str, Any]:
+        """The diff as data (the web API, MCP): every change with where it is."""
+        return {
+            "caveats": list(self.caveats),
+            "empty": self.empty,
+            "hosts_added": list(self.hosts_added),
+            "hosts_removed": list(self.hosts_removed),
+            "services_added": [_service(h, s) for h, s in self.services_added],
+            "services_removed": [_service(h, s) for h, s in self.services_removed],
+            "services_changed": [
+                {
+                    "host": c.host,
+                    "port": c.port,
+                    "protocol": c.protocol,
+                    "before": c.before,
+                    "after": c.after,
+                }
+                for c in self.services_changed
+            ],
+            "findings_added": [_finding(h, f) for h, f in self.findings_added],
+            "findings_removed": [_finding(h, f) for h, f in self.findings_removed],
+        }
 
     @property
     def empty(self) -> bool:
@@ -109,6 +155,29 @@ def _key(asset: Asset) -> str:
 
 def _label(asset: Asset) -> str:
     return asset.host if asset.ip in (None, asset.host) else f"{asset.host} ({asset.ip})"
+
+
+def _service(host: str, s: Service) -> dict[str, Any]:
+    return {
+        "host": host,
+        "port": s.port,
+        "protocol": s.protocol,
+        "name": s.name,
+        "product": s.product,
+        "version": s.version,
+    }
+
+
+def _finding(host: str, f: Finding) -> dict[str, Any]:
+    return {
+        "host": host,
+        "port": f.service.port if f.service else None,
+        "title": f.title,
+        "cve": f.cve,
+        "severity": str(f.severity),
+        "priority": str(priority.priority(f)),
+        "fingerprint": f.fingerprint,
+    }
 
 
 def _software(service: Service) -> str:

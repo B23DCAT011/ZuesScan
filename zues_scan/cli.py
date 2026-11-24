@@ -40,10 +40,10 @@ from zues_scan.cve.cache import (
 )
 from zues_scan.cve.feeds import FeedError
 from zues_scan.cve.nvd import API_KEY_ENV, NvdClient, NvdError
-from zues_scan.diff import diff_runs
+from zues_scan.diff import diff_runs, previous_run
 from zues_scan.inventory import ACTIVE, Status
 from zues_scan.inventory_store import FindingEvent, InventoryError
-from zues_scan.orchestrator import DISCOVER_LIMIT, RunStatus, ScanRun
+from zues_scan.orchestrator import DISCOVER_LIMIT, ScanRun
 from zues_scan.plugins import registry as plugin_registry
 from zues_scan.profiles import DEFAULT_PROFILE, ProfileError, ScanProfile, load_profiles
 from zues_scan.report import render_html, stored_model
@@ -801,12 +801,7 @@ def _cmd_diff(args: argparse.Namespace) -> int:
 
 def _latest_pair(store: Storage, after: int | None) -> tuple[int, int] | None:
     """The newest run (or `after`) and the run of the same target just before it."""
-    runs = [r for r in store.list_runs() if r.status != RunStatus.FAILED]
-    newest = next((r for r in runs if after is None or r.id == after), None)
-    if newest is None:
-        return None
-    earlier = next((r for r in runs if r.target == newest.target and r.id < newest.id), None)
-    return None if earlier is None else (earlier.id, newest.id)
+    return previous_run(store.list_runs(), after)
 
 
 def _server(args: argparse.Namespace) -> Any:

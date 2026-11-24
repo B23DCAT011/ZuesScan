@@ -137,6 +137,8 @@
       if (response.status === 204) return null;
       return response.json().then(
         function (data) {
+          var total = response.headers.get("X-Total-Count");
+          if (Array.isArray(data) && total !== null) data.total = parseInt(total, 10);
           if (response.ok) return data;
           if (response.status === 401 && path !== "/session") showLogin();
           throw new Error(detail(data) || response.status + " " + response.statusText);
@@ -203,6 +205,7 @@
   var VIEWS = {
     overview: overview,
     runs: runs,
+    compare: compare,
     findings: findings,
     finding: finding,
     audit: audit,
@@ -217,7 +220,8 @@
     if (name === "findings" && parts[1]) name = "finding";
     if (!VIEWS[name] || (name === "settings" && !isAdmin())) name = "overview";
     Array.prototype.forEach.call(document.querySelectorAll("#nav a"), function (a) {
-      var active = a.getAttribute("data-view") === (name === "finding" ? "findings" : name);
+      var shown = name === "finding" ? "findings" : name === "compare" ? "runs" : name;
+      var active = a.getAttribute("data-view") === shown;
       a.className = active ? "active" : "";
       if (active) a.setAttribute("aria-current", "page");
       else a.removeAttribute("aria-current");
@@ -353,18 +357,64 @@
 
   /* --- runs --------------------------------------------------------------------- */
 
+  var RUNS_PAGE = 50;
+
   function runs(view) {
-    return api("GET", "/runs").then(function (list) {
+    return api("GET", "/runs?limit=" + RUNS_PAGE).then(function (list) {
       clear(view);
       view.appendChild(el("h1", null, "Runs"));
-      view.appendChild(
-        el("p", { class: "muted small" }, "The report opens the attack-surface map in a new tab: the same self-contained page as zues report --html.")
-      );
-      var rows = list.map(function (r) {
+      var picked = [];
+      var compareButton = el("button", {
+        type: "button", class: "primary", disabled: true,
+        on: { click: function () {
+          var ids = picked.slice().sort(function (a, b) { return b - a; });
+          location.hash = "#/compare/" + ids[0] + "/" + ids[1];
+        } },
+      }, "Compare the two selected");
+      view.appendChild(el("div", { class: "toolbar" }, compareButton,
+        el("span", { class: "muted small" },
+          "Tick two runs to see what changed between them, or open a run's Changes (against the run " +
+          "of the same target before it). The report opens the attack-surface map in a new tab.")));
+      function pick(id, box) {
+        if (box.checked) picked.push(id);
+        else picked = picked.filter(function (p) { return p !== id; });
+        compareButton.disabled = picked.length !== 2;
+      }
+      var body = el("tbody");
+      function addRows(page) {
+        page.forEach(function (r) { body.appendChild(runRow(r, pick)); });
+      }
+      addRows(list);
+      if (!list.length) {
+        body.appendChild(el("tr", null, el("td", { class: "empty", colspan: 9 }, "No run stored yet.")));
+      }
+      var head = el("tr", null, ["", "Run", "Started (UTC)", "Status", "Target", "Hosts", "Services", "Findings", ""].map(function (h) {
+        return el("th", { scope: "col" }, h);
+      }));
+      view.appendChild(el("div", { class: "table-wrap" }, el("table", null, el("thead", null, head), body)));
+      var older = el("button", { type: "button", hidden: list.length < RUNS_PAGE ? true : null }, "Older runs");
+      var last = list.length ? list[list.length - 1].id : null;
+      older.addEventListener("click", function () {
+        older.disabled = true;
+        api("GET", "/runs?limit=" + RUNS_PAGE + "&before=" + last).then(function (page) {
+          addRows(page);
+          if (page.length) last = page[page.length - 1].id;
+          older.disabled = false;
+          older.hidden = page.length < RUNS_PAGE;
+        }, function (err) { flash(err.message, true); older.disabled = false; });
+      });
+      view.appendChild(older);
+    });
+  }
+
+  function runRow(r, pick) {
         var base = "/api/v1/runs/" + r.id;
+        var box = el("input", { type: "checkbox", "aria-label": "select run #" + r.id });
+        box.addEventListener("change", function () { pick(r.id, box); });
         return el(
           "tr",
           null,
+          el("td", null, box),
           el("td", null, "#" + r.id),
           el("td", { class: "nowrap" }, when(r.started_at)),
           el("td", null, state(r.status)),
@@ -379,11 +429,62 @@
             " · ",
             el("a", { href: base, target: "_blank", rel: "noopener" }, "JSON"),
             " · ",
-            el("a", { href: base + "/sarif" }, "SARIF")
+            el("a", { href: base + "/sarif" }, "SARIF"),
+            r.status === "failed" ? null : [" · ", el("a", { href: "#/compare/" + r.id }, "Changes")]
           )
         );
-      });
-      view.appendChild(table(["Run", "Started (UTC)", "Status", "Target", "Hosts", "Services", "Findings", ""], rows, "No run stored yet."));
+  }
+
+  /* --- compare two runs --------------------------------------------------------- */
+
+  function compare(view, parts) {
+    var id = parseInt(parts[0], 10);
+    var against = parseInt(parts[1], 10);
+    if (!(id > 0)) return Promise.reject(new Error("no such run"));
+    var query = against > 0 ? "?against=" + against : "";
+    return api("GET", "/runs/" + id + "/diff" + query).then(function (d) {
+      clear(view);
+      view.appendChild(el("p", null, el("a", { href: "#/runs" }, "← Runs")));
+      view.appendChild(el("h1", null, "Run #" + d.before.id + " → run #" + d.after.id));
+      view.appendChild(el("p", { class: "muted" },
+        el("span", { class: "mono" }, d.before.target), " " + when(d.before.started_at) + " → ",
+        el("span", { class: "mono" }, d.after.target), " " + when(d.after.started_at)));
+      if (d.caveats.length) {
+        view.appendChild(el("div", { class: "panel error" }, el("strong", null, "Not quite comparable: "),
+          el("ul", null, d.caveats.map(function (c) { return el("li", null, c); }))));
+      }
+      if (d.empty) {
+        view.appendChild(el("p", null, "No change: the same hosts, ports, versions and findings."));
+        return;
+      }
+      var mark = function (sign) { return el("span", { class: sign === "+" ? "added" : sign === "-" ? "removed" : "changed" }, sign); };
+      var hostRows = [].concat(
+        d.hosts_added.map(function (h) { return [mark("+"), el("span", { class: "mono" }, h), "new host"]; }),
+        d.hosts_removed.map(function (h) { return [mark("-"), el("span", { class: "mono" }, h), "did not answer, or no longer exists"]; })
+      );
+      var port = function (s) { return el("span", { class: "mono" }, s.host + " " + s.port + "/" + s.protocol); };
+      var software = function (s) { return [s.name, s.product, s.version].filter(Boolean).join(" ") || "?"; };
+      var serviceRows = [].concat(
+        d.services_added.map(function (s) { return [mark("+"), port(s), software(s)]; }),
+        d.services_removed.map(function (s) { return [mark("-"), port(s), software(s)]; }),
+        d.services_changed.map(function (c) { return [mark("~"), port(c), c.before + " → " + c.after]; })
+      );
+      var findingLine = function (sign) {
+        return function (f) {
+          return [mark(sign), prio(f.priority), el("span", { class: "wrap" }, f.title, f.cve ? el("div", { class: "muted small mono" }, f.cve) : null),
+            el("span", { class: "mono" }, f.host + (f.port ? ":" + f.port : ""))];
+        };
+      };
+      var findingRows = [].concat(d.findings_added.map(findingLine("+")), d.findings_removed.map(findingLine("-")));
+      view.appendChild(el("h2", null, "Hosts"));
+      view.appendChild(table(["", "Host", ""], hostRows.map(row), "The same hosts."));
+      view.appendChild(el("h2", null, "Open ports and software"));
+      view.appendChild(table(["", "Where", "What"], serviceRows.map(row), "The same ports and versions."));
+      view.appendChild(el("h2", null, "Findings"));
+      view.appendChild(table(["", "Priority", "Finding", "Where"], findingRows.map(row), "The same findings."));
+      view.appendChild(el("p", { class: "muted small" },
+        "+ appeared in the later run, − went away, ~ changed. A finding that went away is checked again " +
+        "by the inventory (Findings) before it counts as fixed."));
     });
   }
 
@@ -391,8 +492,8 @@
 
   function findings(view) {
     var filter = sessionFilter();
-    var query = filter === "active" ? "" : filter === "all" ? "?all=true" : "?status=" + encodeURIComponent(filter);
-    return api("GET", "/findings" + query).then(function (list) {
+    var query = filter === "active" ? "?" : filter === "all" ? "?all=true&" : "?status=" + encodeURIComponent(filter) + "&";
+    return api("GET", "/findings" + query + "limit=" + FINDINGS_PAGE).then(function (list) {
       clear(view);
       view.appendChild(el("h1", null, "Findings"));
       var select = el(
@@ -405,8 +506,29 @@
         })
       );
       select.value = filter;
-      view.appendChild(el("div", { class: "toolbar" }, el("label", null, "Show ", select), el("span", { class: "muted small" }, list.length + " finding(s), most urgent first")));
-      var rows = list.map(function (f) {
+      var total = list.total === undefined ? list.length : list.total;
+      view.appendChild(el("div", { class: "toolbar" }, el("label", null, "Show ", select), el("span", { class: "muted small" }, total + " finding(s), most urgent first")));
+      var rows = list.map(findingRow);
+      var shown = list.length;
+      var more = el("button", { type: "button", hidden: shown >= total ? true : null }, "Show more");
+      more.addEventListener("click", function () {
+        more.disabled = true;
+        api("GET", "/findings" + query + "limit=" + FINDINGS_PAGE + "&offset=" + shown).then(function (page) {
+          var body = view.querySelector("tbody");
+          page.forEach(function (f) { body.appendChild(findingRow(f)); });
+          shown += page.length;
+          more.disabled = false;
+          more.hidden = shown >= total || !page.length;
+        }, function (err) { flash(err.message, true); more.disabled = false; });
+      });
+      view.appendChild(table(["#", "Priority", "Severity", "Finding", "Where", "Status", "Last seen (UTC)"], rows, "No finding with that status."));
+      view.appendChild(more);
+    });
+  }
+
+  var FINDINGS_PAGE = 200;
+
+  function findingRow(f) {
         var where = f.host + (f.port ? ":" + f.port + "/" + (f.protocol || "tcp") : "");
         return el(
           "tr",
@@ -426,9 +548,6 @@
           el("td", null, status(f.status)),
           el("td", { class: "nowrap" }, when(f.last_seen))
         );
-      });
-      view.appendChild(table(["#", "Priority", "Severity", "Finding", "Where", "Status", "Last seen (UTC)"], rows, "No finding with that status."));
-    });
   }
 
   function sessionFilter(value) {

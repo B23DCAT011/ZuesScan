@@ -566,3 +566,61 @@ def test_the_openapi_schema_is_published_but_no_cdn_docs(svc: App) -> None:
     schema = client.get("/api/v1/openapi.json").json()
     assert "/api/v1/scans" in schema["paths"]
     assert client.get("/docs").status_code == 404
+
+
+# --- pages and comparing runs ------------------------------------------------------------------
+
+OPENSSH = Service(port=22, name="ssh", product="OpenSSH", version="7.4")  # CVE-2018-15473: P4
+
+
+def scan_with(svc: App, monkeypatch: pytest.MonkeyPatch, *services: Service) -> None:
+    fake = FakePlugin([lab_asset(*services)])
+    monkeypatch.setattr("zues_scan.plugins.registry.NmapPlugin", lambda **_: fake)
+    scan_once(svc)
+
+
+def test_runs_come_a_page_at_a_time(svc: App) -> None:
+    for _ in range(3):
+        scan_once(svc)
+    viewer = svc.client(BOB)
+
+    first = viewer.get("/api/v1/runs", params={"limit": 2}).json()
+    rest = viewer.get("/api/v1/runs", params={"limit": 2, "before": first[-1]["id"]}).json()
+
+    assert [r["id"] for r in first] == [3, 2] and [r["id"] for r in rest] == [1]
+
+
+def test_findings_come_a_page_at_a_time_with_their_total(
+    svc: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scan_with(svc, monkeypatch, VSFTPD, OPENSSH)
+    viewer = svc.client(BOB)
+
+    page = viewer.get("/api/v1/findings", params={"limit": 1})
+    rest = viewer.get("/api/v1/findings", params={"limit": 1, "offset": 1})
+
+    assert page.headers["x-total-count"] == rest.headers["x-total-count"] == "2"
+    assert [f["priority"] for f in page.json() + rest.json()] == ["P2", "P4"]  # most urgent first
+    assert len(viewer.get("/api/v1/findings").json()) == 2  # no limit: all, as before
+
+
+def test_a_run_is_compared_with_the_one_before_it(
+    svc: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scan_with(svc, monkeypatch, VSFTPD)  # run 1
+    scan_with(svc, monkeypatch, OPENSSH)  # run 2: vsftpd closed, OpenSSH opened
+    viewer = svc.client(BOB)
+
+    diff = viewer.get("/api/v1/runs/2/diff").json()
+
+    assert (diff["before"]["id"], diff["after"]["id"], diff["empty"]) == (1, 2, False)
+    assert [(s["port"], s["product"]) for s in diff["services_added"]] == [(22, "OpenSSH")]
+    assert [(s["port"], s["product"]) for s in diff["services_removed"]] == [(21, "vsftpd")]
+    assert [(f["cve"], f["priority"]) for f in diff["findings_added"]] == [("CVE-2018-15473", "P4")]
+    assert [f["cve"] for f in diff["findings_removed"]] == ["CVE-2011-2523"]
+    assert diff["caveats"] == []
+    same = viewer.get("/api/v1/runs/2/diff", params={"against": 2}).json()
+    assert same["empty"] is True
+    assert viewer.get("/api/v1/runs/1/diff").status_code == 404  # nothing before run 1
+    assert viewer.get("/api/v1/runs/9/diff", params={"against": 1}).status_code == 404
+    assert svc.client().get("/api/v1/runs/2/diff").status_code == 401
