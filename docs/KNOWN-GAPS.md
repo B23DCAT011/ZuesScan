@@ -362,8 +362,11 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     - Chưa có xác thực hai lớp (TOTP / WebAuthn) hay đăng nhập qua SSO (OIDC) cho người dùng.
     - **Không tự làm TLS**: `zues web` mặc định chỉ nghe 127.0.0.1; ra mạng thì phải đặt sau
       reverse proxy có TLS (cookie tự bật `Secure` khi proxy báo `X-Forwarded-Proto: https`).
-    - Phân quyền mới có hai vai trò cho toàn bộ dịch vụ; chưa có quyền theo từng target /
-      engagement (vd khách hàng A chỉ thấy target của A).
+    - ✅ Quyền theo target (`feat/target-permissions`, schema 19, D13): token viewer / operator
+      giới hạn vào target theo mẫu tên; ngoài phạm vi trả 404; audit chỉ cho token không giới hạn.
+      Còn lại: host thuộc **hai** khách hàng (dải trùng nhau) thì finding của nó hiện với cả hai;
+      cảnh báo webhook vẫn chung cho cả dịch vụ (chưa định tuyến theo khách hàng); chưa có
+      "engagement" làm đơn vị quyền ngoài tên target; run quét bằng CLI không có tên target.
     - ✅ Phân trang + so sánh run (`feat/web-compare`): runs theo khoá (`before`), findings theo
       trang (`X-Total-Count`); `/runs/{id}/diff`, trang Compare, tool MCP `compare_runs`. Còn lại:
       findings sắp theo mức ưu tiên tính trong Python nên mỗi trang vẫn đọc cả danh sách (ổn tới

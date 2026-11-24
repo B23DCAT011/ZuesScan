@@ -40,6 +40,7 @@ from zues_scan.server.config import (
     ConfigError,
     ServiceConfig,
     dashboard_target,
+    target_patterns,
 )
 
 MAX_SCOPE_BYTES = 64 * 1024
@@ -355,6 +356,30 @@ def expiry(valid_for: timedelta | None) -> str | None:
     return (datetime.now(UTC) + valid_for).isoformat(timespec="seconds")
 
 
+def checked_targets(role: str, targets: list[str] | None) -> list[str] | None:
+    """A token's target patterns, checked: none for an admin (it manages every target)."""
+    if targets is None:
+        return None
+    try:
+        patterns = target_patterns(targets, "targets")
+    except ConfigError as exc:
+        raise ManagedError(str(exc)) from None
+    if role == "admin":
+        raise ManagedError("an admin token sees every target: it cannot be limited to some")
+    return list(patterns or ())
+
+
+def set_token_targets(
+    store: Any, config: ServiceConfig, name: str, targets: list[str] | None, actor: str
+) -> None:
+    """Limit a dashboard token to some targets (patterns), or (None) let it see them all.
+    The change applies at its next request, sessions included."""
+    token = next((t for t in config.tokens if t.name == name), None)
+    if token is None or token.source != DASHBOARD:
+        raise LookupError(f"no dashboard token named {name!r}")
+    store.set_managed_token_targets(name, checked_targets(token.role, targets), actor)
+
+
 def create_token(
     store: Any,
     config: ServiceConfig,
@@ -362,6 +387,7 @@ def create_token(
     role: str,
     actor: str,
     valid_for: timedelta | None = DEFAULT_VALIDITY,
+    targets: list[str] | None = None,
 ) -> str:
     """Create a token; return it. Only its SHA-256 is kept: it is shown this once."""
     name = name.strip()
@@ -372,9 +398,10 @@ def create_token(
     if any(t.name == name for t in config.tokens):
         raise ManagedError(f"a token named {name!r} exists already")
     expires_at = expiry(valid_for)
+    limited = checked_targets(role, targets)
     token = secrets.token_urlsafe(32)
     store.save_managed_token(
-        name, hashlib.sha256(token.encode()).hexdigest(), role, actor, expires_at
+        name, hashlib.sha256(token.encode()).hexdigest(), role, actor, expires_at, limited
     )
     return token
 

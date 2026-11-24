@@ -182,7 +182,8 @@ def test_the_browser_session_is_an_httponly_strict_cookie(svc: App) -> None:
 
     response = browser.post("/api/v1/session", json={"token": BOB})
 
-    assert response.status_code == 200 and response.json() == {"name": "bob", "role": "viewer"}
+    assert response.status_code == 200
+    assert response.json() == {"name": "bob", "role": "viewer", "targets": None}
     cookie = response.headers["set-cookie"]
     assert cookie.startswith(f"{COOKIE}=")
     assert "HttpOnly" in cookie and "SameSite=strict" in cookie and "Path=/" in cookie

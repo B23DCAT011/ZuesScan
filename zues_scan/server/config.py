@@ -19,6 +19,7 @@ target by its `name`; it never brings its own address, scope file or options.
     sha256 = "9f86d08..."          # of the token (zues token), never the token
     role = "operator"              # "viewer": read only; "operator": scans, decisions
     expires = 2027-06-30           # optional: not accepted after that day (UTC)
+    targets = ["acme-*"]           # optional: only these targets (name patterns); not admins
 
     [[targets]]
     name = "office-lan"
@@ -46,6 +47,7 @@ import re
 import tomllib
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, time, timedelta
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
@@ -74,9 +76,37 @@ class Token:
     # Who last saw this token's value (made or rotated it): a dashboard token's admin, or
     # its own name once its holder rotated it. None: from service.toml (nobody in ZuesScan).
     issued_by: str | None = None
+    # The targets this token may see and act on (name patterns, e.g. "acme-*"); None: all.
+    targets: tuple[str, ...] | None = None
 
     def expired(self, at: datetime) -> bool:
         return self.expires_at is not None and at >= self.expires_at
+
+    def sees(self, target_name: str | None) -> bool:
+        """Whether this token may see a run or target of that configured name."""
+        return self.targets is None or (
+            target_name is not None and any(fnmatchcase(target_name, p) for p in self.targets)
+        )
+
+
+TARGET_PATTERN = re.compile(r"[a-z0-9*?_-][a-z0-9*?_-]{0,63}")
+
+
+def target_patterns(value: object, where: str) -> tuple[str, ...] | None:
+    """A token's `targets`: a non-empty list of target names or patterns (* and ?)."""
+    if value is None:
+        return None
+    if (
+        not isinstance(value, (list, tuple))
+        or not value
+        or len(value) > 50
+        or not all(isinstance(v, str) and TARGET_PATTERN.fullmatch(v) for v in value)
+    ):
+        raise ConfigError(
+            f"{where}: targets must be 1 to 50 target names or patterns "
+            '(lowercase letters, digits, - and _, with * and ?), e.g. ["acme-*"]'
+        )
+    return tuple(dict.fromkeys(value))
 
 
 @dataclass(frozen=True, slots=True)
@@ -348,6 +378,7 @@ def with_dashboard(config: ServiceConfig) -> ServiceConfig:
                 source=DASHBOARD,
                 expires_at=datetime.fromisoformat(expires) if expires else None,
                 issued_by=row["rotated_by"] or row["created_by"],
+                targets=tuple(json.loads(row["targets"])) if row["targets"] else None,
             )
         )
     return replace(
@@ -397,7 +428,7 @@ def _token(raw: dict[str, Any], i: int) -> Token:
     if "token" in raw or "secret" in raw:
         # Checked first: the helpful message, not just "unknown key".
         raise ConfigError(f"{where}: store the token's sha256, never the token")
-    _only(raw, {"name", "sha256", "role", "expires"}, where)
+    _only(raw, {"name", "sha256", "role", "expires", "targets"}, where)
     try:
         name, digest, role = (
             str(raw["name"]),
@@ -410,7 +441,12 @@ def _token(raw: dict[str, Any], i: int) -> Token:
         raise ConfigError(f"{where}: sha256 must be 64 hex characters")
     if role not in ROLES:
         raise ConfigError(f"{where}: role must be one of {', '.join(ROLES)}")
-    return Token(name, digest, role, expires_at=_expires(raw.get("expires"), where))
+    targets = target_patterns(raw.get("targets"), where)
+    if targets is not None and role == "admin":
+        raise ConfigError(f"{where}: an admin token sees every target: no targets for it")
+    return Token(
+        name, digest, role, expires_at=_expires(raw.get("expires"), where), targets=targets
+    )
 
 
 def _expires(value: object, where: str) -> datetime | None:

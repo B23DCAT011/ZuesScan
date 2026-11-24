@@ -7,6 +7,15 @@ section of a version as its release notes, so every tag needs one.
 ## [Unreleased]
 
 ### Security
+- Per-target permissions: a viewer or operator token can be limited to some targets, by
+  name or pattern (`acme-*`): in Settings (Targets when making a token, **Limit** after),
+  `zues user add --targets`, `zues user targets`, `targets = [...]` in service.toml, or
+  `PUT /api/v1/admin/tokens/{name}/targets`. It then sees and acts on those targets only —
+  targets, scans, jobs, runs (report, SARIF, diff), findings and hosts their runs found,
+  MCP included; anything else answers 404 as if it did not exist; the audit trail (all
+  targets) is for unlimited tokens. Admin tokens are never limited. Each run records the
+  configured target it scanned (schema 19); runs from before are named at `zues web`'s start
+  when exactly one target scans that address with that profile.
 - Two people for a scope change (`[service] scope_approval = true` or
   `ZUES_SCOPE_APPROVAL=on`, set by whoever runs the server): a scope saved or deleted in the
   dashboard becomes a proposal, with a reason, that another admin approves (applied in the

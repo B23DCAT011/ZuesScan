@@ -175,8 +175,10 @@
     me = who;
     $("login").hidden = true;
     $("app").hidden = false;
-    $("who").textContent = who.name + " (" + who.role + ")";
+    $("who").textContent = who.name + " (" + who.role + (who.targets ? "; targets " + who.targets.join(", ") : "") + ")";
     document.querySelector('#nav a[data-view="settings"]').hidden = !isAdmin();
+    // The audit trail covers every target: a token limited to some does not get it.
+    document.querySelector('#nav a[data-view="audit"]').hidden = !!who.targets;
     route();
   }
 
@@ -218,7 +220,7 @@
     var parts = (location.hash || "#/overview").slice(2).split("/");
     var name = parts[0] || "overview";
     if (name === "findings" && parts[1]) name = "finding";
-    if (!VIEWS[name] || (name === "settings" && !isAdmin())) name = "overview";
+    if (!VIEWS[name] || (name === "settings" && !isAdmin()) || (name === "audit" && me.targets)) name = "overview";
     Array.prototype.forEach.call(document.querySelectorAll("#nav a"), function (a) {
       var shown = name === "finding" ? "findings" : name === "compare" ? "runs" : name;
       var active = a.getAttribute("data-view") === shown;
@@ -840,6 +842,28 @@
     return el("span", { class: left < 14 ? "state state-queued" : null }, when(t.expires_at));
   }
 
+  // "acme-* acme-dmz" or "acme-*, acme-dmz" -> ["acme-*", "acme-dmz"]; empty -> null (all).
+  function patterns(text) {
+    var list = String(text || "").split(/[\s,]+/).filter(Boolean);
+    return list.length ? list : null;
+  }
+
+  function targetsCell(t) {
+    var shown = t.targets ? el("span", { class: "mono" }, t.targets.join(", ")) : el("span", { class: "muted" }, "all");
+    if (t.source !== "dashboard" || t.role === "admin") return shown;
+    var input = el("input", { maxlength: "500", value: t.targets ? t.targets.join(" ") : "",
+      placeholder: "empty: all targets", "aria-label": "targets of " + t.name });
+    var editor = el("span", { hidden: true }, input, " ", el("button", { type: "button", on: { click: function () {
+      api("PUT", "/admin/tokens/" + encodeURIComponent(t.name) + "/targets", { targets: patterns(input.value) })
+        .then(function (r) { flash(t.name + " now sees " + (r.targets ? r.targets.join(", ") : "every target") + "."); route(); })
+        .catch(function (err) { flash(err.message, true); });
+    } } }, "Save"));
+    var edit = el("button", { type: "button", class: "link", on: { click: function () {
+      editor.hidden = false; edit.hidden = true; input.focus();
+    } } }, "Limit");
+    return el("span", null, shown, " ", edit, editor);
+  }
+
   function showToken(shown, text, value) {
     clear(shown);
     append(shown, [
@@ -862,21 +886,30 @@
         type: "button", class: "link",
         on: { click: function () { removeToken(t.name); } },
       }, "Revoke") : "";
-      return [el("strong", null, t.name), t.role, source(t.source), expiryCell(t), t.you ? "you" : "", [rotate, " ", remove]];
+      return [el("strong", null, t.name), t.role, source(t.source), expiryCell(t), targetsCell(t),
+        t.you ? "you" : "", [rotate, " ", remove]];
     });
     var name = el("input", { id: "token-name", maxlength: "64", required: true, placeholder: "who it is for" });
     var role = el("select", { id: "token-role" }, ["viewer", "operator", "admin"].map(function (r) {
       return el("option", { value: r }, r);
     }));
     var validity = validitySelect("token-validity");
+    var targetsInput = el("input", { id: "token-targets", maxlength: "500",
+      placeholder: "all, or e.g. acme-* acme-dmz" });
     var button = el("button", { type: "submit", class: "primary" }, "Create token");
     var form = el("form", { class: "toolbar" },
       el("label", null, "Name ", name), el("label", null, "Role ", role),
-      el("label", null, "Valid for ", validity), button);
+      el("label", null, "Valid for ", validity),
+      el("label", null, "Targets ", targetsInput), button);
+    role.addEventListener("change", function () {
+      targetsInput.disabled = role.value === "admin";  // an admin sees every target
+      if (targetsInput.disabled) targetsInput.value = "";
+    });
     form.addEventListener("submit", function (event) {
       event.preventDefault();
       button.disabled = true;
-      api("POST", "/admin/tokens", { name: name.value.trim(), role: role.value, valid_days: validDays(validity) })
+      api("POST", "/admin/tokens", { name: name.value.trim(), role: role.value, valid_days: validDays(validity),
+        targets: patterns(targetsInput.value) })
         .then(function (made) {
           showToken(shown, "Token for " + made.name + " (" + made.role + "): copy it now, it is shown only once.", made.token);
           name.value = "";
@@ -888,7 +921,7 @@
         });
     });
     return el("section", null, el("h2", null, "Tokens (who may sign in)"),
-      table(["Name", "Role", "Source", "Expires (UTC)", "", ""], rows.map(row), "No token."),
+      table(["Name", "Role", "Source", "Expires (UTC)", "Targets", "", ""], rows.map(row), "No token."),
       el("p", { class: "muted small" },
         "viewer: reads; operator: also scans and records decisions; admin: also changes these settings. " +
         "A token stops working at its date (a week before, an alert goes out); Rotate gives it a new " +

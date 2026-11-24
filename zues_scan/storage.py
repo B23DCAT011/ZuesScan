@@ -35,7 +35,7 @@ from typing import Any
 from zues_scan import inventory_store
 from zues_scan.alerts import Alert, AlertPolicy, RunFacts
 from zues_scan.audit import GENESIS, AuditEvent, AuditKind, ChainReport, chain_hash
-from zues_scan.inventory import Status
+from zues_scan.inventory import Status, host_key
 from zues_scan.inventory_store import FindingEvent, FindingRow
 from zues_scan.orchestrator import RunStatus, ScanRun
 from zues_scan.schema import (
@@ -54,7 +54,7 @@ log = logging.getLogger(__name__)
 
 # The schema version this code reads and writes. Bump it together with a new entry
 # in `_MIGRATIONS`; never edit a migration that has already shipped.
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 # How long a writer waits for another to finish before "database is locked".
 BUSY_SECONDS = 15.0
@@ -80,6 +80,7 @@ class RunSummary:
     hosts: int
     services: int
     findings: int
+    target_name: str | None = None  # the service's configured target, if any
 
 
 # Version 1: the tables of the first vertical slice, exactly as they shipped.
@@ -620,6 +621,16 @@ _V18 = (
     "ALTER TABLE managed_token ADD COLUMN rotated_by TEXT",
 )
 
+# Version 19: per-target permissions (G23). Each run records the configured target it
+# scanned (`target_name`: NULL for CLI scans and runs from before, until the service matches
+# them), and a dashboard token may be limited to targets (`targets`: a JSON list of name
+# patterns; NULL: every target).
+_V19 = (
+    "ALTER TABLE scan_run ADD COLUMN target_name TEXT",
+    "CREATE INDEX idx_scan_run_target_name ON scan_run(target_name)",
+    "ALTER TABLE managed_token ADD COLUMN targets TEXT",
+)
+
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: _V1,
     2: _V2,
@@ -639,6 +650,7 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
     16: _V16,
     17: _V17,
     18: _V18,
+    19: _V19,
 }
 
 
@@ -796,7 +808,8 @@ class Storage:
                 "INSERT INTO scan_run "
                 "(target, status, error, started_at, finished_at, reconkit_version, "
                 "profile, profile_settings, notes, plan, operator, engagement, scope_path, "
-                "scope_sha256, cve_source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "scope_sha256, cve_source, target_name) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     run.target,
                     str(run.status),
@@ -815,6 +828,7 @@ class Storage:
                     run.scope_path,
                     run.scope_sha256,
                     run.cve_source,
+                    run.target_name,
                 ),
             )
             run_id = int(cur.lastrowid or 0)
@@ -1143,7 +1157,7 @@ class Storage:
     def managed_tokens(self) -> list[sqlite3.Row]:
         return self._conn.execute(
             "SELECT name, sha256, role, created_at, created_by, expires_at, rotated_at, "
-            "rotated_by FROM managed_token ORDER BY name"
+            "rotated_by, targets FROM managed_token ORDER BY name"
         ).fetchall()
 
     def save_managed_scope(self, name: str, content: str, sha256: str, actor: str) -> None:
@@ -1194,13 +1208,27 @@ class Storage:
         )
 
     def save_managed_token(
-        self, name: str, sha256: str, role: str, actor: str, expires_at: str | None = None
+        self,
+        name: str,
+        sha256: str,
+        role: str,
+        actor: str,
+        expires_at: str | None = None,
+        targets: list[str] | None = None,
     ) -> None:
         now = datetime.now(UTC).isoformat()
         self._managed_change(
-            "INSERT INTO managed_token (name, sha256, role, created_at, created_by, expires_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (name, sha256, role, now, actor, expires_at),
+            "INSERT INTO managed_token (name, sha256, role, created_at, created_by, expires_at, "
+            "targets) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                name,
+                sha256,
+                role,
+                now,
+                actor,
+                expires_at,
+                None if targets is None else json.dumps(targets),
+            ),
             AuditEvent(
                 at=now,
                 kind=AuditKind.CONFIG,
@@ -1209,7 +1237,29 @@ class Storage:
                 engagement=None,
                 scope_sha256=None,
                 # Never the token, nor its hash.
-                detail={"action": "token created", "role": role, "expires_at": expires_at},
+                detail={
+                    "action": "token created",
+                    "role": role,
+                    "expires_at": expires_at,
+                    "targets": targets,
+                },
+            ),
+        )
+
+    def set_managed_token_targets(self, name: str, targets: list[str] | None, actor: str) -> None:
+        """Which targets a dashboard token may see and act on (None: every one)."""
+        now = datetime.now(UTC).isoformat()
+        self._managed_change(
+            "UPDATE managed_token SET targets = ? WHERE name = ?",
+            (None if targets is None else json.dumps(targets), name),
+            AuditEvent(
+                at=now,
+                kind=AuditKind.CONFIG,
+                target=f"token:{name}",
+                operator=actor,
+                engagement=None,
+                scope_sha256=None,
+                detail={"action": "token targets changed", "targets": targets},
             ),
         )
 
@@ -1758,7 +1808,7 @@ class Storage:
         row = self._conn.execute(
             "SELECT target, status, error, started_at, finished_at, reconkit_version, "
             "profile, profile_settings, notes, plan, operator, engagement, scope_path, "
-            "scope_sha256, cve_source FROM scan_run WHERE id = ?",
+            "scope_sha256, cve_source, target_name FROM scan_run WHERE id = ?",
             (run_id,),
         ).fetchone()
         if row is None:
@@ -1783,6 +1833,7 @@ class Storage:
             scope_path=row["scope_path"],
             scope_sha256=row["scope_sha256"],
             cve_source=row["cve_source"],
+            target_name=row["target_name"],
         )
         for p in self._conn.execute(
             "SELECT name, status, version FROM scan_run_plugin WHERE run_id = ? ORDER BY rowid",
@@ -1833,18 +1884,29 @@ class Storage:
             run.assets.append(asset)
         return run
 
-    def list_runs(self, limit: int | None = None, before: int | None = None) -> list[RunSummary]:
+    def list_runs(
+        self,
+        limit: int | None = None,
+        before: int | None = None,
+        targets: tuple[str, ...] | None = None,
+    ) -> list[RunSummary]:
         """The stored runs, newest first, with how much each one found; with `before`, only
-        those older than run #before (the next page: ids never move, unlike an offset)."""
+        those older than run #before (the next page: ids never move, unlike an offset); with
+        `targets` (name patterns), only runs of those configured targets."""
+        where, params = _targets_clause(targets, "r.target_name")
         rows = self._conn.execute(
-            "SELECT r.id, r.target, r.status, r.started_at, r.finished_at, "
+            "SELECT r.id, r.target, r.status, r.started_at, r.finished_at, r.target_name, "
             "  (SELECT COUNT(*) FROM asset a WHERE a.run_id = r.id) AS hosts, "
             "  (SELECT COUNT(*) FROM service s JOIN asset a ON a.id = s.asset_id "
             "   WHERE a.run_id = r.id) AS services, "
             "  (SELECT COUNT(*) FROM finding f JOIN asset a ON a.id = f.asset_id "
             "   WHERE a.run_id = r.id) AS findings "
-            "FROM scan_run r WHERE r.id < ? ORDER BY r.id DESC LIMIT ?",
-            (2**63 - 1 if before is None else before, -1 if limit is None else limit),
+            f"FROM scan_run r WHERE r.id < ?{where} ORDER BY r.id DESC LIMIT ?",
+            (
+                2**63 - 1 if before is None else before,
+                *params,
+                -1 if limit is None else limit,
+            ),
         ).fetchall()
         return [
             RunSummary(
@@ -1856,9 +1918,43 @@ class Storage:
                 hosts=r["hosts"],
                 services=r["services"],
                 findings=r["findings"],
+                target_name=r["target_name"],
             )
             for r in rows
         ]
+
+    def run_target_name(self, run_id: int) -> tuple[bool, str | None]:
+        """(whether run #run_id exists, the configured target it scanned)."""
+        row = self._conn.execute(
+            "SELECT target_name FROM scan_run WHERE id = ?", (run_id,)
+        ).fetchone()
+        return (row is not None, row["target_name"] if row else None)
+
+    def host_keys_seen_by(self, targets: tuple[str, ...]) -> set[str]:
+        """The hosts (inventory keys) that runs of these targets (name patterns) found."""
+        where, params = _targets_clause(targets, "r.target_name")
+        rows = self._conn.execute(
+            "SELECT DISTINCT a.host, a.ip FROM asset a JOIN scan_run r ON r.id = a.run_id "
+            f"WHERE 1 = 1{where}",
+            params,
+        ).fetchall()
+        return {host_key(r["ip"], r["host"]) for r in rows}
+
+    def name_runs(self, names: dict[tuple[str, str | None], str]) -> int:
+        """Give runs without a target name the one configured target that scans the same
+        address with the same profile (`names`: (address, profile) -> target name). Runs
+        made before schema 19, so that a token limited to a target sees its history too.
+        Runs that match no target, or several, keep no name. Returns how many were named."""
+        named = 0
+        with self._conn:
+            for (address, profile), name in names.items():
+                cur = self._conn.execute(
+                    "UPDATE scan_run SET target_name = ? WHERE target_name IS NULL "
+                    "AND target = ? AND profile IS ?",
+                    (name, address, profile),
+                )
+                named += cur.rowcount
+        return named
 
     def latest_starts(self) -> dict[tuple[str, str | None], str]:
         """When each (target, profile) was last scanned: the newest run's start time.
@@ -1921,6 +2017,15 @@ class Storage:
         """The findings recorded for a run, each with the service it was found on."""
         run = self.load_run(run_id)
         return [f for a in run.assets for f in a.findings] if run else []
+
+
+def _targets_clause(targets: tuple[str, ...] | None, column: str) -> tuple[str, list[str]]:
+    """SQL limiting `column` to names matching `targets` (glob patterns; None: no limit)."""
+    if targets is None:
+        return "", []
+    if not targets:
+        return " AND 0", []
+    return " AND (" + " OR ".join(f"{column} GLOB ?" for _ in targets) + ")", list(targets)
 
 
 def prefer_wal(path: str | Path) -> str | None:

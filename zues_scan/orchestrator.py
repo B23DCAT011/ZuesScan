@@ -99,6 +99,9 @@ class ScanRun:
     plan: ScanTarget | None = None
     # Hosts a plugin reported that are outside the scope; dropped from `assets`.
     out_of_scope: list[str] = field(default_factory=list)
+    # The service's configured target this run scanned (None: a CLI scan): who may see the
+    # run follows from it (per-target permissions, G23).
+    target_name: str | None = None
 
 
 class Orchestrator:

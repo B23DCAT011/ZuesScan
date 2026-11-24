@@ -108,7 +108,8 @@ def test_user_add_list_and_rotate_with_expiry(capsys: pytest.CaptureFixture[str]
 
     assert main(["user", "list"]) == 0
     listed = {line.split()[0]: line for line in capsys.readouterr().out.splitlines()[1:]}
-    assert listed["siem"].endswith("never") and listed["ci"].split()[-2].startswith("20")
+    assert listed["siem"].split()[-2:] == ["never", "all"]  # expires, targets
+    assert listed["ci"].split()[-3].startswith("20")
 
     old = first.splitlines()[1]
     assert main(["user", "rotate", "ci", "--expires", "1y"]) == 0
@@ -119,3 +120,17 @@ def test_user_add_list_and_rotate_with_expiry(capsys: pytest.CaptureFixture[str]
     hashes = {t.sha256 for t in load_config().tokens}
     assert hashlib.sha256(old.encode()).hexdigest() not in hashes
     assert hashlib.sha256(new.encode()).hexdigest() in hashes
+
+
+def test_user_targets_from_the_command_line(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["user", "add", "acme", "--role", "viewer", "--targets", "acme-*", "acme-dmz"]) == 0
+    assert main(["user", "add", "boss", "--role", "admin", "--targets", "acme-*"]) == 2
+    assert "admin token sees every target" in capsys.readouterr().err
+
+    assert {t.name: t.targets for t in load_config().tokens}["acme"] == ("acme-*", "acme-dmz")
+    assert main(["user", "list"]) == 0
+    assert capsys.readouterr().out.splitlines()[1].endswith("acme-*,acme-dmz")
+
+    assert main(["user", "targets", "acme"]) == 0  # no pattern: every target again
+    assert "now sees: every target" in capsys.readouterr().out
+    assert {t.name: t.targets for t in load_config().tokens}["acme"] is None
