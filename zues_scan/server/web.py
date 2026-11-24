@@ -67,7 +67,7 @@ from zues_scan.server import managed, notify, sessions
 from zues_scan.server import queue as rkqueue
 from zues_scan.server.config import DASHBOARD, ConfigError, ServiceConfig, Token, load_config
 from zues_scan.server.sessions import Session, stamp
-from zues_scan.storage import Storage, StorageError
+from zues_scan.storage import Storage, StorageError, prefer_wal
 
 log = logging.getLogger(__name__)
 
@@ -987,6 +987,7 @@ def serve(config_path: str, host: str = "127.0.0.1", port: int = 8000) -> None:
     import uvicorn
 
     app = create_app(config_path)
+    prefer_wal(app.state.live.get().db)  # e.g. after a restore from a backup
     # proxy_headers: behind a TLS reverse proxy, take the scheme from X-Forwarded-Proto
     # (only from the addresses in FORWARDED_ALLOW_IPS, 127.0.0.1 by default), so that
     # the session cookie is marked Secure.

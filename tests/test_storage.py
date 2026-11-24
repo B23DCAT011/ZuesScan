@@ -1,6 +1,7 @@
 """Tests for the SQLite storage repository."""
 
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -598,3 +599,86 @@ def test_v14_audit_trail_survives_the_sessions_migration(tmp_path: Path) -> None
         report = store.verify_audit()
     assert report.events == 3
     assert not [p for p in report.problems if "follow" in p or "changed" in p]
+
+
+# --- write-ahead logging ------------------------------------------------------------------------
+
+
+def _reader_holding_a_snapshot(path: Path) -> sqlite3.Connection:
+    """Another process's long read (the web listing findings, a report being built)."""
+    reader = sqlite3.connect(path)
+    reader.execute("BEGIN")
+    reader.execute("SELECT COUNT(*) FROM scan_run").fetchone()
+    return reader
+
+
+def test_a_new_database_uses_write_ahead_logging(tmp_path: Path) -> None:
+    with _store(tmp_path) as store:
+        assert store.journal_mode() == "wal"
+
+
+def test_a_long_read_does_not_hold_back_a_save(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("zues_scan.storage.BUSY_SECONDS", 0.2)
+    with _store(tmp_path):
+        pass
+    reader = _reader_holding_a_snapshot(tmp_path / "test.db")
+    try:
+        with _store(tmp_path) as store:
+            run_id = store.save_run(_make_run())  # does not wait for the reader
+        # The reader keeps the picture it started with, until its read ends.
+        assert reader.execute("SELECT COUNT(*) FROM scan_run").fetchone()[0] == 0
+        reader.commit()
+        assert reader.execute("SELECT COUNT(*) FROM scan_run").fetchone()[0] == 1
+    finally:
+        reader.close()
+    assert run_id == 1
+
+
+def test_without_write_ahead_logging_the_same_save_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """What WAL fixes: in SQLite's default mode a long read makes a save time out."""
+    monkeypatch.setattr("zues_scan.storage.BUSY_SECONDS", 0.2)
+    with _store(tmp_path):
+        pass
+    with closing(sqlite3.connect(tmp_path / "test.db")) as conn:
+        conn.execute("PRAGMA journal_mode = DELETE")
+    reader = _reader_holding_a_snapshot(tmp_path / "test.db")
+    try:
+        with _store(tmp_path) as store:
+            assert store.journal_mode() == "delete"  # opening alone changes nothing
+            with pytest.raises(sqlite3.OperationalError, match="locked"):
+                store.save_run(_make_run())
+    finally:
+        reader.close()
+
+
+def test_opening_a_current_database_leaves_its_bytes_alone(tmp_path: Path) -> None:
+    """A backup (kept in the default mode) read by ZuesScan still matches its SHA-256."""
+    with _store(tmp_path) as store:
+        store.save_run(_make_run())
+    path = tmp_path / "test.db"
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("PRAGMA journal_mode = DELETE")
+    before = path.read_bytes()
+
+    with Storage(path) as store:
+        store.load_run(1)
+        store.verify_audit()
+
+    assert path.read_bytes() == before
+
+
+def test_services_switch_a_restored_database_back_to_wal(tmp_path: Path) -> None:
+    from zues_scan.storage import prefer_wal
+
+    with _store(tmp_path):
+        pass
+    with closing(sqlite3.connect(tmp_path / "test.db")) as conn:
+        conn.execute("PRAGMA journal_mode = DELETE")  # as a restored backup is
+
+    assert prefer_wal(tmp_path / "test.db") == "wal"
+    assert prefer_wal(tmp_path / "none-yet.db") is None
+    assert not (tmp_path / "none-yet.db").exists()  # never created by a service's start

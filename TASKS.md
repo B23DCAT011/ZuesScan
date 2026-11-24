@@ -209,4 +209,8 @@ rồi độ tin cậy, rồi tiện dụng.
       sau 24 giờ), ký HMAC có timestamp; cảnh báo mới: quét hỏng N lần liền / chạy lại, quét không
       bắt đầu được, job hỏng, bị khoá đăng nhập; Settings → Alerts; compose truyền biến cảnh báo.
       Thử thật: webhook 503 → chờ → gửi lại được, chữ ký hợp lệ; nút gửi thử trên Chrome headless.
+- [x] `feat/sqlite-wal` (G23) — database ở chế độ WAL: đọc dài không chặn lưu run (test đối
+      chứng), chờ ghi 15 giây; bật khi tạo / migrate DB và khi dịch vụ khởi động, không bao giờ chỉ
+      vì mở DB (bản backup giữ nguyên mã băm); backup là một file; doctor báo chế độ; README khôi
+      phục xoá `-wal` / `-shm` cũ.
 

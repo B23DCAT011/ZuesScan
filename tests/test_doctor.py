@@ -217,3 +217,39 @@ def test_a_working_service_is_ready(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert checks["service config"].detail.endswith("1 target(s)")
     assert checks["database"].status == INFO  # the first scan creates it
     assert checks["redis"].status == OK
+
+
+def test_the_database_should_use_write_ahead_logging(tmp_path: Path) -> None:
+    import sqlite3
+    from contextlib import closing
+
+    from zues_scan.storage import Storage
+
+    config = tmp_path / "service.toml"
+    config.write_text(f'[service]\ndb = "{tmp_path.as_posix()}/r.db"\n', encoding="utf-8")
+    with Storage(tmp_path / "r.db"):
+        pass
+    checks = {c.name: c for c in doctor.check_service(str(config))}
+    assert checks["database"].status == OK and "write-ahead" in checks["database"].detail
+
+    with closing(sqlite3.connect(tmp_path / "r.db")) as conn:
+        conn.execute("PRAGMA journal_mode = DELETE")  # e.g. a backup copied in by hand
+    checks = {c.name: c for c in doctor.check_service(str(config))}
+    hint = checks["database"].hint or ""
+    assert checks["database"].status == WARN and "start a service" in hint
+
+
+def test_doctor_checks_the_service_the_environment_describes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """In the image / compose there is no --config: ZUES_DB says there is a service."""
+    from zues_scan import cli
+
+    monkeypatch.delenv("ZUES_CONFIG", raising=False)
+    monkeypatch.setenv("ZUES_DB", str(tmp_path / "zues.db"))
+    monkeypatch.setenv("ZUES_REDIS_URL", "redis://127.0.0.1:1/0")  # nothing listens there
+
+    cli.main(["doctor", "--json"])
+
+    names = {c["name"] for c in json.loads(capsys.readouterr().out)["checks"]}
+    assert {"service config", "database"} <= names

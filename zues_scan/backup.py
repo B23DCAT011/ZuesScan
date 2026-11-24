@@ -73,7 +73,10 @@ def backup(db: str | Path, out_dir: str | Path, keep: int | None = None) -> Back
         try:
             dest = sqlite3.connect(partial)
             try:
-                src.backup(dest)
+                src.backup(dest)  # reads what the write-ahead log holds too
+                # The copy is one self-contained file (no -wal beside it), whatever the
+                # live database's mode: what its SHA-256 covers is all there is.
+                dest.execute("PRAGMA journal_mode = DELETE")
             finally:
                 dest.close()
         finally:

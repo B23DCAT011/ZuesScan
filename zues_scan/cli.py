@@ -50,7 +50,7 @@ from zues_scan.report import render_html, stored_model
 from zues_scan.report.sarif import to_sarif
 from zues_scan.scanning import ScanSpec, execute, indent
 from zues_scan.schema import Asset, Finding, WebPage
-from zues_scan.storage import Storage, StorageError
+from zues_scan.storage import Storage, StorageError, prefer_wal
 
 log = logging.getLogger(__name__)
 
@@ -540,7 +540,11 @@ def _cmd_plugins(args: argparse.Namespace) -> int:
 
 def _cmd_doctor(args: argparse.Namespace) -> int:
     """What this machine can scan with, and what to install or fix."""
-    checks = doctor.gather(config=args.config, cve_cache=args.cve_cache)
+    service = args.config
+    if service is None and (os.environ.get("ZUES_CONFIG") or os.environ.get("ZUES_DB")):
+        # A service set up from the environment (the image, compose): check it too.
+        service = os.environ.get("ZUES_CONFIG") or "(environment)"
+    checks = doctor.gather(config=service, cve_cache=args.cve_cache)
     if args.json:
         print(json.dumps(doctor.as_json(checks), indent=2, ensure_ascii=False))
     else:
@@ -900,6 +904,7 @@ def _cmd_worker(args: argparse.Namespace) -> int:
     if loaded is None:
         return 2
     config, queue, _ = loaded
+    prefer_wal(config.db)
     where = queue.safe_url(config.redis_url)
     try:
         worker = queue.make_worker(queue.queue(config))
@@ -916,6 +921,7 @@ def _cmd_scheduler(args: argparse.Namespace) -> int:
     if loaded is None:
         return 2
     config, queue, scheduler = loaded
+    prefer_wal(config.db)
     q = queue.queue(config)
     if args.once:
         try:
@@ -1350,7 +1356,11 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_cmd = sub.add_parser(
         "doctor", help="check the tools, rights and data this machine scans with"
     )
-    doctor_cmd.add_argument("--config", help="also check a service.toml, its database and Redis")
+    doctor_cmd.add_argument(
+        "--config",
+        help="also check a service.toml, its database and Redis (default: the service that "
+        "$ZUES_CONFIG or the ZUES_* variables describe, if set)",
+    )
     doctor_cmd.add_argument(
         "--cve-cache", default=DEFAULT_CVE_CACHE, help="NVD cache to check (default: %(default)s)"
     )

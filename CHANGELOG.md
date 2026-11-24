@@ -6,6 +6,18 @@ section of a version as its release notes, so every tag needs one.
 
 ## [Unreleased]
 
+### Changed
+- The database uses write-ahead logging: a long read (the dashboard, a report) no longer
+  holds back the save of a run, and saves no longer block readers; a busy database is
+  waited on for 15 seconds (was 5). Set when a database is created or migrated, and by
+  `web`, `worker` and `scheduler` at start (e.g. after a restore) — never by merely opening
+  one, so reading a backup leaves it byte for byte as hashed. Backups are written as one
+  self-contained file. `zues doctor` reports a database that is not in WAL mode. Restoring:
+  delete the old `zues.db-wal` / `zues.db-shm` first (README).
+- `zues doctor` checks the service that `$ZUES_CONFIG` or the `ZUES_*` variables describe
+  when no `--config` is given: in the image (`docker compose exec web zues doctor`) it now
+  checks the database and Redis too.
+
 ### Added
 - Alerts are no longer lost: they wait in the database (`alert_outbox`, schema 16) until the
   webhook takes them. A scan's alerts are saved in the same transaction as its run; the
