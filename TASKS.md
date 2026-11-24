@@ -10,7 +10,7 @@ pytest + ruff + mypy trước khi commit, rồi `git merge --no-ff` vào `main` 
 song song: [`docs/LO-TRINH-HOC.md`](docs/LO-TRINH-HOC.md). Tầm nhìn & các quyết định thiết kế
 đã chốt (D1–D8): [`docs/THIET-KE.md`](docs/THIET-KE.md).
 
-Cập nhật lần cuối: 2026-11-22.
+Cập nhật lần cuối: 2026-11-24.
 
 ## Giai đoạn 1 — Lát cắt dọc (CLI) ✅
 
@@ -189,5 +189,17 @@ Mục tiêu: mang ZuesScan sang máy khác mà cài nhanh, thêm / bớt công c
       Settings); lab giữ file qua `ZUES_CONFIG`. Thử thật trên volume trống: admin → scope →
       target → Scan now → run được lưu.
 - [x] `chore/release-0.2.0` — phát hành v0.2.0 (chủ dự án đồng ý 2026-11-24): CHANGELOG gộp phần
-      Unreleased vào 0.2.0; tag `v0.2.0` chạy workflow Release.
+      Unreleased vào 0.2.0; tag `v0.2.0` chạy workflow Release. Lần chạy đầu hỏng ở bước ký cosign
+      (tên owner viết hoa; `fix/release-lowercase-image`); chủ dự án chọn dời tag sang bản sửa thay
+      vì ra 0.2.1 — lần chạy lại xanh hết: GitHub Release, wheel + sdist, image amd64 + arm64 đã ký.
+
+## Giai đoạn 6 — Đóng các giới hạn còn lại (G23–G30)
+
+Những gì `KNOWN-GAPS.md` còn ghi "Còn lại", làm theo thứ tự rủi ro: an toàn của dịch vụ trước,
+rồi độ tin cậy, rồi tiện dụng.
+
+- [x] `feat/web-sessions` (G23) — phiên do server giữ (schema 15): cookie chỉ là khoá ngẫu nhiên
+      của phiên; hết khi đăng xuất, 30 phút không dùng, 8 giờ, token bị thu hồi / cấp lại, admin
+      kết thúc (Settings → Sessions); 10 token sai / 15 phút → khoá địa chỉ 15 phút (Redis, dự
+      phòng trong tiến trình); audit `auth`. Thử bằng Chrome headless trên dịch vụ thật.
 

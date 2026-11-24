@@ -536,7 +536,7 @@ zues web --config service.toml              # http://127.0.0.1:8000 — chỉ m�
 zues web --config service.toml --host 0.0.0.0 --port 8000   # sau reverse proxy có TLS
 ```
 
-Mở trình duyệt, dán token (`zues token`) vào ô đăng nhập. Dashboard (JavaScript thuần,
+Mở trình duyệt, dán token (`zues user add` hoặc trang Settings) vào ô đăng nhập. Dashboard (JavaScript thuần,
 không thư viện ngoài, không bước build) có:
 
 - **Overview**: số finding đang mở theo P1–P4, số *fix giả* / *xuất hiện lại*; các target trong
@@ -606,7 +606,8 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/v1/runs/3/sarif
 | `PUT` / `DELETE /api/v1/admin/scopes/{tên}` `{"text": "<nội dung file scope>"}` | admin | sửa / xoá scope |
 | `PUT` / `DELETE /api/v1/admin/targets/{tên}` `{"target", "scope", "profile", "every", "scanners", "checks", "discoverers", ...}` | admin | sửa / xoá target |
 | `POST /api/v1/admin/tokens` `{"name", "role"}`, `DELETE /api/v1/admin/tokens/{tên}` | admin | tạo token (trả về **một lần**) / thu hồi |
-| `POST` / `DELETE /api/v1/session` | — | đăng nhập / đăng xuất của trình duyệt |
+| `GET /api/v1/admin/sessions`, `DELETE /api/v1/admin/sessions/{id}` | admin | ai đang đăng nhập (từ đâu, lúc nào) / kết thúc một phiên |
+| `POST` / `DELETE /api/v1/session` | — | đăng nhập (mở phiên) / đăng xuất (kết thúc phiên ở server) |
 | `GET /healthz` | — | kiểm tra sống (config, DB, Redis) cho Docker |
 
 Bảo mật:
@@ -614,9 +615,20 @@ Bảo mật:
 - Token chỉ lưu dạng SHA-256 trong `service.toml`, so sánh thời gian hằng. Sửa file là có hiệu
   lực ở request kế tiếp (gỡ token = thu hồi ngay); file sửa hỏng thì API **từ chối mọi request**
   cho tới khi sửa xong, không chạy tiếp bằng cấu hình cũ.
-- Trình duyệt giữ token trong cookie **HttpOnly** (script trong trang không đọc được),
-  **SameSite=Strict**, `Secure` khi chạy HTTPS. Mọi request thay đổi dữ liệu đi bằng cookie còn
-  phải có header `X-ZuesScan: 1` — trang web khác không gửi được header này (chống CSRF).
+- **Trình duyệt không giữ token.** Đăng nhập mở một **phiên do server giữ**: cookie chỉ chứa khoá
+  ngẫu nhiên 256 bit của phiên (database chỉ lưu SHA-256 của khoá), **HttpOnly** (script trong
+  trang không đọc được), **SameSite=Strict**, `Secure` khi chạy HTTPS. Phiên kết thúc khi đăng
+  xuất (xoá ở server: cookie bị sao chép cũng hết dùng được), sau **30 phút không dùng** (lần tự
+  làm mới của trang không tính), **8 giờ** sau khi đăng nhập, khi token của nó bị thu hồi hoặc cấp
+  lại, hoặc khi admin bấm **End** ở Settings → Sessions. Đăng nhập, đăng xuất, phiên bị kết thúc
+  đều vào audit (`auth`).
+- Mọi request thay đổi dữ liệu đi bằng cookie còn phải có header `X-ZuesScan: 1` — trang web khác
+  không gửi được header này (chống CSRF).
+- **Đoán token bị hãm:** 10 lần sai (ô đăng nhập hoặc `Authorization: Bearer`) trong 15 phút từ một
+  địa chỉ → địa chỉ đó bị khoá 15 phút (429 + `Retry-After`, kể cả khi gửi đúng token, để câu trả
+  lời không lộ gì), ghi log `auth.locked` và audit. Đếm trong Redis (chung cho mọi tiến trình web),
+  Redis hỏng thì đếm trong tiến trình — không bao giờ bỏ qua. Sau reverse proxy, địa chỉ là địa
+  chỉ proxy chuyển tiếp (`FORWARDED_ALLOW_IPS`).
 - Yêu cầu quét chỉ mang **tên** target; thêm bất kỳ trường nào khác (địa chỉ, scope…) là bị từ
   chối (422).
 - Dữ liệu quét được coi là không tin cậy: dashboard chỉ đưa dữ liệu vào trang dưới dạng chữ
@@ -768,8 +780,8 @@ ZuesScan là bộ điều phối các công cụ mở, **không** thay được 
 viện kiểm tra riêng; phát hiện chủ yếu theo phiên bản, trừ nuclei và quét có đăng nhập). Mọi
 điểm yếu đã biết, kèm hướng nâng cấp theo cách làm thật, nằm ở
 [`docs/KNOWN-GAPS.md`](docs/KNOWN-GAPS.md) — nổi bật: quét có đăng nhập mới có Debian; nuclei
-chưa có kênh OAST (interactsh) riêng; web chưa giới hạn đăng nhập sai và chưa phân quyền theo
-target; cảnh báo webhook không gửi lại khi lỗi; SQLite là giới hạn khi nhiều worker / người dùng.
+chưa có kênh OAST (interactsh) riêng; web chưa phân quyền theo target và chưa có xác thực hai
+lớp; cảnh báo webhook không gửi lại khi lỗi; SQLite là giới hạn khi nhiều worker / người dùng.
 
 ## Cho AI dùng ZuesScan (MCP)
 
