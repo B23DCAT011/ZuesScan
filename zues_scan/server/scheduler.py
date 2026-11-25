@@ -173,6 +173,7 @@ def run_forever(
 ) -> None:
     """Run rounds until stopped; with `reload`, each round reads the configuration anew."""
     done = 0
+    prune_every = max(1, round(PRUNE_INTERVAL / interval))  # rounds between two prunings
     while rounds is None or done < rounds:
         try:
             current = _reloaded(config, reload)
@@ -180,11 +181,17 @@ def run_forever(
                 tick(current, q)
                 warn_expiring_tokens(current)
                 notify.flush(current)  # alerts that could not be sent yet
+                if done % prune_every == 0:  # the first round, then hourly
+                    notify.prune(current)
         except Exception:  # noqa: BLE001 - keep scheduling; the next round may succeed
             log.exception("scheduler round failed")
         done += 1
         if rounds is None or done < rounds:
             sleep(interval.total_seconds())
+
+
+# How often the scheduler deletes alerts older than `[notify] keep_days`.
+PRUNE_INTERVAL = timedelta(hours=1)
 
 
 # A token this close to its end raises an alert (once a day): what uses it (a CI job, an

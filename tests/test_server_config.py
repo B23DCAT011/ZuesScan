@@ -148,6 +148,9 @@ def test_only_configured_targets_can_be_named(tmp_path: Path) -> None:
         ),
         ('[service]\ndb = "x"\n[notify]\nfailed_scans = 0\n', r"failed_scans must be a whole"),
         ('[service]\ndb = "x"\n[notify]\nfailed_scans = true\n', r"failed_scans must be a"),
+        ('[service]\ndb = "x"\n[notify]\nkeep_days = 6\n', r"keep_days must be .* from 7 to 3650"),
+        ('[service]\ndb = "x"\n[notify]\nkeep_days = 3651\n', r"keep_days must be"),
+        ('[service]\ndb = "x"\n[notify]\nkeep_days = true\n', r"keep_days must be"),
         ("[service\n", r"cannot read service config"),
     ],
 )

@@ -1104,6 +1104,7 @@ def _alerts(config: ServiceConfig, limit: int) -> dict[str, Any]:
         "signed": bool(config.notify.secret),
         "min_priority": config.notify.min_priority,
         "failed_scans": config.notify.failed_scans,
+        "keep_days": config.notify.keep_days,
         "latest": [notify.describe(r) for r in rows],
     }
 

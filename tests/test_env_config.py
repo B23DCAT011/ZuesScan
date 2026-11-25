@@ -29,6 +29,7 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         "ZUES_WEBHOOK_SECRET",
         "ZUES_NOTIFY_MIN_PRIORITY",
         "ZUES_NOTIFY_FAILED_SCANS",
+        "ZUES_NOTIFY_KEEP_DAYS",
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("ZUES_DB", str(tmp_path / "zues.db"))
@@ -64,10 +65,18 @@ def test_settings_come_from_the_environment(
 
 def test_alert_settings_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     # compose passes every variable, set or not: empty means "not set".
-    for name in ("ZUES_WEBHOOK", "ZUES_WEBHOOK_SECRET", "ZUES_NOTIFY_FAILED_SCANS"):
+    names = ("ZUES_WEBHOOK", "ZUES_WEBHOOK_SECRET", "ZUES_NOTIFY_FAILED_SCANS")
+    for name in (*names, "ZUES_NOTIFY_KEEP_DAYS"):
         monkeypatch.setenv(name, "")
     notify = from_environment().notify
     assert (notify.webhook, notify.secret, notify.failed_scans) == (None, None, 3)
+    assert notify.keep_days == 90
+    monkeypatch.setenv("ZUES_NOTIFY_KEEP_DAYS", "30")
+    assert from_environment().notify.keep_days == 30
+    monkeypatch.setenv("ZUES_NOTIFY_KEEP_DAYS", "1")
+    with pytest.raises(ConfigError, match="ZUES_NOTIFY_KEEP_DAYS must be a whole number of days"):
+        from_environment()
+    monkeypatch.setenv("ZUES_NOTIFY_KEEP_DAYS", "")
 
     monkeypatch.setenv("ZUES_WEBHOOK_SECRET", "0123456789abcdef-xyz")
     monkeypatch.setenv("ZUES_NOTIFY_FAILED_SCANS", "5")

@@ -1009,6 +1009,18 @@ class Storage:
             )
         return cur.rowcount == 1
 
+    def prune_alerts(self, before: str) -> int:
+        """Delete the alerts over by `before` (sent or given up then) and those never
+        delivered that were raised by then; the number deleted. Not audited: the audit
+        trail records what people did, the outbox only what was sent about it."""
+        moment = datetime.fromisoformat(before).astimezone(UTC).isoformat(timespec="seconds")
+        with self._conn:
+            cur = self._conn.execute(
+                "DELETE FROM alert_outbox WHERE COALESCE(sent_at, gave_up_at, created_at) <= ?",
+                (moment,),
+            )
+        return cur.rowcount
+
     def alert_rows(self, limit: int = 50, ids: list[int] | None = None) -> list[sqlite3.Row]:
         """The newest alerts (or those with `ids`), whatever their state."""
         if ids is not None:

@@ -1064,6 +1064,9 @@ def _cmd_scheduler(args: argparse.Namespace) -> int:
         sent = notify.flush(config)
         if sent.sent or sent.retrying or sent.gave_up:
             print(f"alerts: {sent.sent} sent, {sent.retrying} to retry, {sent.gave_up} given up")
+        pruned = notify.prune(config)  # a round of its own: as the first of run_forever
+        if pruned:
+            print(f"alerts: {pruned} older than {config.notify.keep_days} days deleted")
         return 0
     scheduled = [t.name for t in config.targets.values() if t.every]
     print(
