@@ -423,7 +423,12 @@ def _version(command: list[str]) -> str | None:
 
     try:
         proc = subprocess.run(
-            command, capture_output=True, encoding="utf-8", errors="replace", timeout=15
+            command,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+            stdin=subprocess.DEVNULL,
         )
     except (OSError, subprocess.SubprocessError):
         return None

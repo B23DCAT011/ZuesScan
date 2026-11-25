@@ -64,6 +64,7 @@ class SubfinderPlugin:
                 proc = subprocess.run(
                     [tools.resolve("subfinder"), "-version"],
                     capture_output=True,
+                    stdin=subprocess.DEVNULL,
                     encoding="utf-8",
                     errors="replace",
                     timeout=15,
@@ -102,6 +103,7 @@ class SubfinderPlugin:
                 proc = subprocess.run(
                     command,
                     capture_output=True,
+                    stdin=subprocess.DEVNULL,
                     encoding="utf-8",
                     errors="replace",
                     timeout=self.timeout,

@@ -236,8 +236,11 @@ tới đúng địa chỉ đã được cổng scope duyệt**: tên không bao 
 `tên,ip:cổng` của httpx), nên không thể dẫn tới địa chỉ chưa duyệt. Mỗi trang theo tên được lưu
 riêng trên dịch vụ (`vhosts`, schema 21), công nghệ của mọi trang đều vào bước CVE (WordPress
 chỉ có ở `shop.` vẫn được đối chiếu). Tối đa 200 cặp tên–dịch vụ mỗi lần (ghi chú nếu bỏ bớt);
-tên phải là tên DNS thuần (không dấu phẩy, khoảng trắng, cổng, URL). Giới hạn: TLS SNI vẫn là địa
-chỉ — máy chủ chọn trang **chỉ** theo SNI thì trả trang mặc định (G29).
+tên phải là tên DNS thuần (không dấu phẩy, khoảng trắng, cổng, URL). Trên dịch vụ có vẻ là TLS
+(tên có https / ssl, hoặc cổng 443, 8443, 9443, 4443), mỗi tên được hỏi trong một lượt httpx riêng
+với **SNI là tên đó** (`-sni`, một tên cho mỗi lượt; httpx không gửi SNI khi hỏi theo địa chỉ) —
+máy chủ chọn trang theo SNI (HAProxy, Traefik, CDN) trả đúng trang. Tối đa 50 tên như vậy mỗi lần;
+quá thì phần còn lại hỏi chung, không SNI, có ghi chú.
 
 Tiêu đề, tên công nghệ đến từ máy bị quét: bỏ ký tự điều khiển, giới hạn độ dài, luôn hiển thị
 dạng text. Lab chạy httpx cùng nuclei trên cả hai target.

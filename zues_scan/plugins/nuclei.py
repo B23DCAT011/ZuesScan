@@ -186,6 +186,7 @@ class NucleiPlugin:
                 proc = subprocess.run(
                     [tools.resolve("nuclei"), "-version"],
                     capture_output=True,
+                    stdin=subprocess.DEVNULL,
                     encoding="utf-8",
                     errors="replace",
                     timeout=15,
