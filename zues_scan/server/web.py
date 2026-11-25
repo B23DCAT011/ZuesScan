@@ -734,6 +734,19 @@ def run_sarif(run_id: int, who: Viewer, config: Config) -> JSONResponse:
     )
 
 
+Evidence = Literal["confirmed", "tried", "untried"]
+
+
+def _evidence(row: FindingRow, wanted: Evidence | None) -> bool:
+    if wanted is None:
+        return True
+    if wanted == "confirmed":
+        return row.confidence == "confirmed"
+    if wanted == "tried":
+        return row.confidence != "confirmed" and bool(row.tried)
+    return row.confidence != "confirmed" and not row.tried
+
+
 def _finding(row: FindingRow) -> dict[str, Any]:
     finding = row.as_finding()
     return {
@@ -752,13 +765,16 @@ def findings(
     all: bool = False,  # noqa: A002 - the query parameter's name
     limit: Annotated[int | None, Query(ge=1, le=1000)] = None,
     offset: Annotated[int, Query(ge=0)] = 0,
+    evidence: Evidence | None = None,
 ) -> list[dict[str, Any]]:
-    """Most urgent first; `limit` / `offset` for a page, `X-Total-Count` for how many."""
+    """Most urgent first; `limit` / `offset` for a page, `X-Total-Count` for how many.
+    `evidence`: confirmed (a check observed it), tried (its check ran and did not match),
+    untried (inferred from a version, never tried) - to triage the last two apart."""
     statuses = None if all else {str(s) for s in (status or ACTIVE)}
     with opened(config) as store:
         rows = store.inventory_findings(statuses) if store else []
         hosts = _visible_hosts(who, store) if store else None
-    rows = [r for r in rows if _visible(r, hosts)]
+    rows = [r for r in rows if _visible(r, hosts) and _evidence(r, evidence)]
     rows.sort(key=lambda r: priority.sort_key(r.as_finding()))
     response.headers["X-Total-Count"] = str(len(rows))
     page = rows[offset : None if limit is None else offset + limit]
