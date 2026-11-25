@@ -416,9 +416,14 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       gắng tốt nhất — bí mật có hình dạng lạ vẫn lọt; chưa có tuỳ chọn "giữ nguyên" cho cuộc kiểm
       thử cần bằng chứng đầy đủ (nên đi kèm mã hoá DB); output của các tool khác (nmap script,
       httpx) chưa qua bước che (hiện không chứa request / response).
-    - nuclei **không thấy** lỗi thì finding theo phiên bản vẫn giữ nguyên độ tin cậy (đúng: nhiều
-      lỗi phụ thuộc cấu hình, như CVE-2021-41773 cần `Require all granted`), nhưng chưa ghi lại
-      "đã thử, không khai thác được" như một quan sát.
+    - ✅ "Đã thử, không khớp" (`feat/nuclei-tried`, schema 22): CVE chỉ suy ra từ phiên bản được
+      thử lại bằng template nuclei của chính nó (`-id … -ms`); không khớp → `Finding.tried`
+      (run và kiểm kê; lần sau không thử thì giữ lần thử cuối, xác nhận thì xoá). Độ tin cậy giữ
+      nguyên (đúng: CVE-2021-41773 cần `Require all granted`). Template cần interactsh không
+      bao giờ được ghi là "đã thử" (dưới `-ni` nuclei vẫn báo không khớp — đã kiểm thật với
+      CVE-2021-44228). Thử thật: nuclei 3.11.1 + templates 10.5.2. Còn lại: gửi lại request
+      của template mà lượt chính đã gửi (một lần nữa cho vài CVE); chỉ CVE có template mang
+      đúng tên `CVE-….yaml`; chưa lọc / xếp hạng finding theo "đã thử" trên dashboard.
     - Templates mới ra hằng ngày: bản ghim cần cập nhật định kỳ (dựng lại image). Template tự
       viết phải được ký (`nuclei -sign`) mới chạy dưới `-dut`.
     - `zues tools install`: bản macOS (amd64, arm64) có trong lock nhưng chưa được chạy thử

@@ -265,4 +265,7 @@ rồi độ tin cậy, rồi tiện dụng.
       CVE; CLI, bản đồ, API, MCP. Thử thật httpx 1.12.0 (HTTP / HTTPS / IPv6).
 - [x] `feat/dnsx-windows-resolvers` (G27) — trên Windows dnsx hỏi DNS server của Windows
       (`GetNetworkParams`), không phải resolver công khai; ghi chú khi không có; `zues doctor`.
+- [x] `feat/nuclei-tried` (G24) — CVE chỉ suy ra từ phiên bản được thử bằng template nuclei của
+      nó (`-id -ms`): khớp → confirmed, không khớp → `Finding.tried` (schema 22); không bao giờ
+      ghi cho template cần interactsh. Thử thật nuclei 3.11.1 + templates 10.5.2.
 
