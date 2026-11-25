@@ -16,7 +16,7 @@ from zues_scan.orchestrator import Orchestrator
 from zues_scan.plugins import httpx as httpx_plugin
 from zues_scan.plugins import registry as plugin_registry
 from zues_scan.plugins.base import ScanError, ScanResult
-from zues_scan.plugins.httpx import HttpxPlugin, parse_jsonl, plan_inputs
+from zues_scan.plugins.httpx import HttpxPlugin, parse_jsonl, plan_inputs, worth_asking
 from zues_scan.profiles import BUILTIN
 from zues_scan.schema import Asset, ScanTarget, Service, WebPage
 from zues_scan.scope import Activity, Scope
@@ -42,13 +42,41 @@ def assets() -> list[Asset]:
                 Service(53, protocol="udp", name="domain"),
             ],
         ),
-        Asset("fd00::7", "fd00::7", [Service(8080)]),  # no name (naabu): a usual web port
-        Asset("10.0.0.6", "10.0.0.6", [Service(6379)]),  # no name, not a web port
+        Asset("fd00::7", "fd00::7", [Service(8080)]),  # no name (naabu)
+        Asset("10.0.0.6", "10.0.0.6", [Service(6379), Service(9100)]),  # no name; a printer
     ]
 
 
-def test_only_web_services_by_address() -> None:
-    assert HttpxPlugin.inputs(assets()) == ["10.0.0.5:80", "10.0.0.5:8443", "[fd00::7]:8080"]
+def test_open_tcp_ports_by_address_but_what_never_speaks_http() -> None:
+    assert HttpxPlugin.inputs(assets()) == [
+        "10.0.0.5:80",
+        "10.0.0.5:8443",
+        "[fd00::7]:8080",
+        "10.0.0.6:6379",  # no name: asked (naabu | httpx)
+    ]  # not ssh, not DNS over UDP, not the printer
+
+
+@pytest.mark.parametrize(
+    ("service", "asked"),
+    [
+        (Service(8080, name="http-proxy"), True),
+        (Service(8080, name="nagios-nsca"), True),  # nmap's guess for a Spring Boot app
+        (Service(4444), True),
+        (Service(5000, name="upnp"), True),
+        (Service(22, name="ssh"), False),
+        (Service(3306, name="MySQL"), False),
+        (Service(135, name="msrpc"), False),
+        (Service(593, name="ncacn_http"), False),  # RPC over HTTP: not a web site
+        (Service(9100, name="jetdirect"), False),
+        (Service(9103), False),  # a printer port: what arrives is printed
+        (Service(9100, name="http"), True),  # nmap saw a web server there
+        (Service(8080, name="http", state="filtered"), False),
+        (Service(8080, name="http", state="closed"), False),
+        (Service(53, protocol="udp", name="domain"), False),
+    ],
+)
+def test_which_ports_are_asked(service: Service, asked: bool) -> None:
+    assert worth_asking(service) is asked
 
 
 def test_parse_cleans_what_the_machine_sent() -> None:
@@ -170,7 +198,8 @@ def test_check_reports_pages_on_their_services(fake_httpx: list[dict[str, Any]])
         80,
         ("PHP:7.4.3",),
     )
-    assert "1 of 3 web service(s) answered" in result.notes
+    assert "1 of 2 web service(s) answered" in result.notes
+    assert "0 of 2 other open port(s) answered HTTP" in result.notes
     assert result.raw[0].format == "httpx-jsonl"
     assert plugin.version() == "1.12.0"
 

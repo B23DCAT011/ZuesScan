@@ -5,8 +5,14 @@ WordPress, Grafana, jQuery — only shows in the HTTP answer. httpx (ProjectDisc
 fetches the root of every web service the scan found and recognises the technologies
 with Wappalyzer's fingerprints, versions included where the answer gives them away.
 
-- Which services: those nmap calls http/https (any name with "http"), and, when a port
-  has no name (naabu without nmap), the usual web ports. httpx tries HTTPS, then HTTP.
+- Which services: every open TCP port, except those nmap names as a protocol that never
+  answers HTTP (`NOT_WEB`: ssh, smtp, mysql...) and raw printing ports (9100-9107: what
+  arrives there is printed; nmap's own probes leave them out too). nmap's names are a
+  guess, and a wrong one hid web services: a Spring Boot app (Log4Shell) answering 404
+  JSON is "nagios-nsca" to nmap. A port that answers HTTP gets its `Service.web` whatever
+  nmap called it, and the web checks (nuclei) then test it as a web service; the run says
+  where that happened. httpx tries HTTPS, then HTTP. Virtual hosts (below) are asked
+  only on services nmap calls http/https.
 - Always to the scanned address. Each web service is asked once by address (the
   server's default site), then once under every name of its host (the target's own name,
   names discovery found pointing at it) as the Host header — virtual hosts: one machine
@@ -42,9 +48,76 @@ from zues_scan.profiles import BUILTIN, DEFAULT_PROFILE, ScanProfile
 from zues_scan.schema import Asset, RawOutput, ScanTarget, Service, WebPage
 from zues_scan.scope import Activity
 
-WEB_PORTS = frozenset(
-    {80, 81, 443, 591, 3000, 5000, 7001, 8000, 8008, 8080, 8081, 8088, 8443, 8888, 9000, 9090, 9443}
+# Protocols nmap names from a probe's answer that never speak HTTP on that port: not asked.
+NOT_WEB = frozenset(
+    {
+        "ssh",
+        "ftp",
+        "ftps",
+        "ftp-data",
+        "smtp",
+        "smtps",
+        "submission",
+        "telnet",
+        "domain",
+        "pop3",
+        "pop3s",
+        "imap",
+        "imaps",
+        "ldap",
+        "ldapssl",
+        "kerberos",
+        "kerberos-sec",
+        "kpasswd5",
+        "microsoft-ds",
+        "netbios-ssn",
+        "msrpc",
+        "ncacn_http",
+        "ms-wbt-server",
+        "vnc",
+        "rfb",
+        "x11",
+        "mysql",
+        "postgresql",
+        "ms-sql-s",
+        "oracle-tns",
+        "mongodb",
+        "mongod",
+        "redis",
+        "memcached",
+        "rpcbind",
+        "nfs",
+        "mountd",
+        "nlockmgr",
+        "rsync",
+        "sip",
+        "irc",
+        "xmpp-client",
+        "xmpp-server",
+        "amqp",
+        "mqtt",
+        "zookeeper",
+        "kafka",
+        "epmd",
+        "ajp13",
+        "jetdirect",
+        "ipp",
+        "printer",
+        "lpd",
+        "snmp",
+        "ntp",
+        "bgp",
+        "iscsi",
+        "svn",
+        "git",
+        "cassandra",
+        "elasticsearch-transport",
+        "nrpe",
+    }
 )
+# Raw printing ports (HP JetDirect and the like): whatever arrives is printed. nmap's own
+# version probes exclude them for that reason (`Exclude T:9100-9107`).
+PRINTER_PORTS = range(9100, 9108)
 MAX_TEXT = 200  # title, server, one technology
 MAX_VHOSTS = 200  # (name, web service) pairs asked by name in one check
 # A DNS name as it may go on an input line: no comma, space or anything httpx would read
@@ -184,12 +257,31 @@ class HttpxPlugin:
             asset = by_ip.setdefault(ip, Asset(host=ip, ip=ip))
             asset.services.append(Service(port=port, web=default, vhosts=tuple(named)))
         result.assets = list(by_ip.values())
-        by_address = sum(1 for _, _, name in pages if name is None)
-        asked = sum(1 for line in inputs if "," not in line)
-        result.notes.append(f"{by_address} of {asked} web service(s) answered")
-        if len(inputs) > asked:
-            named_count = len(pages) - by_address
-            result.notes.append(f"{named_count} of {len(inputs) - asked} site(s) by name answered")
+        # By address: services nmap calls web, and the other open ports asked.
+        asked = {
+            (str(ipaddress.ip_address(a.ip)), s.port): s
+            for a in assets
+            if a.ip
+            for s in a.services
+            if worth_asking(s)
+        }
+        answered = {(ip, port) for ip, port, name in pages if name is None}
+        web = {key for key, s in asked.items() if _is_web(s)}
+        if web:
+            result.notes.append(f"{len(answered & web)} of {len(web)} web service(s) answered")
+        others = set(asked) - web
+        if others:
+            found = sorted(answered & others)
+            note = f"{len(found)} of {len(others)} other open port(s) answered HTTP"
+            if found:
+                shown = ", ".join(f"{_input(k)} ({asked[k].name or 'no name'})" for k in found[:5])
+                more = f" and {len(found) - 5} more" if len(found) > 5 else ""
+                note += f": {shown}{more}; tested as web services from here on"
+            result.notes.append(note)
+        by_name = sum(1 for line in inputs if "," in line)
+        if by_name:
+            named_count = sum(1 for _, _, name in pages if name is not None)
+            result.notes.append(f"{named_count} of {by_name} site(s) by name answered")
         if skipped:
             result.notes.append(f"ignored {skipped} line(s) of httpx output it could not read")
         return result
@@ -206,8 +298,9 @@ def plan_inputs(assets: list[Asset]) -> tuple[list[str], int]:
         host = f"[{asset.ip}]" if ":" in asset.ip else asset.ip
         names = HttpxPlugin.names(asset)
         for service in asset.services:
-            if service.protocol == "tcp" and _is_web(service):
+            if worth_asking(service):
                 by_address[f"{host}:{service.port}"] = None
+            if service.protocol == "tcp" and _is_web(service):
                 for name in names:
                     by_name[f"{name},{host}:{service.port}"] = None
     named = list(by_name)
@@ -261,15 +354,32 @@ def _is_name(text: str) -> bool:
     return False
 
 
+def _input(key: tuple[str, int]) -> str:
+    ip, port = key
+    host = f"[{ip}]" if ":" in ip else ip
+    return f"{host}:{port}"
+
+
 def _order(key: tuple[str, int, str | None]) -> tuple[str, int, str]:
     ip, port, name = key
     return ip, port, name or ""  # by address first ("" sorts before any name)
 
 
 def _is_web(service: Service) -> bool:
-    if service.name:
-        return "http" in service.name.lower()
-    return service.port in WEB_PORTS
+    """Does nmap say it is a web service?"""
+    return "http" in (service.name or "").lower() and service.name != "ncacn_http"
+
+
+def worth_asking(service: Service) -> bool:
+    """Is this port asked over HTTP: web by nmap's name, or open TCP that nmap named as
+    nothing that never speaks HTTP (and not a printer)?"""
+    if service.protocol != "tcp" or service.state not in (None, "open"):
+        return False
+    if _is_web(service):
+        return True
+    if service.port in PRINTER_PORTS:
+        return False
+    return (service.name or "").lower() not in NOT_WEB
 
 
 def _clean(value: object) -> str | None:

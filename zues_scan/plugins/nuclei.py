@@ -125,13 +125,23 @@ def templates_version(directory: str) -> str | None:
 
 
 def web_url(ip: str, service: Service) -> str | None:
-    """The URL of an open HTTP(S) service, by address; None if it is not a web service."""
-    name = (service.name or "").lower()
-    if service.protocol != "tcp" or "http" not in name:
+    """The URL of an open HTTP(S) service, by address; None if it is not a web service.
+
+    Web by nmap's name, or because httpx got an HTTP answer there (`Service.web`) whatever
+    nmap called it: its guesses can be wrong (a Spring Boot app is "nagios-nsca" to it).
+    """
+    if service.protocol != "tcp":
         return None
-    tls = "https" in name or "ssl" in name or service.port in _TLS_PORTS
+    name = (service.name or "").lower()
     host = f"[{ip}]" if ":" in ip else ip
-    return f"{'https' if tls else 'http'}://{host}:{service.port}"
+    if "http" in name and name != "ncacn_http":
+        tls = "https" in name or "ssl" in name or service.port in _TLS_PORTS
+        return f"{'https' if tls else 'http'}://{host}:{service.port}"
+    if service.web is not None:
+        scheme = urlsplit(service.web.url).scheme.lower()
+        if scheme in ("http", "https"):
+            return f"{scheme}://{host}:{service.port}"
+    return None
 
 
 def network_target(ip: str, service: Service) -> str | None:
