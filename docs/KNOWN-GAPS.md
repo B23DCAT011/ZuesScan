@@ -548,7 +548,8 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
         Host header bằng wordlist — mức `active`, dễ bị coi là tấn công) hay đọc tên từ chứng
         chỉ TLS (SAN).
       - Nhiều tên × nhiều cổng có thể nhiều request: giới hạn 200 cặp mỗi lần, theo `check_rate`.
-      - nuclei vẫn chỉ quét theo địa chỉ.
+      - Cách của nuclei (một lần chạy mỗi tên, có `-sni`) gửi đúng SNI nhưng chậm hơn; httpx giữ
+        một lần chạy cho cả target.
     - Chỉ trang gốc `/`, không theo redirect: ứng dụng ở `/app/` hay sau một redirect sang HTTPS
       có thể không được nhận diện đầy đủ.
     - `TECH_NAMES` là danh sách tay (~20 tên); công nghệ khác hiện ra nhưng không đối chiếu CVE.
