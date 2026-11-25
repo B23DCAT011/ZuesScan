@@ -1660,11 +1660,49 @@ class Storage:
     def scope_history(self, name: str, limit: int = 200) -> list[tuple[int, AuditEvent]]:
         """What happened to the dashboard scope `name`, newest first: (event id, event) of
         its config audit events (saved, deleted, proposed, approved, rejected, ...)."""
+        return self.config_history(f"scope:{name}", limit)
+
+    def config_history(self, subject: str, limit: int = 200) -> list[tuple[int, AuditEvent]]:
+        """The config audit events about one dashboard entry ("scope:x", "target:x",
+        "token:x"), newest first, with their ids."""
         rows = self._conn.execute(
             "SELECT * FROM audit_event WHERE kind = ? AND target = ? ORDER BY id DESC LIMIT ?",
-            (str(AuditKind.CONFIG), f"scope:{name}", limit),
+            (str(AuditKind.CONFIG), subject, limit),
         ).fetchall()
         return [(row["id"], _event(row)) for row in rows]
+
+    def deleted_scopes(self) -> list[dict[str, Any]]:
+        """Dashboard scopes whose last change was their deletion, newest first: name, when,
+        by whom, and the SHA-256 of the last version saved (None if none was kept)."""
+        rows = self._conn.execute(
+            "SELECT * FROM audit_event WHERE kind = ? AND target LIKE 'scope:%' ORDER BY id DESC",
+            (str(AuditKind.CONFIG),),
+        ).fetchall()
+        last: dict[str, AuditEvent] = {}  # the latest change that applied, per scope
+        saved: dict[str, str] = {}  # the latest version saved, per scope
+        for row in rows:
+            event = _event(row)
+            name = event.target.removeprefix("scope:")
+            action = event.detail.get("action")
+            if action in ("scope saved", "scope deleted") and name not in last:
+                last[name] = event
+            if action == "scope saved" and event.scope_sha256 and name not in saved:
+                saved[name] = event.scope_sha256
+        found = []
+        for name, event in last.items():
+            if event.detail.get("action") != "scope deleted":
+                continue
+            sha = saved.get(name)
+            kept = sha is not None and self.scope_version(name, sha) is not None
+            found.append(
+                {
+                    "name": name,
+                    "deleted_at": event.at,
+                    "deleted_by": event.operator,
+                    "last_sha256": sha if kept else None,
+                }
+            )
+        return found
 
     def scope_version(self, name: str, sha256: str) -> str | None:
         """The text of a version the scope `name` had (saved under that exact SHA-256);

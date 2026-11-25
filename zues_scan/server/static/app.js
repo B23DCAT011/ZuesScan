@@ -688,6 +688,7 @@
     return api("GET", "/admin/config").then(function (cfg) {
       clear(view);
       if (parts[0] === "scope") return scopeEditor(view, cfg, decodeURIComponent(parts[1] || ""));
+      if (parts[0] === "restore") return restoreScope(view, cfg, decodeURIComponent(parts[1] || ""));
       if (parts[0] === "target") return targetEditor(view, cfg, decodeURIComponent(parts[1] || ""));
       view.appendChild(el("h1", null, "Settings"));
       view.appendChild(el("p", { class: "muted" },
@@ -829,9 +830,32 @@
         own ? el("a", { href: "#/settings/scope/" + encodeURIComponent(s.name) }, "Edit") : "",
       ];
     });
+    var deleted = cfg.deleted_scopes.map(function (d) {
+      return [
+        el("strong", null, d.name),
+        when(d.deleted_at),
+        d.deleted_by,
+        d.last_sha256 ? el("span", { class: "mono small" }, d.last_sha256.slice(0, 12)) : el("span", { class: "muted" }, "not kept"),
+        el("a", { href: "#/settings/restore/" + encodeURIComponent(d.name) }, d.last_sha256 ? "History / restore" : "History"),
+      ];
+    });
     return el("section", null,
       el("div", { class: "toolbar" }, el("h2", null, "Scopes (authorisations)"), add),
-      table(["Name", "Allows", "@activity", "Expires", "Used by", "Source", ""], rows.map(row), "No scope yet."));
+      table(["Name", "Allows", "@activity", "Expires", "Used by", "Source", ""], rows.map(row), "No scope yet."),
+      deleted.length ? el("details", { id: "deleted-scopes" },
+        el("summary", null, "Deleted scopes (" + deleted.length + ")"),
+        table(["Name", "Deleted (UTC)", "By", "Last version", ""], deleted.map(row), ""),
+        el("p", { class: "muted small" },
+          "From the audit trail. Restoring makes the scope again from its last version: checked, " +
+          "recorded and, with two-person approval on, proposed like any new scope.")) : null);
+  }
+
+  // A deleted scope: its history, and its last version in the editor of a new scope of
+  // the same name. Nothing comes back until it is saved (or proposed) like any new scope.
+  function restoreScope(view, cfg, name) {
+    var gone = cfg.deleted_scopes.filter(function (d) { return d.name === name; })[0];
+    if (!gone) throw new Error("no deleted dashboard scope named " + name);
+    scopeEditor(view, cfg, "new", gone);
   }
 
   var VALIDITY = [["90", "90 days"], ["30", "30 days"], ["365", "1 year"], ["", "no end (revoke by hand)"]];
@@ -1106,7 +1130,7 @@
     }, "Delete");
   }
 
-  function scopeEditor(view, cfg, name) {
+  function scopeEditor(view, cfg, name, restoring) {
     var isNew = name === "new";
     var existing = cfg.scopes.filter(function (s) { return s.source === "dashboard" && s.name === name; })[0];
     if (!isNew && !existing) throw new Error("no dashboard scope named " + name);
@@ -1145,9 +1169,23 @@
         .catch(function (err) { flash(err.message, true); button.disabled = false; });
     });
     view.appendChild(el("p", null, el("a", { href: "#/settings" }, "← Settings")));
-    view.appendChild(el("h1", null, isNew ? "New scope" : "Scope " + name));
+    view.appendChild(el("h1", null, restoring ? "Restore scope " + restoring.name : isNew ? "New scope" : "Scope " + name));
     view.appendChild(form);
-    if (!isNew) view.appendChild(scopeHistory(name, existing.text, text, button));
+    if (restoring) {
+      nameInput.value = restoring.name;
+      text.value = "";
+      if (restoring.last_sha256) {
+        api("GET", "/admin/scopes/" + encodeURIComponent(restoring.name) + "/versions/" + restoring.last_sha256)
+          .then(function (v) { text.value = v.text; })
+          .catch(function (err) { flash(err.message, true); });
+      }
+      form.insertBefore(el("p", { class: "small" }, "Deleted on " + when(restoring.deleted_at) + " by " +
+        restoring.deleted_by + ". Its last version is below: review it, then " +
+        button.textContent.toLowerCase() + " to make the scope again."), form.firstChild);
+      view.appendChild(scopeHistory(restoring.name, "", text, button));
+    } else if (!isNew) {
+      view.appendChild(scopeHistory(name, existing.text, text, button));
+    }
   }
 
   // A scope's versions and the decisions about them, from the audit trail. A version can be
@@ -1203,6 +1241,29 @@
       ]);
     }).catch(function (err) { clear(body); body.appendChild(el("p", { class: "error" }, err.message)); });
     return section;
+  }
+
+  // What changed in a dashboard target, from the audit trail: each change with the settings
+  // that differ from the version before it.
+  function targetHistory(name) {
+    var body = el("div", null, el("p", { class: "muted small" }, "Loading…"));
+    api("GET", "/admin/targets/" + encodeURIComponent(name) + "/history").then(function (h) {
+      clear(body);
+      var rows = h.events.map(function (e, i) {
+        var before = h.events[i + 1];
+        var changes = Object.keys(e.settings).sort().filter(function (k) {
+          return !before || JSON.stringify(before.settings[k]) !== JSON.stringify(e.settings[k]);
+        }).map(function (k) {
+          var now = JSON.stringify(e.settings[k]);
+          return before && k in before.settings ? k + ": " + JSON.stringify(before.settings[k]) + " → " + now : k + ": " + now;
+        });
+        return [when(e.at), e.by, e.action || "-",
+          changes.length ? el("span", { class: "mono small wrap" }, changes.join("; ")) : el("span", { class: "muted" }, "-")];
+      });
+      append(body, [table(["When (UTC)", "Who", "What", "Settings (changed)"], rows.map(row), "No change recorded."),
+        el("p", { class: "muted small" }, "From the audit trail.")]);
+    }).catch(function (err) { clear(body); body.appendChild(el("p", { class: "error" }, err.message)); });
+    return el("section", null, el("h2", null, "History"), body);
   }
 
   function targetEditor(view, cfg, name) {
@@ -1287,6 +1348,7 @@
     view.appendChild(el("p", null, el("a", { href: "#/settings" }, "← Settings")));
     view.appendChild(el("h1", null, isNew ? "New target" : "Target " + name));
     view.appendChild(form);
+    if (!isNew) view.appendChild(targetHistory(name));
   }
 
   /* --- audit -------------------------------------------------------------------- */
