@@ -283,4 +283,7 @@ rồi độ tin cậy, rồi tiện dụng.
       worker: job RQ là JSON, worker chỉ chạy job quét của ZuesScan; Redis có mật khẩu (compose
       tự sinh, file trong volume `secrets`). Thử thật: trước — job của "plugin" chạy ngoài
       sandbox; sau — `NOAUTH`, job lạ (pickle / JSON) bị từ chối không chạy; lab quét đủ.
+- [x] `feat/scanner-role` (G26) — vai trò `scanner` (viewer < scanner < operator < admin): đọc +
+      xin quét, không quyết định, không cài đặt — cho token của AI agent / script. API, CLI,
+      service.toml, Settings; dashboard kiểm bằng Chrome.
 

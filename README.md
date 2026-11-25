@@ -586,7 +586,7 @@ queue = "zues"
 [[tokens]]                              # ai được dùng API (web, bước sau)
 name = "alice"
 sha256 = "…"                            # mã băm của token, KHÔNG BAO GIỜ lưu token
-role = "operator"                       # viewer: chỉ xem; operator: quét, ra quyết định
+role = "operator"                       # viewer: xem; scanner: + xin quét; operator: + quyết định
 
 [[targets]]
 name = "office-lan"
@@ -718,8 +718,10 @@ không thư viện ngoài, không bước build) có:
 
 ### Cấu hình ngay trên dashboard (vai trò `admin`)
 
-Ba vai trò, mỗi vai trò làm được mọi việc của vai trò trước: `viewer` (xem), `operator` (quét,
-ra quyết định), `admin` (thêm vai trò thứ ba: **sửa scope, target, tool và token**). Admin đầu
+Bốn vai trò, mỗi vai trò làm được mọi việc của vai trò trước: `viewer` (xem), `scanner` (thêm:
+**xin quét** target của nó — vai trò cho AI agent hay script: không quyết định gì về finding, không
+sửa cài đặt), `operator` (thêm: ra quyết định — đã sửa, chấp nhận rủi ro, mở lại), `admin` (thêm:
+**sửa scope, target, tool và token**). Admin đầu
 tiên tạo bằng dòng lệnh trên máy chủ — cũng là cách lấy lại quyền nếu mất hết token admin:
 
 ```bash
@@ -821,7 +823,7 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/v1/runs/3/sarif
 | `GET /api/v1/runs/{id}/report.html`, `/sarif` | viewer | báo cáo HTML (bản đồ) / SARIF 2.1.0 |
 | `GET /api/v1/runs/{id}/diff[?against=<id>]` | viewer | khác gì so với run trước đó của cùng target (hoặc run `against`) |
 | `GET /api/v1/runs?limit=&before=<id>`, `GET /api/v1/findings?limit=&offset=` | viewer | từng trang (findings có `X-Total-Count`) |
-| `POST /api/v1/scans` `{"target": "<tên>"}` | operator | xếp hàng quét một target **đã khai** |
+| `POST /api/v1/scans` `{"target": "<tên>"}` | scanner | xếp hàng quét một target **đã khai** |
 | `POST /api/v1/findings/{id}/decision` `{"action": "claim_fixed" \| "accept" \| "reopen", "note", "until"}` | operator | quyết định |
 | `GET /api/v1/admin/config` | admin | scope, target, token, plugin, profile — mọi thứ trang Settings cần |
 | `PUT` / `DELETE /api/v1/admin/scopes/{tên}` `{"text": "<nội dung file scope>"}` | admin | sửa / xoá scope |
@@ -1062,7 +1064,7 @@ Claude Desktop (`claude_desktop_config.json`):
 | Tool | Làm gì | Cần |
 |---|---|---|
 | `whoami`, `list_targets`, `list_jobs`, `get_job`, `list_runs`, `get_run`, `list_findings`, `get_finding`, `audit_status` | đọc | token viewer |
-| `request_scan` | xếp hàng quét một target **đã khai báo**, theo tên | token operator + **người dùng xác nhận** |
+| `request_scan` | xếp hàng quét một target **đã khai báo**, theo tên | token scanner (hay operator) + **người dùng xác nhận** |
 | `claim_fixed`, `reopen_finding` | ghi quyết định về một finding | token operator + **người dùng xác nhận** |
 
 Quy tắc an toàn (đã kiểm bằng test và bằng một client MCP thật chạy `zues mcp` qua stdio

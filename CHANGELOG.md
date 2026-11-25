@@ -7,6 +7,12 @@ section of a version as its release notes, so every tag needs one.
 ## [Unreleased]
 
 ### Added
+- A `scanner` role, between viewer and operator (G26): it reads and requests scans of its
+  targets - what an AI agent or a script needs - but records no decision about a finding
+  and changes no setting. `targets` and `scans_per_hour` apply to it as to an operator.
+  In service.toml, `zues token` / `zues user add --role scanner`, and Settings -> Tokens;
+  the dashboard shows it Scan now and no decision form. `POST /api/v1/scans` now needs
+  scanner (operators and admins still can).
 - Out-of-band templates with your own interactsh server (G24): `ZUES_INTERACTSH_SERVER`
   (the server's URL, by its domain) and `ZUES_INTERACTSH_TOKEN`. nuclei then runs without
   `-ni`, Log4Shell, blind SSRF and the like included, in the main pass and when trying
