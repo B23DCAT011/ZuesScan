@@ -197,6 +197,11 @@ class Finding:
     cwe: tuple[str, ...] = ()  # weakness types, e.g. ("CWE-22",)
     kev_added: str | None = None  # date CISA listed it as exploited in the wild (KEV)
     epss: float | None = None  # FIRST EPSS: probability of exploitation within 30 days
+    # A test made for this very issue that ran against the service and did NOT match, in
+    # words (e.g. nuclei's template for the CVE), for a finding inferred from a version.
+    # Not proof of absence (a backported fix, a configuration, a path the test does not
+    # know), but a fact to triage with. NOT part of the fingerprint.
+    tried: str | None = None
 
     def identity(self) -> dict[str, str | int | None]:
         """What makes this finding *this* finding, from one scan to the next.

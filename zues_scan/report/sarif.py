@@ -126,6 +126,7 @@ def _result(
             "confidence": f.get("confidence"),
             "epss": f.get("epss"),
             "kevAdded": f.get("kev_added"),
+            "triedNotMatched": f.get("tried"),
             "status": f.get("status"),
             "host": host["host"],
         },

@@ -114,6 +114,8 @@ def _print_summary(run: ScanRun, run_id: int, db_path: str) -> None:
             print(f"        priority: {_risk_line(f)}")
             if f.evidence:
                 print(f"        evidence: {f.evidence}")
+            if f.tried:
+                print(f"        tried, not matched: {f.tried}")
         if len(ranked) > MAX_FINDINGS_SHOWN:
             print(
                 f"    ... and {len(ranked) - MAX_FINDINGS_SHOWN} less urgent finding(s): "

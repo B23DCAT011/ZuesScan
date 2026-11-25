@@ -577,6 +577,8 @@
         ["CVSS", f.cvss_score === null ? "-" : String(f.cvss_score)],
         ["EPSS", f.epss === null ? "-" : (f.epss * 100).toFixed(1) + "%"],
         ["Known exploited", f.kev_added ? "CISA KEV since " + f.kev_added : "no"],
+        // A test for this very CVE ran and did not match: worth a look, not proof.
+        ["Tried", f.tried ? "not matched — " + f.tried : "-"],
         ["Host", f.host + (f.ip && f.ip !== f.host ? " (" + f.ip + ")" : "")],
         ["Port", f.port ? f.port + "/" + (f.protocol || "tcp") : "-"],
         ["First seen", when(f.first_seen) + " UTC"],

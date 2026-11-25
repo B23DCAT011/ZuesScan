@@ -375,6 +375,8 @@
         ["EPSS", f.epss !== null && f.epss !== undefined ? (f.epss * 100).toFixed(2) + "% in 30 days" : null],
         ["CWE", (f.cwe || []).join(", ")],
         ["rule", f.rule_id],
+        // A test for this CVE that ran and did not match: not proof, a fact to triage with.
+        ["tried", f.tried ? "not matched — " + f.tried : null],
         ["host", host.host + (host.ip && host.ip !== host.host ? " (" + host.ip + ")" : "")],
         ["port", f.port !== null ? f.port + "/" + f.protocol : null],
         ["fingerprint", f.fingerprint, "mono"]

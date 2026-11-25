@@ -254,6 +254,7 @@ def build(api: Api) -> MCPServer:
                         "kev_added",
                         "epss",
                         "cvss_score",
+                        "tried",
                     )
                     for f in h["findings"]
                 ],

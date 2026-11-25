@@ -48,6 +48,16 @@ class ScanError(Exception):
         self.no_response = no_response
 
 
+@dataclass(frozen=True, slots=True)
+class Attempt:
+    """A test for one CVE that ran against one service and did not match."""
+
+    ip: str
+    port: int
+    cve: str
+    what: str  # in words: which test, where, e.g. "nuclei 3.11.1: template CVE-... ran at ..."
+
+
 @dataclass
 class ScanResult:
     """What one plugin learnt from one scan."""
@@ -61,6 +71,9 @@ class ScanResult:
     # CVEs shown NOT to affect a host (address -> CVE ids), e.g. because an installed
     # package carries the fix: version-based guesses for them are withdrawn.
     cleared: dict[str, set[str]] = field(default_factory=dict)
+    # Tests that ran against a service for a CVE and did not match. Set by a check's
+    # `verify` (nuclei), see Finding.tried.
+    tried: list[Attempt] = field(default_factory=list)
     # The tool stopped before it finished (its time limit): what it found so far is
     # kept, and the run is marked partial - absence of a finding proves nothing.
     incomplete: bool = False
