@@ -19,8 +19,11 @@ with Wappalyzer's fingerprints, versions included where the answer gives them aw
   often serves other sites by name. The line `name,ip:port` makes httpx connect to that
   address and send `Host: name`; a name is never resolved again, so it cannot lead to an
   address the scope guard did not approve. At most `MAX_VHOSTS` such lines per check.
-  The TLS SNI stays the address (httpx's `-sni` is one name for the whole run): a server
-  that picks the site by SNI alone shows its default one.
+  On a service that looks like TLS (https/ssl in nmap's name, or 443, 8443, 9443, 4443),
+  each name gets an httpx run of its own with `-sni <name>`, so that a server that picks
+  the site by SNI alone (HAProxy, Traefik, a CDN) shows that site: httpx sends no SNI for
+  an address, and `-sni` is one name per run (measured with httpx 1.12.0). At most
+  `MAX_SNI_RUNS` names; the others are asked in the shared run, without their SNI.
 - Plain GET of `/`, redirects not followed: activity `scan`, like nmap's own probes;
   rate capped by the profile's `check_rate` (default 50 requests/s).
 - What it saw is attached to the service (`Service.web`); technologies with a version
@@ -39,6 +42,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -124,6 +128,8 @@ MAX_VHOSTS = 200  # (name, web service) pairs asked by name in one check
 # as a URL, a port or another input. Lower case (as `names()` makes it).
 _NAME = re.compile(r"[a-z0-9_](?:[a-z0-9_-]{0,62})(?:\.[a-z0-9_](?:[a-z0-9_-]{0,62}))*")
 MAX_TECHNOLOGIES = 30
+MAX_SNI_RUNS = 50  # names asked over TLS with their own SNI (one httpx run each)
+_TLS_PORTS = frozenset({443, 8443, 9443, 4443})
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f​-‏‪-‮⁦-⁩]")
 
 
@@ -147,6 +153,7 @@ class HttpxPlugin:
                 proc = subprocess.run(
                     [tools.resolve("httpx"), "-version", "-duc"],
                     capture_output=True,
+                    stdin=subprocess.DEVNULL,
                     encoding="utf-8",
                     errors="replace",
                     timeout=15,
@@ -208,43 +215,39 @@ class HttpxPlugin:
             result.notes.append(
                 f"asked {MAX_VHOSTS} site(s) by name; {left_out} more name(s) left out"
             )
-        with tempfile.TemporaryDirectory(prefix="zues-httpx-") as home:
-            inputs_file = os.path.join(home, "inputs.txt")
-            Path(inputs_file).write_text("\n".join(inputs) + "\n", encoding="utf-8")
-            command = self.command(inputs_file)
-            try:
-                proc = subprocess.run(
-                    command,
-                    capture_output=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=self.timeout,
-                    check=True,
-                    env=_env(home),
-                )
-                stdout, stderr = proc.stdout, proc.stderr
-            except subprocess.TimeoutExpired as exc:
-                stdout, stderr = _text(exc.stdout), _text(exc.stderr)
-                result.incomplete = True
-                result.notes.append(f"stopped after {self.timeout}s: some services not looked at")
-            except subprocess.CalledProcessError as exc:
-                raise ScanError(
-                    f"httpx exited with code {exc.returncode}",
-                    plugin=self.name,
-                    stderr=(exc.stderr or "").strip() or None,
-                ) from exc
-            except OSError as exc:
-                raise ScanError(f"could not start httpx: {exc}", plugin=self.name) from exc
-        result.raw.append(
-            RawOutput(
-                plugin=self.name,
-                format="httpx-jsonl",
-                command=tuple(command),
-                content=stdout,
-                stderr=stderr.strip(),
+        runs, without_sni = sni_runs(inputs, assets)
+        if without_sni:
+            result.notes.append(
+                f"{without_sni} name(s) on TLS services asked without their SNI "
+                f"(over {MAX_SNI_RUNS}): a site chosen by SNI alone shows the default one"
             )
-        )
-        pages, skipped = parse_jsonl(stdout)
+        deadline = time.monotonic() + self.timeout
+        outputs: list[str] = []
+        with tempfile.TemporaryDirectory(prefix="zues-httpx-") as home:
+            for i, (sni, lines) in enumerate(runs):
+                left = int(deadline - time.monotonic())
+                if left < 1:
+                    result.incomplete = True
+                    break
+                inputs_file = os.path.join(home, f"inputs-{i}.txt")
+                Path(inputs_file).write_text("\n".join(lines) + "\n", encoding="utf-8")
+                command = self.command(inputs_file) + (["-sni", sni] if sni else [])
+                stdout, stderr, finished = self._run(command, home, left)
+                if not finished:
+                    result.incomplete = True
+                result.raw.append(
+                    RawOutput(
+                        plugin=self.name,
+                        format="httpx-jsonl",
+                        command=tuple(command),
+                        content=stdout,
+                        stderr=stderr.strip(),
+                    )
+                )
+                outputs.append(stdout)
+        if result.incomplete:
+            result.notes.append(f"stopped after {self.timeout}s: some services not looked at")
+        pages, skipped = parse_jsonl("".join(o if o.endswith("\n") else o + "\n" for o in outputs))
         by_service: dict[tuple[str, int], tuple[WebPage | None, list[WebPage]]] = {}
         for (ip, port, name), page in sorted(pages.items(), key=lambda kv: _order(kv[0])):
             default, named = by_service.setdefault((ip, port), (None, []))
@@ -285,6 +288,66 @@ class HttpxPlugin:
         if skipped:
             result.notes.append(f"ignored {skipped} line(s) of httpx output it could not read")
         return result
+
+    def _run(self, command: list[str], home: str, timeout: int) -> tuple[str, str, bool]:
+        """One httpx run: stdout, stderr, whether it finished in time."""
+        try:
+            proc = subprocess.run(
+                command,
+                capture_output=True,
+                stdin=subprocess.DEVNULL,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+                check=True,
+                env=_env(home),
+            )
+        except subprocess.TimeoutExpired as exc:
+            return _text(exc.stdout), _text(exc.stderr), False
+        except subprocess.CalledProcessError as exc:
+            raise ScanError(
+                f"httpx exited with code {exc.returncode}",
+                plugin=self.name,
+                stderr=(exc.stderr or "").strip() or None,
+            ) from exc
+        except OSError as exc:
+            raise ScanError(f"could not start httpx: {exc}", plugin=self.name) from exc
+        return proc.stdout, proc.stderr, True
+
+
+def sni_runs(
+    inputs: list[str], assets: list[Asset]
+) -> tuple[list[tuple[str | None, list[str]]], int]:
+    """httpx's runs: (SNI name or None, input lines), and how many names on TLS services
+    were left in the shared run over `MAX_SNI_RUNS`. Lines by name on a service that looks
+    like TLS go to a run of their own per name (`-sni name`); the rest share one run."""
+    tls = {
+        (str(ipaddress.ip_address(a.ip)), s.port)
+        for a in assets
+        if a.ip
+        for s in a.services
+        if _looks_tls(s)
+    }
+    shared: list[str] = []
+    per_name: dict[str, list[str]] = {}
+    over: set[str] = set()
+    for line in inputs:
+        name, comma, address = line.rpartition(",")
+        if comma:
+            host, _, port = address.rpartition(":")
+            if (str(ipaddress.ip_address(host.strip("[]"))), int(port)) in tls:
+                if name in per_name or len(per_name) < MAX_SNI_RUNS:
+                    per_name.setdefault(name, []).append(line)
+                    continue
+                over.add(name)
+        shared.append(line)
+    runs: list[tuple[str | None, list[str]]] = [(None, shared)] if shared else []
+    return runs + list(per_name.items()), len(over)
+
+
+def _looks_tls(service: Service) -> bool:
+    name = (service.name or "").lower()
+    return "https" in name or "ssl" in name or service.port in _TLS_PORTS
 
 
 def plan_inputs(assets: list[Asset]) -> tuple[list[str], int]:
