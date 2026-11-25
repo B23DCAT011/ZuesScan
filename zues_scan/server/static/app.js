@@ -112,8 +112,15 @@
     }, bad ? 9000 : 5000);
   }
 
+  // viewer < scanner < operator < admin: each may do what the roles before it may.
+  var RANK = { viewer: 0, scanner: 1, operator: 2, admin: 3 };
+
+  function canScan() {
+    return me && RANK[me.role] >= RANK.scanner;
+  }
+
   function isOperator() {
-    return me && (me.role === "operator" || me.role === "admin"); // an admin is an operator too
+    return me && RANK[me.role] >= RANK.operator; // decisions about findings
   }
 
   function isAdmin() {
@@ -300,9 +307,9 @@
       var flags = [t.nuclei ? "nuclei" : null, t.discover ? "subdomains" : null, t.authenticated ? "authenticated" : null]
         .filter(Boolean)
         .join(", ");
-      var action = isOperator()
+      var action = canScan()
         ? el("button", { type: "button", class: "primary", on: { click: function (e) { scan(t.name, e.target); } } }, "Scan now")
-        : el("span", { class: "muted small" }, "operator only");
+        : el("span", { class: "muted small" }, "scanner or operator only");
       return el(
         "tr",
         null,
@@ -917,7 +924,7 @@
         quotaCell(t), t.you ? "you" : "", [rotate, " ", remove]];
     });
     var name = el("input", { id: "token-name", maxlength: "64", required: true, placeholder: "who it is for" });
-    var role = el("select", { id: "token-role" }, ["viewer", "operator", "admin"].map(function (r) {
+    var role = el("select", { id: "token-role" }, ["viewer", "scanner", "operator", "admin"].map(function (r) {
       return el("option", { value: r }, r);
     }));
     var validity = validitySelect("token-validity");

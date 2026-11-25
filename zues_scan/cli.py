@@ -1532,7 +1532,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     token = sub.add_parser("token", help="make an API token for the service (service.toml)")
     token.add_argument("--name", required=True, help="who it is for (recorded as operator)")
-    token.add_argument("--role", choices=["viewer", "operator", "admin"], default="viewer")
+    token.add_argument(
+        "--role", choices=["viewer", "scanner", "operator", "admin"], default="viewer"
+    )
     token.set_defaults(func=_cmd_token)
 
     user = sub.add_parser(
@@ -1545,7 +1547,7 @@ def build_parser() -> argparse.ArgumentParser:
     users = user.add_subparsers(dest="user_command", required=True)
     add = users.add_parser("add", help="create a token; it is printed once")
     add.add_argument("name", help="who it is for (recorded as operator)")
-    add.add_argument("--role", choices=["viewer", "operator", "admin"], default="viewer")
+    add.add_argument("--role", choices=["viewer", "scanner", "operator", "admin"], default="viewer")
     expires_help = "how long it is accepted: 30d, 90d (default), 1y, ... or never"
     add.add_argument("--expires", default="90d", help=expires_help)
     add.add_argument(
