@@ -31,6 +31,7 @@ x-zues: &zues
     ZUES_WEBHOOK_SECRET: ${ZUES_WEBHOOK_SECRET:-}
     ZUES_NOTIFY_MIN_PRIORITY: ${ZUES_NOTIFY_MIN_PRIORITY:-P2}
     ZUES_NOTIFY_FAILED_SCANS: ${ZUES_NOTIFY_FAILED_SCANS:-3}
+    ZUES_NOTIFY_KEEP_DAYS: ${ZUES_NOTIFY_KEEP_DAYS:-90}
     # on: a scope change in the dashboard needs a second admin's approval (D12).
     ZUES_SCOPE_APPROVAL: ${ZUES_SCOPE_APPROVAL:-off}
     # Third-party plugins the service may load (D14), as `zues plugins --pin NAME` prints

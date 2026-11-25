@@ -1032,7 +1032,8 @@
         "(at most an hour apart), given up after 24 hours. New findings from " + alerts.min_priority +
         ", fake fixes, reappeared findings, scans failing " + alerts.failed_scans + " times in a row, " +
         "scans not started, failed jobs, sign-in lock-outs, tokens about to expire and every change " +
-        "made on this page raise one."));
+        "made on this page raise one. They are deleted " + alerts.keep_days + " days after delivery " +
+        "(or after being raised, if never delivered)."));
   }
 
   function sendTest(button) {

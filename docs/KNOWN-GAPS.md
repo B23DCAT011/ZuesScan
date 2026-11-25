@@ -330,7 +330,10 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       trực, P3 tới kênh thường) hay theo target.
     - Đổi `secret` là đổi ngay: cảnh báo đang chờ được ký bằng khoá mới; chưa có giai đoạn chuyển
       tiếp hai khoá cùng hợp lệ.
-    - Bảng outbox chưa tự dọn (giữ mọi cảnh báo đã gửi); nhỏ, nhưng nên có hạn giữ.
+    - ✅ Outbox tự dọn (`feat/outbox-retention`): `keep_days` (mặc định 90, tối thiểu 7 — dài
+      hơn cửa sổ chống lặp), scheduler xoá mỗi giờ. Còn lại: các bảng khác giữ mãi (run, output
+      gốc, audit) — đó là dữ liệu của đợt kiểm thử, xoá bằng `zues delete`; chưa có hạn giữ
+      tự động theo engagement.
   - **Worker trên Windows chạy job trong chính tiến trình của nó** (không có `fork()`): một job
     làm sập tiến trình thì sập cả worker; giới hạn thời gian bằng luồng hẹn giờ không ngắt được
     một lời gọi C đang chặn. Đỡ được phần lớn vì plugin tự đặt timeout cho nmap/nuclei (tiến trình

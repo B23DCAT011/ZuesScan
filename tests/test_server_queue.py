@@ -451,3 +451,40 @@ def test_cron_and_every_are_checked(tmp_path: Path) -> None:
         )
         with pytest.raises(ConfigError, match=message):
             load_config(tmp_path / "service.toml")
+
+
+def test_old_alerts_are_pruned_on_the_first_round_then_hourly(
+    q: Queue, service: ServiceConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from zues_scan.server import notify
+
+    pruned: list[ServiceConfig] = []
+
+    def prune(config: ServiceConfig) -> int:
+        pruned.append(config)
+        return 0
+
+    monkeypatch.setattr(notify, "prune", prune)
+    scheduler.run_forever(
+        service, q, interval=timedelta(minutes=20), sleep=lambda _: None, rounds=7
+    )
+    assert len(pruned) == 3  # rounds 0, 3 and 6: once an hour
+
+
+def test_a_single_scheduler_round_prunes_old_alerts_too(
+    service: ServiceConfig,
+    tmp_path: Path,
+    redis: object,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from zues_scan import cli
+    from zues_scan.server import notify
+
+    with Storage(tmp_path / "zues.db") as store:
+        store.queue_alert(notify.delivery_test("old"), "2020-01-01T00:00:00+00:00")
+        store.queue_alert(notify.delivery_test("new"), datetime.now(UTC).isoformat())
+
+    assert cli.main(["scheduler", "--config", service.path, "--once"]) == 0
+    assert "alerts: 1 older than 90 days deleted" in capsys.readouterr().out
+    with Storage(tmp_path / "zues.db") as store:
+        assert len(store.alert_rows()) == 1

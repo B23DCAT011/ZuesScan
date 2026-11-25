@@ -258,4 +258,6 @@ rồi độ tin cậy, rồi tiện dụng.
 - [x] `feat/scan-limits` (G26, D17) — một target không bị quét chồng (409; scheduler bỏ lượt;
       khoá ngắn trên Redis cho yêu cầu cùng lúc) và `scans_per_hour` theo token (schema 20, cửa sổ
       trượt trong Redis, 429 + `Retry-After`; Settings, `zues user quota`, `service.toml`, MCP).
+- [x] `feat/outbox-retention` (G23) — cảnh báo cũ được xoá: `[notify] keep_days` (mặc định 90,
+      tối thiểu 7 > cửa sổ chống lặp) / `ZUES_NOTIFY_KEEP_DAYS`; scheduler dọn vòng đầu rồi mỗi giờ.
 

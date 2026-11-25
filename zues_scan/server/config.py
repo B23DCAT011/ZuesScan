@@ -38,6 +38,7 @@ target by its `name`; it never brings its own address, scope file or options.
     min_priority = "P2"                          # new findings at least this urgent
     secret = "..."             # optional: sign each alert (HMAC-SHA256), at least 16 chars
     failed_scans = 3           # alert when a target's scans fail this many times in a row
+    keep_days = 90             # alerts are deleted this long after delivery (7-3650)
 
     [[plugins]]                # a third-party plugin the service may load (G25); without
     name = "exposed-git"       # one, only the built-in plugins load. All five come from
@@ -174,6 +175,9 @@ class Notify:
     min_priority: str = "P2"
     secret: str | None = None  # signs every alert (X-ZuesScan-Signature), when set
     failed_scans: int = 3  # failed runs in a row that raise an alert
+    # Days an alert is kept once it is over (sent, given up) or, never delivered, since
+    # it was raised; then the scheduler deletes it.
+    keep_days: int = 90
 
 
 @dataclass(frozen=True)
@@ -242,6 +246,7 @@ def from_environment() -> ServiceConfig:
             "min_priority": env.get("ZUES_NOTIFY_MIN_PRIORITY") or "P2",
             "secret": env.get("ZUES_WEBHOOK_SECRET") or None,
             "failed_scans": env.get("ZUES_NOTIFY_FAILED_SCANS") or "3",
+            "keep_days": env.get("ZUES_NOTIFY_KEEP_DAYS") or "90",
         },
         "environment: ZUES_",
     )
@@ -309,7 +314,11 @@ def load_config(path: str | Path | None = None) -> ServiceConfig:
             raise ConfigError(f"{path}: two targets are named {target.name!r}")
         targets[target.name] = target
     notify_table = data.get("notify") or {}
-    _only(notify_table, {"webhook", "min_priority", "secret", "failed_scans"}, "[notify]")
+    _only(
+        notify_table,
+        {"webhook", "min_priority", "secret", "failed_scans", "keep_days"},
+        "[notify]",
+    )
     notify = _notify(notify_table, "[notify] ")
     tables = data.get("plugins", [])
     if not isinstance(tables, list):
@@ -356,6 +365,7 @@ def _notify(raw: dict[str, Any], where: str) -> Notify:
         "min_priority": "min_priority",
         "secret": "secret",
         "failed_scans": "failed_scans",
+        "keep_days": "keep_days",
     }
     if where.startswith("environment"):
         names = {
@@ -363,6 +373,7 @@ def _notify(raw: dict[str, Any], where: str) -> Notify:
             "min_priority": "NOTIFY_MIN_PRIORITY",
             "secret": "WEBHOOK_SECRET",
             "failed_scans": "NOTIFY_FAILED_SCANS",
+            "keep_days": "NOTIFY_KEEP_DAYS",
         }
         where = "ZUES_"
     min_priority = str(raw.get("min_priority") or "P2")
@@ -381,12 +392,30 @@ def _notify(raw: dict[str, Any], where: str) -> Notify:
         failed_scans = 0
     if isinstance(failed, bool) or failed_scans < 1:
         raise ConfigError(f"{where}{names['failed_scans']} must be a whole number of at least 1")
+    keep = raw.get("keep_days", KEEP_DAYS)
+    try:
+        keep_days = int(keep)
+    except (TypeError, ValueError):
+        keep_days = 0
+    if isinstance(keep, bool) or not MIN_KEEP_DAYS <= keep_days <= MAX_KEEP_DAYS:
+        raise ConfigError(
+            f"{where}{names['keep_days']} must be a whole number of days "
+            f"from {MIN_KEEP_DAYS} to {MAX_KEEP_DAYS}"
+        )
     return Notify(
         webhook=str(webhook) if webhook else None,
         min_priority=min_priority,
         secret=secret,
         failed_scans=failed_scans,
+        keep_days=keep_days,
     )
+
+
+# How long alerts are kept. At least a week: longer than any alert's deduplication window
+# (a day) and its delivery attempts (24 hours), so pruning never lets an alert repeat.
+KEEP_DAYS = 90
+MIN_KEEP_DAYS = 7
+MAX_KEEP_DAYS = 3650
 
 
 def with_dashboard(config: ServiceConfig) -> ServiceConfig:

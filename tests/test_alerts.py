@@ -247,6 +247,60 @@ def test_a_lasting_condition_alerts_once_per_window(tmp_path: Path) -> None:
     assert first is not None and again is None and later is not None and other is not None
 
 
+# --- how long alerts are kept -------------------------------------------------------------------
+
+
+def test_old_alerts_are_deleted_and_the_rest_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = Clock(monkeypatch)
+    sent, failed, _waiting = queued(
+        tmp_path, *(notify.delivery_test(n) for n in ("sent", "failed", "waiting"))
+    )
+    receiver = Receiver()
+    notify.flush(config(tmp_path), post=receiver, ids=[sent])
+    receiver.answer = http_error(404)
+    notify.flush(config(tmp_path), post=receiver, ids=[failed])
+    clock.wait(days=10)
+    (recent,) = queued(tmp_path, notify.delivery_test("recent"), at=clock.at)
+    keep = ServiceConfig(
+        path=str(tmp_path / "service.toml"),
+        db=str(tmp_path / "zues.db"),
+        notify=Notify(keep_days=10),
+    )
+
+    clock.wait(seconds=-1)  # 10 days to the second: not yet
+    assert notify.prune(keep) == 0
+    clock.wait(seconds=1)
+    # Sent or given up 10 days ago, and never delivered (no webhook) since then: gone.
+    assert notify.prune(keep) == 3
+    with Storage(tmp_path / "zues.db") as store:
+        assert [r["id"] for r in store.alert_rows()] == [recent]
+
+
+def test_pruning_never_lets_an_alert_repeat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The shortest keep (7 days) is longer than any alert's deduplication window (a day).
+    clock = Clock(monkeypatch)
+    alert = notify.not_started("lab", "refused: the authorisation expired")
+    (first,) = queued(tmp_path, alert)
+    notify.flush(config(tmp_path), post=Receiver())
+    clock.wait(hours=23)
+    shortest = ServiceConfig(
+        path=str(tmp_path / "service.toml"),
+        db=str(tmp_path / "zues.db"),
+        notify=Notify(keep_days=7),
+    )
+    assert notify.prune(shortest) == 0
+    assert maybe_queued(tmp_path, alert, at=clock.at) == [None]  # still held back
+
+
+def test_without_a_database_there_is_nothing_to_prune(tmp_path: Path) -> None:
+    assert notify.prune(config(tmp_path)) == 0
+    assert not (tmp_path / "zues.db").exists()
+
+
 # --- queued with the run ------------------------------------------------------------------------
 
 

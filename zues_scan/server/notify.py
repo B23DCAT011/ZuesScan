@@ -291,6 +291,22 @@ def queue(config: ServiceConfig, alert: Alert) -> int | None:
         return None
 
 
+def prune(config: ServiceConfig, at: datetime | None = None) -> int:
+    """Delete the alerts older than `[notify] keep_days`; how many. Never raises."""
+    if not Path(config.db).is_file():
+        return 0
+    before = (at or now()) - timedelta(days=config.notify.keep_days)
+    try:
+        with Storage(config.db) as store:
+            deleted = store.prune_alerts(stamp(before))
+    except (StorageError, sqlite3.Error) as exc:
+        log.error("could not delete the old alerts: %s", exc)
+        return 0
+    if deleted:
+        log.info("deleted %d alert(s) older than %d days", deleted, config.notify.keep_days)
+    return deleted
+
+
 # --- signing ------------------------------------------------------------------------------------
 
 
