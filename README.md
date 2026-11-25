@@ -206,9 +206,14 @@ zues scan 10.0.0.0/24 --scope scope.txt --check httpx            # service.toml:
 ```
 
 nmap gọi tên web server ("Apache httpd 2.4.49"); thứ chạy **phía sau** nó — PHP, WordPress,
-Grafana, jQuery — chỉ lộ ra trong câu trả lời HTTP. httpx lấy trang gốc của mọi dịch vụ web mà
-lần quét tìm được (tên dịch vụ có "http"; cổng chưa có tên thì các cổng web thường gặp), thử
-HTTPS rồi HTTP, **không theo redirect** (mức `scan`, như probe của nmap; tốc độ theo `check_rate`).
+Grafana, jQuery — chỉ lộ ra trong câu trả lời HTTP. httpx lấy trang gốc của mọi cổng TCP mở mà
+lần quét tìm được, trừ giao thức nmap nhận rõ là không bao giờ nói HTTP (ssh, smtp, mysql, rdp…)
+và cổng máy in 9100–9107 (thứ gì gửi tới cũng bị in ra; probe của nmap cũng tránh), thử HTTPS rồi
+HTTP, **không theo redirect** (mức `scan`, như probe của nmap; tốc độ theo `check_rate`). Tên
+nmap đặt chỉ là đoán: app Spring Boot (Log4Shell) trả 404 JSON bị nmap gọi là `nagios-nsca`.
+Cổng nào trả lời HTTP thì được coi là web từ đó — nuclei kiểm nó như một trang web — và run ghi
+rõ: `1 of 1 other open port(s) answered HTTP: 10.77.0.80:8080 (nagios-nsca)`. Đặt httpx
+**trước** nuclei (`--check httpx --check nuclei`, hay `checks = ["httpx", "nuclei"]`).
 Kết quả gắn vào dịch vụ: URL, mã trạng thái, tiêu đề, header `Server`, công nghệ (bộ nhận diện
 Wappalyzer) — hiện trong đầu ra `zues scan`, bản đồ HTML, API, MCP và được lưu trong database:
 

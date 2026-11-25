@@ -276,4 +276,7 @@ rồi độ tin cậy, rồi tiện dụng.
       dựng (`ZUES_INTERACTSH_SERVER` / `_TOKEN`): máy chủ công cộng bị từ chối, token trong file
       cấu hình từng lần chạy, hỏi máy chủ trước khi quét; dòng nuclei có `error` không còn tính
       là "đã thử". Thử thật interactsh-server 1.4.1 + app Log4Shell → confirmed qua DNS.
+- [x] `feat/web-detect` (G24) — httpx hỏi mọi cổng TCP mở (trừ giao thức rõ không phải web, cổng
+      máy in); cổng trả lời HTTP được nuclei kiểm như web dù nmap gọi tên khác (Spring Boot =
+      `nagios-nsca`). Thử thật: `zues scan --check httpx --check nuclei` → Log4Shell confirmed.
 
