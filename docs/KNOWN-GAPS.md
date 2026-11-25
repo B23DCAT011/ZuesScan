@@ -490,9 +490,20 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       đọc environ của dịch vụ, `cat` DB từ chương trình con đều bị từ chối; job exposed-git vẫn tìm
       ra finding `confirmed`.
     - Còn lại của tiến trình riêng:
-      - **Mạng không bị giới hạn**: plugin kết nối được tới mọi nơi (kể cả Redis của dịch vụ nếu cùng
-        mạng). Landlock ABI 4 chỉ giới hạn được theo cổng TCP, không theo địa chỉ; thực tế: network
-        namespace / container riêng chỉ có đường tới mục tiêu, hoặc egress firewall.
+      - ✅ **Redis của dịch vụ** (`feat/queue-hardening`, D19). Đã thử thật: từ một tiến trình có
+        môi trường sạch trong container worker (đúng chỗ plugin chạy), Redis không mật khẩu nhận
+        một job `subprocess.getoutput(...)` và worker chạy nó — **ngoài sandbox**, với quyền của
+        worker. Giờ Redis có mật khẩu (compose tự sinh, file trong volume `secrets`, plugin không
+        đọc được: môi trường sạch + Landlock) → `NOAUTH`; và job là JSON, worker chỉ chạy job quét
+        của ZuesScan → kể cả người có mật khẩu cũng không chạy được hàm khác (pickle hay JSON đều
+        bị từ chối, không chạy). Thử thật trên stack compose và lab.
+      - **Mạng vẫn không bị giới hạn theo địa chỉ**: plugin kết nối được tới mọi nơi worker tới
+        được — máy ngoài scope, dịch vụ nội bộ khác, Internet (rò dữ liệu quét ra ngoài). Không có
+        cách giới hạn theo địa chỉ mà không cần quyền: Landlock ABI 4 chỉ theo cổng TCP (và Docker
+        Desktop có Landlock v1); seccomp không đọc được địa chỉ của `connect()`; network namespace
+        không root bị seccomp mặc định của Docker chặn; eBPF cgroup cần root. Thực tế: worker trong
+        mạng riêng chỉ có đường tới dải được quét + egress firewall / NetworkPolicy chặn phần còn
+        lại (web và Redis vẫn cần tới được: Redis có mật khẩu, web cần token).
       - Windows, macOS, kernel không có Landlock: không giới hạn file (doctor cảnh báo) — chạy dịch vụ
         trong container Linux của nó.
       - `no_new_privs` (Landlock cần): chương trình plugin chạy không nhận được file capability (vd
