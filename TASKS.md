@@ -299,3 +299,23 @@ rồi độ tin cậy, rồi tiện dụng.
 - [x] `feat/dnsx-recurse` (G27) — dnsx dò thêm một tầng dưới tên vừa tìm (tối đa 10), wildcard
       theo từng tên. Thử thật dnsx + CoreDNS.
 
+
+## Giai đoạn 7 — Đóng gói cho người dùng (để sau)
+
+Mục tiêu: người cài không phải gõ lệnh `docker compose` — bấm icon là vào dashboard, như
+Nessus (một dịch vụ chạy nền + shortcut mở `https://localhost:8834`). Ghi lại 2026-11-25, chưa
+làm.
+
+- [ ] `feat/launcher` — **Mức 1 (làm trước):** icon ZuesScan trên Desktop / Start menu:
+      kiểm Docker Desktop (chưa bật thì bật và chờ; chưa cài thì hướng dẫn + link tải thay vì
+      lỗi khó hiểu) → `docker compose up -d` → chờ dịch vụ sẵn sàng → mở trình duyệt vào
+      dashboard. Lần đầu tự tạo admin và hiện token trong một cửa sổ để chép. Kèm icon
+      "Stop ZuesScan", file `.ico` logo riêng, script cài shortcut. Cần quyết định trước: logo
+      (có sẵn hay vẽ mới); chỉ Windows hay cả Linux (`.desktop`) và macOS.
+- [ ] `feat/tray` — **Mức 2 (tuỳ chọn):** icon ở khay hệ thống: trạng thái đang chạy / đang
+      quét / đã dừng; menu Mở dashboard / Start / Stop / Xem log.
+- Không làm **bộ cài `.exe` không cần Docker**: giấy phép miễn phí của Npcap (nmap trên
+  Windows cần) không cho đóng gói kèm; Landlock (sandbox plugin) chỉ có trên Linux; phải tự
+  đóng gói Redis, nuclei, templates — nhiều việc mà kém an toàn hơn bản Docker.
+- Lưu ý cho README khi làm: người dùng vẫn cần Docker Desktop (miễn phí cho cá nhân, học tập,
+  công ty dưới 250 nhân viên và dưới 10 triệu USD doanh thu).
