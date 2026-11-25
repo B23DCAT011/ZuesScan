@@ -263,4 +263,6 @@ rồi độ tin cậy, rồi tiện dụng.
 - [x] `feat/httpx-vhosts` (G29) — httpx hỏi mỗi dịch vụ web dưới mỗi tên của host (`Host:` = tên,
       kết nối tới IP đã duyệt); `Service.vhosts` (schema 21), công nghệ của mọi trang vào bước
       CVE; CLI, bản đồ, API, MCP. Thử thật httpx 1.12.0 (HTTP / HTTPS / IPv6).
+- [x] `feat/dnsx-windows-resolvers` (G27) — trên Windows dnsx hỏi DNS server của Windows
+      (`GetNetworkParams`), không phải resolver công khai; ghi chú khi không có; `zues doctor`.
 

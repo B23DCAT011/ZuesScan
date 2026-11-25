@@ -353,8 +353,10 @@ Quy tắc của scope:
   (mặc định 100 truy vấn/giây). Wordlist mặc định là danh sách riêng của ZuesScan (~370 tên
   phổ biến, quét xong trong vài giây); danh sách lớn hơn: `--dns-wordlist FILE` (service:
   `dns_wordlist`). Hai tên ngẫu nhiên được hỏi kèm để nhận ra **wildcard DNS**; tên chỉ trả về
-  đúng địa chỉ của wildcard bị bỏ ngay. Resolver là resolver của hệ thống (`/etc/resolv.conf`
-  — cùng resolver mà cổng scope dùng), nên tên nội bộ phân giải được trong mạng nội bộ.
+  đúng địa chỉ của wildcard bị bỏ ngay. Resolver là resolver của hệ thống (`/etc/resolv.conf`,
+  trên Windows là DNS server mà chính Windows dùng — cùng resolver mà cổng scope dùng), nên tên
+  nội bộ phân giải được trong mạng nội bộ. Hệ thống không nêu resolver nào thì dnsx hỏi resolver
+  công khai và run ghi rõ điều đó; `zues doctor` cho biết dnsx sẽ hỏi DNS server nào.
   Đã thử thật với một máy chủ DNS riêng (CoreDNS): tìm đủ 6 tên (kể cả tên chỉ có AAAA), và
   với một vùng wildcard thì loại cả 374 tên "giả".
 - **IPv6 cũng vậy.** Tên được phân giải ra cả IPv4 và IPv6; địa chỉ IPv6 cũng phải có trong
