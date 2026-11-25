@@ -427,10 +427,14 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
         nội bộ tự ký);
       - interactsh chỉ giữ tương tác trong bộ nhớ đệm 60 s của nuclei (`-interactions-eviction`):
         callback tới rất muộn (hàng đợi, job chạy sau) bị bỏ lỡ.
-    - **Dịch vụ web mà nmap gọi sai tên** không được kiểm như web: app Spring Boot (Log4Shell)
-      trả 404 JSON nên nmap gọi cổng 8080 là `nagios-nsca`; httpx và nuclei chỉ coi là web dịch
-      vụ có `http` trong tên → chỉ chạy template mạng trên nó. Thực tế: cho httpx thử mọi cổng
-      TCP mở chưa rõ là gì (như `naabu | httpx`), rồi đánh dấu web theo kết quả của httpx.
+    - ✅ **Dịch vụ web mà nmap gọi sai tên** (`feat/web-detect`): app Spring Boot (Log4Shell)
+      trả 404 JSON nên nmap gọi cổng 8080 là `nagios-nsca`, và httpx / nuclei chỉ coi là web dịch
+      vụ có `http` trong tên → chỉ template mạng chạy trên nó. Giờ httpx hỏi mọi cổng TCP mở (trừ
+      giao thức nmap nhận rõ không phải web và cổng máy in 9100–9107); trả lời HTTP thì nuclei
+      kiểm như web, run ghi rõ cổng nào. Kiểm thật: `zues scan --check httpx --check nuclei` trên
+      app Log4Shell → CVE-2021-44228 `confirmed`. Còn lại: httpx phải chạy trước nuclei (không
+      tự thêm); danh sách "không phải web" là danh sách tay; nmap nhận sai một dịch vụ thành
+      `ssh` / `mysql`… thì vẫn bỏ qua.
     - ✅ Bằng chứng của nuclei được che trước khi lưu (`feat/evidence-redaction`,
       `zues_scan/redact.py`): header đăng nhập / phiên, mẫu bí mật (mật khẩu, JWT, khoá AWS, PEM,
       hash shadow, mật khẩu trong URL), thân response cắt còn 2 KB. Còn lại: che theo mẫu là cố

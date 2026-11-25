@@ -91,6 +91,12 @@ section of a version as its release notes, so every tag needs one.
   admin can widen what may be scanned, and now the others know at once.
 
 ### Changed
+- httpx asks every open TCP port, not only those nmap calls http: all but the protocols
+  nmap names that never speak HTTP (ssh, smtp, mysql, rdp...) and raw printing ports
+  (9100-9107). A port that answers HTTP is tested by nuclei as a web service whatever nmap
+  called it, and the run says which (a Spring Boot app answering 404 JSON is "nagios-nsca"
+  to nmap: its Log4Shell went untested). Unnamed ports are no longer limited to the usual
+  web ports.
 - `DELETE /api/v1/session` with the session cookie needs the `X-ZuesScan: 1` header, like
   every other change made with the cookie.
 - `zues scheduler --once` also sends the alerts that are due, and says how many.
