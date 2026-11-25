@@ -575,8 +575,10 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     - Wildcard chỉ nhận ra khi mọi địa chỉ của tên nằm trong địa chỉ của hai tên ngẫu nhiên:
       wildcard trả về địa chỉ xoay vòng từ một dải lớn (CDN) có thể lọt qua — cổng scope vẫn
       kiểm lại từng tên trước khi quét.
-    - Chưa dò đệ quy (tên dưới tên vừa tìm, vd `*.dev.example.com`) và chưa sinh biến thể
-      (`dev1`, `dev-api`… từ tên đã biết).
+    - ✅ Dò thêm một tầng (`feat/dnsx-recurse`): wordlist thử lại dưới tối đa 10 tên tìm được ngay
+      dưới tên miền, wildcard nhận ra riêng cho từng tên. Thử thật với dnsx + CoreDNS. Còn lại:
+      chỉ một tầng; chưa sinh biến thể (`dev1`, `dev-api`… từ tên đã biết); 10 tên đầu theo thứ
+      tự chữ cái, không theo mức "đáng dò" của tên.
 
 - [ ] **G28. naabu: giới hạn còn lại.** (từ `feat/naabu`)
   - ✅ Đã có: nmap `-sn` → naabu connect scan trên host sống → nmap `-sV` chỉ trên cổng mở;
