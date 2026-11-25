@@ -67,6 +67,12 @@ def q(service: ServiceConfig) -> Queue:
     return rkqueue.queue(service, connection=fakeredis.FakeRedis())
 
 
+def taken(q: Queue) -> None:
+    """The queued jobs are gone, as when a worker has run them (Queue.empty needs Lua)."""
+    for job in q.jobs:
+        job.delete()
+
+
 def work(q: Queue) -> None:
     """Run every queued job in this process, then return."""
     SimpleWorker([q], connection=q.connection).work(burst=True)
@@ -173,7 +179,12 @@ def test_a_tick_queues_each_due_target_once(q: Queue, service: ServiceConfig) ->
     assert q.count == 2
     assert {job.meta["operator"] for job in q.jobs} == {"scheduler"}
 
-    assert scheduler.tick(service, q, now=NOW + timedelta(hours=1)) == ["hourly"]
+    # Its next slot comes while the first hourly scan still waits: skipped, not a second one.
+    assert scheduler.tick(service, q, now=NOW + timedelta(hours=1)) == []
+    assert q.count == 2
+    taken(q)  # a worker took them
+    assert scheduler.tick(service, q, now=NOW + timedelta(hours=2)) == ["hourly"]
+    taken(q)
     assert scheduler.tick(service, q, now=NOW + timedelta(days=1)) == ["hourly", "daily"]
 
 

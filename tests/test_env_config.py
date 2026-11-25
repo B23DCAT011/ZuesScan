@@ -108,8 +108,8 @@ def test_user_add_list_and_rotate_with_expiry(capsys: pytest.CaptureFixture[str]
 
     assert main(["user", "list"]) == 0
     listed = {line.split()[0]: line for line in capsys.readouterr().out.splitlines()[1:]}
-    assert listed["siem"].split()[-2:] == ["never", "all"]  # expires, targets
-    assert listed["ci"].split()[-3].startswith("20")
+    assert listed["siem"].split()[-3:] == ["never", "-", "all"]  # expires, scans/h, targets
+    assert listed["ci"].split()[-4].startswith("20")
 
     old = first.splitlines()[1]
     assert main(["user", "rotate", "ci", "--expires", "1y"]) == 0

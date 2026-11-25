@@ -54,7 +54,7 @@ log = logging.getLogger(__name__)
 
 # The schema version this code reads and writes. Bump it together with a new entry
 # in `_MIGRATIONS`; never edit a migration that has already shipped.
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 
 # How long a writer waits for another to finish before "database is locked".
 BUSY_SECONDS = 15.0
@@ -631,6 +631,9 @@ _V19 = (
     "ALTER TABLE managed_token ADD COLUMN targets TEXT",
 )
 
+# Version 20: a dashboard token may be held to a number of scan requests an hour (G26).
+_V20 = ("ALTER TABLE managed_token ADD COLUMN scans_per_hour INTEGER",)
+
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: _V1,
     2: _V2,
@@ -651,6 +654,7 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
     17: _V17,
     18: _V18,
     19: _V19,
+    20: _V20,
 }
 
 
@@ -1157,7 +1161,7 @@ class Storage:
     def managed_tokens(self) -> list[sqlite3.Row]:
         return self._conn.execute(
             "SELECT name, sha256, role, created_at, created_by, expires_at, rotated_at, "
-            "rotated_by, targets FROM managed_token ORDER BY name"
+            "rotated_by, targets, scans_per_hour FROM managed_token ORDER BY name"
         ).fetchall()
 
     def save_managed_scope(self, name: str, content: str, sha256: str, actor: str) -> None:
@@ -1215,11 +1219,12 @@ class Storage:
         actor: str,
         expires_at: str | None = None,
         targets: list[str] | None = None,
+        scans_per_hour: int | None = None,
     ) -> None:
         now = datetime.now(UTC).isoformat()
         self._managed_change(
             "INSERT INTO managed_token (name, sha256, role, created_at, created_by, expires_at, "
-            "targets) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "targets, scans_per_hour) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 name,
                 sha256,
@@ -1228,6 +1233,7 @@ class Storage:
                 actor,
                 expires_at,
                 None if targets is None else json.dumps(targets),
+                scans_per_hour,
             ),
             AuditEvent(
                 at=now,
@@ -1242,7 +1248,25 @@ class Storage:
                     "role": role,
                     "expires_at": expires_at,
                     "targets": targets,
+                    "scans_per_hour": scans_per_hour,
                 },
+            ),
+        )
+
+    def set_managed_token_quota(self, name: str, scans_per_hour: int | None, actor: str) -> None:
+        """How many scans a dashboard token may request an hour (None: no limit)."""
+        now = datetime.now(UTC).isoformat()
+        self._managed_change(
+            "UPDATE managed_token SET scans_per_hour = ? WHERE name = ?",
+            (scans_per_hour, name),
+            AuditEvent(
+                at=now,
+                kind=AuditKind.CONFIG,
+                target=f"token:{name}",
+                operator=actor,
+                engagement=None,
+                scope_sha256=None,
+                detail={"action": "token scan limit changed", "scans_per_hour": scans_per_hour},
             ),
         )
 

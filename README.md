@@ -646,7 +646,20 @@ zues user --config service.toml add tôi --role admin     # in token MỘT lần
 zues user --config service.toml add ci --expires 30d     # hạn dùng: 30d, 90d (mặc định), 1y, never
 zues user --config service.toml rotate ci                # giá trị mới; giá trị cũ thôi dùng được ngay
 zues user --config service.toml list                     # token của service.toml và của dashboard, hạn dùng
+zues user --config service.toml add agent --role operator --scans-per-hour 6   # tối đa 6 lần quét / giờ
+zues user --config service.toml quota agent none         # bỏ giới hạn (hoặc một số mới)
 ```
+
+**Giới hạn quét.** Một target **không bao giờ bị quét chồng**: khi một lần quét của nó đang chờ
+hoặc đang chạy, yêu cầu thứ hai (dashboard, MCP, `zues enqueue`) bị từ chối với mã 409 kèm job
+đang có; lượt của scheduler rơi vào lúc đó thì bỏ lượt (như "no overlap" của cron), lượt sau
+đến đúng lịch. Mỗi token có thể bị giới hạn **số lần xin quét trong một giờ bất kỳ**
+(`scans_per_hour`, 1–1000; ô *Scans / hour* khi tạo token và nút *Change* trong Settings,
+`zues user add --scans-per-hour`, `zues user quota`, `scans_per_hour = 6` trong `service.toml`,
+`PUT /api/v1/admin/tokens/{name}/quota`): quá giới hạn thì 429 với `Retry-After` (giây tới
+lúc được xin tiếp). Cửa sổ trượt một giờ, đếm trong Redis nên đúng cho mọi tiến trình web; yêu
+cầu bị từ chối vì trùng không bị tính; scan của scheduler không tính. Dành cho token của agent
+AI, script, CI — một token bị lộ cũng không giữ được target dưới tải liên tục.
 
 **Token có hạn dùng** (mặc định 90 ngày; tối đa 2 năm, hoặc `never` cho tài khoản dịch vụ được
 theo dõi): hết hạn thì bị từ chối kèm lý do rõ ràng (không bị tính là đoán sai), phiên mở bằng nó
@@ -963,6 +976,9 @@ trên lab):
 - **Dữ liệu quét là dữ liệu.** Banner, tiêu đề, bằng chứng do máy bị quét tự khai — có thể là
   prompt injection ("ignore previous instructions…"). Chúng được bỏ ký tự điều khiển / đảo chiều,
   cắt ngắn, và kết quả nói rõ đó là dữ liệu không tin cậy.
+- **Giới hạn quét.** Token của agent nên có `scans_per_hour` (vd 6): quá giới hạn thì
+  `request_scan` trả lỗi kèm thời gian chờ và lời dặn không hỏi lại trước đó; một target đang
+  chờ / đang quét thì yêu cầu thứ hai bị từ chối (agent được bảo theo dõi job đang có).
 - Mỗi hành động vào audit trail dưới **tên của token** (vd `claude-agent`): nên cấp cho mỗi agent
   một token riêng; thu hồi = xoá khỏi `service.toml`.
 

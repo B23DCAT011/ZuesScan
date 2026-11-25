@@ -864,6 +864,31 @@
     return el("span", null, shown, " ", edit, editor);
   }
 
+  // "6" -> 6; empty -> null (no limit).
+  function perHour(text) {
+    var value = String(text || "").trim();
+    return value ? parseInt(value, 10) : null;
+  }
+
+  function quotaCell(t) {
+    var shown = t.scans_per_hour ? el("span", null, String(t.scans_per_hour)) : el("span", { class: "muted" }, "no limit");
+    if (t.source !== "dashboard" || t.role === "viewer") return shown;
+    var input = el("input", { type: "number", min: "1", max: "1000", value: t.scans_per_hour || "",
+      placeholder: "empty: no limit", "aria-label": "scans per hour of " + t.name });
+    var editor = el("span", { hidden: true }, input, " ", el("button", { type: "button", on: { click: function () {
+      api("PUT", "/admin/tokens/" + encodeURIComponent(t.name) + "/quota", { scans_per_hour: perHour(input.value) })
+        .then(function (r) {
+          flash(t.name + ": " + (r.scans_per_hour ? r.scans_per_hour + " scan request(s) an hour." : "no limit."));
+          route();
+        })
+        .catch(function (err) { flash(err.message, true); });
+    } } }, "Save"));
+    var edit = el("button", { type: "button", class: "link", on: { click: function () {
+      editor.hidden = false; edit.hidden = true; input.focus();
+    } } }, "Change");
+    return el("span", null, shown, " ", edit, editor);
+  }
+
   function showToken(shown, text, value) {
     clear(shown);
     append(shown, [
@@ -887,7 +912,7 @@
         on: { click: function () { removeToken(t.name); } },
       }, "Revoke") : "";
       return [el("strong", null, t.name), t.role, source(t.source), expiryCell(t), targetsCell(t),
-        t.you ? "you" : "", [rotate, " ", remove]];
+        quotaCell(t), t.you ? "you" : "", [rotate, " ", remove]];
     });
     var name = el("input", { id: "token-name", maxlength: "64", required: true, placeholder: "who it is for" });
     var role = el("select", { id: "token-role" }, ["viewer", "operator", "admin"].map(function (r) {
@@ -896,20 +921,25 @@
     var validity = validitySelect("token-validity");
     var targetsInput = el("input", { id: "token-targets", maxlength: "500",
       placeholder: "all, or e.g. acme-* acme-dmz" });
+    var quotaInput = el("input", { id: "token-quota", type: "number", min: "1", max: "1000",
+      placeholder: "no limit", disabled: true });
     var button = el("button", { type: "submit", class: "primary" }, "Create token");
     var form = el("form", { class: "toolbar" },
       el("label", null, "Name ", name), el("label", null, "Role ", role),
       el("label", null, "Valid for ", validity),
-      el("label", null, "Targets ", targetsInput), button);
+      el("label", null, "Targets ", targetsInput),
+      el("label", null, "Scans / hour ", quotaInput), button);
     role.addEventListener("change", function () {
       targetsInput.disabled = role.value === "admin";  // an admin sees every target
       if (targetsInput.disabled) targetsInput.value = "";
+      quotaInput.disabled = role.value === "viewer";  // a viewer cannot scan
+      if (quotaInput.disabled) quotaInput.value = "";
     });
     form.addEventListener("submit", function (event) {
       event.preventDefault();
       button.disabled = true;
       api("POST", "/admin/tokens", { name: name.value.trim(), role: role.value, valid_days: validDays(validity),
-        targets: patterns(targetsInput.value) })
+        targets: patterns(targetsInput.value), scans_per_hour: perHour(quotaInput.value) })
         .then(function (made) {
           showToken(shown, "Token for " + made.name + " (" + made.role + "): copy it now, it is shown only once.", made.token);
           name.value = "";
@@ -921,11 +951,13 @@
         });
     });
     return el("section", null, el("h2", null, "Tokens (who may sign in)"),
-      table(["Name", "Role", "Source", "Expires (UTC)", "Targets", "", ""], rows.map(row), "No token."),
+      table(["Name", "Role", "Source", "Expires (UTC)", "Targets", "Scans / hour", "", ""], rows.map(row), "No token."),
       el("p", { class: "muted small" },
         "viewer: reads; operator: also scans and records decisions; admin: also changes these settings. " +
         "A token stops working at its date (a week before, an alert goes out); Rotate gives it a new " +
-        "value and date — the old value, and every session opened with it, stop at once."),
+        "value and date — the old value, and every session opened with it, stop at once. " +
+        "Scans / hour: how many scans the token may ask for in any hour (an agent, a script); " +
+        "scheduled scans do not count, and a target is never scanned twice at once."),
       form, shown);
   }
 

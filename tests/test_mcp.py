@@ -49,13 +49,14 @@ def _lab(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class Service_:
-    def __init__(self, tmp_path: Path) -> None:
+    def __init__(self, tmp_path: Path, agent: str = "") -> None:
         (tmp_path / "scope.txt").write_text("scanme.lab\n10.0.0.0/24\n", encoding="utf-8")
         d = tmp_path.as_posix()
         config = tmp_path / "service.toml"
         config.write_text(
             f'[service]\ndb = "{d}/zues.db"\nqueue = "mcp"\n\n'
-            f'[[tokens]]\nname = "claude-agent"\nsha256 = "{sha(OPERATOR)}"\nrole = "operator"\n\n'
+            f'[[tokens]]\nname = "claude-agent"\nsha256 = "{sha(OPERATOR)}"\n'
+            f'role = "operator"\n{agent}\n'
             f'[[tokens]]\nname = "watcher"\nsha256 = "{sha(VIEWER)}"\nrole = "viewer"\n\n'
             f'[[targets]]\nname = "lab"\ntarget = "scanme.lab"\nscope = "{d}/scope.txt"\n'
             'profile = "quick"\n',
@@ -229,6 +230,19 @@ def test_only_configured_targets_and_only_with_the_right_role(svc: Service_) -> 
     error, text = call(svc.api(VIEWER), "request_scan", {"target": "lab"}, user())
     assert error and "this token's role does not allow it" in text
     assert svc.redis.keys("rq:job:*") == []
+
+
+def test_an_agent_is_told_not_to_ask_again(tmp_path: Path) -> None:
+    svc = Service_(tmp_path, agent="scans_per_hour = 1\n")
+    agent = svc.api(OPERATOR)
+    assert call(agent, "request_scan", {"target": "lab"}, user())[0] is False
+    error, text = call(agent, "request_scan", {"target": "lab"}, user())
+    assert error and "already queued" in text and "follow that job with get_job" in text
+    svc.work()
+    error, text = call(agent, "request_scan", {"target": "lab"}, user())
+    assert error and "claude-agent may request 1 scan(s) an hour" in text
+    assert "do not ask again before then" in text
+    assert len(svc.redis.keys("rq:job:*")) == 1
 
 
 def test_a_fix_claimed_by_the_agent_is_recorded_under_its_name(svc: Service_) -> None:
