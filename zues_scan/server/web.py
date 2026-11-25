@@ -928,6 +928,61 @@ def delete_scope(
     return None
 
 
+# Audit actions that made a version the scope's own (the others are proposals and
+# decisions about them, shown in the history but not versions).
+_APPLIED = ("scope saved", "scope deleted")
+
+
+@api.get("/admin/scopes/{name}/history")
+def scope_history(name: str, who: Admin, config: Config) -> dict[str, Any]:
+    """A dashboard scope's history from the audit trail, newest first: every version it
+    had (with whether its text is kept, to compare or load again), and the proposals and
+    decisions about it. Works for a deleted scope too."""
+    with opened(config) as store:
+        events = store.scope_history(name) if store else []
+        kept = {
+            e.scope_sha256
+            for _, e in events
+            if e.scope_sha256 and store is not None and store.scope_version(name, e.scope_sha256)
+        }
+    if not events:
+        raise HTTPException(404, f"no history for a dashboard scope named {name!r}")
+    current = config.scopes.get(name)
+    return {
+        "name": name,
+        "current_sha256": hashlib.sha256(current.encode("utf-8")).hexdigest() if current else None,
+        "events": [
+            {
+                "id": event_id,
+                "at": e.at,
+                "by": e.operator,
+                "action": e.detail.get("action"),
+                "version": e.detail.get("action") in _APPLIED,
+                "sha256": e.scope_sha256,
+                "previous_sha256": e.detail.get("previous_sha256"),
+                "proposal": e.detail.get("proposal"),
+                "proposed_by": e.detail.get("proposed_by"),
+                "note": e.detail.get("note") or e.detail.get("reason"),
+                "kept": e.scope_sha256 in kept,
+            }
+            for event_id, e in events
+        ],
+    }
+
+
+@api.get("/admin/scopes/{name}/versions/{sha256}")
+def scope_version(name: str, sha256: str, who: Admin, config: Config) -> dict[str, Any]:
+    """The text of a version the scope had: to compare, or to load into the editor and
+    save again (a restore is an ordinary change: checked, audited, approved if required)."""
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", sha256):
+        raise HTTPException(422, "a version is named by its full SHA-256 (64 hex digits)")
+    with opened(config) as store:
+        text = store.scope_version(name, sha256) if store else None
+    if text is None:
+        raise HTTPException(404, f"the scope {name!r} has no kept version {sha256[:12]}")
+    return {"name": name, "sha256": sha256.lower(), "text": text}
+
+
 def _proposals(config: ServiceConfig, who: Caller, statuses: tuple[str, ...] | None) -> list[Any]:
     with opened(config) as store:
         rows = store.scope_proposals(statuses) if store else []

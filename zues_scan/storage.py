@@ -1657,6 +1657,29 @@ class Storage:
             for row in self._conn.execute("SELECT * FROM audit_event ORDER BY id")
         ]
 
+    def scope_history(self, name: str, limit: int = 200) -> list[tuple[int, AuditEvent]]:
+        """What happened to the dashboard scope `name`, newest first: (event id, event) of
+        its config audit events (saved, deleted, proposed, approved, rejected, ...)."""
+        rows = self._conn.execute(
+            "SELECT * FROM audit_event WHERE kind = ? AND target = ? ORDER BY id DESC LIMIT ?",
+            (str(AuditKind.CONFIG), f"scope:{name}", limit),
+        ).fetchall()
+        return [(row["id"], _event(row)) for row in rows]
+
+    def scope_version(self, name: str, sha256: str) -> str | None:
+        """The text of a version the scope `name` had (saved under that exact SHA-256);
+        None if it never had it, or its text was not kept."""
+        had = self._conn.execute(
+            "SELECT 1 FROM audit_event WHERE kind = ? AND target = ? AND scope_sha256 = ? LIMIT 1",
+            (str(AuditKind.CONFIG), f"scope:{name}", sha256.lower()),
+        ).fetchone()
+        if had is None:
+            return None
+        row = self._conn.execute(
+            "SELECT content FROM scope_snapshot WHERE sha256 = ?", (sha256.lower(),)
+        ).fetchone()
+        return None if row is None else str(row["content"])
+
     def scope_snapshot(self, sha256: str) -> str | None:
         """The scope file content recorded under `sha256` (a prefix is enough)."""
         rows = self._conn.execute(
