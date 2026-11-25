@@ -409,6 +409,11 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       `-timeout 30 -retries 3` cho lần chạy template mạng: 5/5. Lỗi của sản phẩm, không riêng
       CI — máy chủ SSH / TLS bận ngoài thực tế cũng chậm như vậy. Job lab giờ ghi rõ kiểm tra nào
       hỏng và in bảng finding thành annotation (xem được không cần đăng nhập).
+      Còn lại: **hỏng lại một lần** (c581d77, 2026-11-25): lần quét lại của demo không thấy
+      Terrapin (`gone`); chạy lại ở máy và lần CI kế tiếp (7e4afc3, cùng code quét) đều thấy.
+      Sau 11 lần xanh liên tiếp — tỉ lệ thấp nhưng chưa bằng 0. Job lab giờ in thêm ghi chú
+      nuclei và lượt template mạng (số dòng, stderr) của từng run khi hỏng, để lần sau phân biệt
+      bắt tay chậm với check hỏng.
     - ✅ **Kênh ngoài (OAST) với máy chủ interactsh tự dựng** (`feat/interactsh-self-hosted`,
       D18): `ZUES_INTERACTSH_SERVER` / `ZUES_INTERACTSH_TOKEN`; máy chủ công cộng và địa chỉ IP
       bị từ chối; token chỉ nằm trong file cấu hình của từng lần chạy (không trên dòng lệnh,
