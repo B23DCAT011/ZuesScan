@@ -108,6 +108,10 @@ section of a version as its release notes, so every tag needs one.
   admin can widen what may be scanned, and now the others know at once.
 
 ### Changed
+- httpx sends a virtual host's name as the TLS SNI (G29): on a service that looks like TLS,
+  each name gets an httpx run of its own with `-sni <name>` (at most 50 names; the others
+  share the run without SNI, and the run says so), so a server that picks the site by SNI
+  alone (HAProxy, Traefik, a CDN) shows that site instead of its default one.
 - httpx asks every open TCP port, not only those nmap calls http: all but the protocols
   nmap names that never speak HTTP (ssh, smtp, mysql, rdp...) and raw printing ports
   (9100-9107). A port that answers HTTP is tested by nuclei as a web service whatever nmap
@@ -132,6 +136,11 @@ section of a version as its release notes, so every tag needs one.
   expires.
 
 ### Fixed
+- External tools no longer read ZuesScan's stdin. httpx reads stdin as more input when it
+  is not a terminal: run from a script with a pipe left open (cron, CI, `... | while
+  read`), its check waited until the time limit and returned nothing. Every call of
+  nmap, httpx, dnsx, naabu, subfinder, nuclei and ssh now gets /dev/null, and a test
+  checks every subprocess call has its own stdin.
 - A nuclei template run that ended in an error (a refused connection, "interactsh client
   not initialized") was recorded as "tried, not matched"; it is now left out and noted.
 - The scheduler read its configuration once, at start: a target added or changed in the

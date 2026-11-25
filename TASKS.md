@@ -290,4 +290,6 @@ rồi độ tin cậy, rồi tiện dụng.
       lịch sử target trên trang sửa, API lịch sử target / token. Kiểm bằng test + Chrome.
 - [x] `feat/lab-oast` (G24) — lab có app Log4Shell + máy chủ interactsh riêng; CI kiểm
       CVE-2021-44228 `confirmed` qua callback (nmap sai tên → httpx → nuclei OOB).
+- [x] `feat/httpx-sni` (G29) — vhost trên TLS được hỏi với SNI của nó (một lượt httpx mỗi tên);
+      sửa lỗi tìm ra khi thử: công cụ ngoài đọc stdin của ZuesScan (httpx treo tới hết giờ).
 

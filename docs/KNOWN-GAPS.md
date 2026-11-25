@@ -592,9 +592,16 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       tên của host (`Host:` = tên, kết nối vẫn tới IP đã duyệt — dòng `tên,ip:cổng` của httpx,
       tên không được phân giải lại); trang theo tên lưu ở `Service.vhosts`, công nghệ vào bước
       CVE. Thử thật với httpx 1.12.0: HTTP, HTTPS, IPv6, mỗi tên đúng một request. Còn lại:
-      - **SNI** vẫn là địa chỉ (cờ `-sni` của httpx là một tên cho cả lần chạy): máy chủ chọn
-        trang chỉ theo SNI (HAProxy / Traefik định tuyến TLS theo SNI, CDN) trả trang mặc định.
-        Sửa: một lần chạy httpx cho mỗi tên với `-sni`, hoặc client HTTP riêng.
+      - ✅ **SNI** (`feat/httpx-sni`): trên dịch vụ có vẻ là TLS, mỗi tên một lượt httpx với
+        `-sni <tên>` (tối đa 50 tên; quá thì hỏi chung không SNI, có ghi chú). Thử thật với
+        httpx 1.12.0 trên máy chủ TLS ghi SNI nhận được: mặc định không SNI, `shop.test` và
+        `api.test` mỗi tên đúng SNI của nó. Còn lại: "có vẻ là TLS" đoán theo tên / cổng của
+        nmap (TLS trên cổng lạ mà nmap gọi `http` thì không có SNI).
+      - ✅ **Lỗi tìm ra khi thử thật**: httpx đọc cả stdin khi stdin không phải terminal — chạy
+        từ script có pipe còn mở (cron, CI, `... | while read`) thì lượt httpx chờ tới hết giờ
+        và không trả gì (đo: 30 s với pipe mở, 0,6 s với /dev/null). Mọi lệnh gọi công cụ ngoài
+        (nmap, httpx, dnsx, naabu, subfinder, nuclei, ssh) giờ có stdin riêng (`/dev/null`) và
+        một test canh mọi lệnh gọi mới.
       - Chỉ các tên đã biết (tên target, tên tìm được bằng DNS); chưa đoán vhost (brute-force
         Host header bằng wordlist — mức `active`, dễ bị coi là tấn công) hay đọc tên từ chứng
         chỉ TLS (SAN).
