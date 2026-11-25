@@ -7,6 +7,13 @@ section of a version as its release notes, so every tag needs one.
 ## [Unreleased]
 
 ### Added
+- Deleted scopes in Settings, and the history of targets and tokens (G30): Settings lists
+  dashboard scopes that were deleted (when, by whom, last version); History / restore puts
+  the last version in the editor of a new scope of that name - saving makes it again,
+  checked, audited and approved like any new scope. A target's editor shows its History:
+  each change, by whom, and which settings changed. `deleted_scopes` in
+  `GET /api/v1/admin/config`; `GET /api/v1/admin/targets/{name}/history` and
+  `/admin/tokens/{name}/history` (never a token's value or hash), deleted entries too.
 - A `scanner` role, between viewer and operator (G26): it reads and requests scans of its
   targets - what an AI agent or a script needs - but records no decision about a finding
   and changes no setting. `targets` and `scans_per_hour` apply to it as to an operator.

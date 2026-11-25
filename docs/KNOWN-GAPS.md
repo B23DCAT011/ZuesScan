@@ -630,8 +630,12 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     - ✅ Lịch sử scope trên giao diện (`feat/scope-history`): trang sửa scope có mục *History*
       (từ audit trail: mọi phiên bản, đề xuất, quyết định), *Compare* với bản hiện tại, *Load into
       editor* rồi lưu lại = khôi phục (vẫn qua kiểm tra, audit, duyệt hai người nếu bật). API
-      `GET /admin/scopes/{name}/history`, `/versions/{sha256}`. Còn lại: scope đã xoá chỉ xem được
-      qua API (Settings chỉ liệt kê scope đang có); chưa có lịch sử cho target / token.
+      `GET /admin/scopes/{name}/history`, `/versions/{sha256}`. ✅ `feat/config-history`: scope
+      đã xoá có mục *Deleted scopes* trong Settings → *History / restore* (bản cuối vào trang soạn
+      scope mới cùng tên; lưu = tạo lại, qua kiểm tra / audit / duyệt); target có *History* (thiết
+      lập nào đổi, ai, lúc nào); API lịch sử cho target và token (không có giá trị hay hash của
+      token). Kiểm bằng test API + Chrome. Còn lại: lịch sử token chỉ qua API (chưa có trên trang);
+      lịch sử là audit trail — xoá database là mất (như mọi bằng chứng khác, xem sao lưu).
 
 ## Mức 3 — Hoàn thiện sản phẩm / portfolio
 
