@@ -95,3 +95,5 @@ def _own_tools_dir(
     monkeypatch.setenv("ZUES_TOOLS_DIR", str(tmp_path_factory.mktemp("tools")))
     monkeypatch.delenv("ZUES_NUCLEI_TEMPLATES", raising=False)
     monkeypatch.delenv("ZUES_SUBFINDER_CONFIG", raising=False)
+    monkeypatch.delenv("ZUES_INTERACTSH_SERVER", raising=False)
+    monkeypatch.delenv("ZUES_INTERACTSH_TOKEN", raising=False)
