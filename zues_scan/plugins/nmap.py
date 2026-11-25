@@ -81,6 +81,7 @@ class NmapPlugin:
             proc = subprocess.run(
                 [tools.resolve("nmap"), "--version"],
                 capture_output=True,
+                stdin=subprocess.DEVNULL,
                 encoding="utf-8",
                 errors="replace",
                 timeout=10,
@@ -155,6 +156,7 @@ class NmapPlugin:
             proc = subprocess.run(
                 command,
                 capture_output=True,
+                stdin=subprocess.DEVNULL,
                 # nmap writes UTF-8 XML; decode it as such instead of the Windows
                 # locale codepage, and never crash on a stray byte in a banner.
                 encoding="utf-8",

@@ -297,6 +297,7 @@ def _stop(proc: subprocess.Popen[bytes]) -> None:
             subprocess.run(
                 ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
                 capture_output=True,
+                stdin=subprocess.DEVNULL,
                 check=False,
             )
             with contextlib.suppress(OSError):

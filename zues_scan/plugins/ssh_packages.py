@@ -118,7 +118,12 @@ class SshPackagesPlugin:
     def version(self) -> str | None:
         try:
             proc = subprocess.run(
-                ["ssh", "-V"], capture_output=True, encoding="utf-8", errors="replace", timeout=10
+                ["ssh", "-V"],
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+                stdin=subprocess.DEVNULL,
             )
         except (OSError, subprocess.SubprocessError):
             return None
@@ -175,6 +180,7 @@ class SshPackagesPlugin:
             proc = subprocess.run(
                 command,
                 capture_output=True,
+                stdin=subprocess.DEVNULL,
                 encoding="utf-8",
                 errors="replace",
                 timeout=self.timeout,
