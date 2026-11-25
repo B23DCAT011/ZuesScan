@@ -15,9 +15,10 @@ is scanned (`Scope.plan_discovered`).
 
 The wordlist is ZuesScan's own (`zues_scan/data/subdomains.txt`, a few hundred names
 common in companies), or any file given (`--dns-wordlist`, `dns_wordlist` in the service).
-The resolvers are the system's (`/etc/resolv.conf`), the same the scope guard resolves
-with, so internal names resolve inside an internal network; where there is no
-resolv.conf (Windows), dnsx's own public resolvers are used.
+The resolvers are the system's, the same the scope guard resolves with, so internal
+names resolve inside an internal network: `/etc/resolv.conf`, or on Windows the DNS
+servers Windows itself uses (`GetNetworkParams`). Only when the system names none does
+dnsx fall back to its own public resolvers (and the run says so).
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ import os
 import re
 import secrets
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -55,12 +57,12 @@ class DnsxPlugin:
         wordlist: str | None = None,
         rate: int = 100,
         timeout: int = 600,
-        resolv_conf: str = "/etc/resolv.conf",
+        resolv_conf: str | None = None,
     ) -> None:
         self.wordlist = wordlist  # None: the bundled list
         self.rate = max(1, rate)  # DNS queries per second, at most
         self.timeout = timeout  # seconds before ZuesScan stops dnsx
-        self.resolv_conf = resolv_conf
+        self.resolv_conf = resolv_conf  # None: the system's (Windows: its DNS servers)
 
     def is_available(self) -> bool:
         return tools.which("dnsx") is not None
@@ -103,8 +105,11 @@ class DnsxPlugin:
 
     def resolvers(self) -> list[str]:
         """The system's IPv4 resolvers, if it names any (else dnsx uses its own)."""
+        if self.resolv_conf is None and sys.platform == "win32":
+            return windows_resolvers()
         try:
-            text = Path(self.resolv_conf).read_text(encoding="utf-8", errors="replace")
+            path = Path(self.resolv_conf or "/etc/resolv.conf")
+            text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             return []
         return parse_resolv_conf(text)
@@ -150,7 +155,13 @@ class DnsxPlugin:
         with tempfile.TemporaryDirectory(prefix="zues-dnsx-") as home:
             names_file = os.path.join(home, "names.txt")
             Path(names_file).write_text("\n".join(candidates) + "\n", encoding="utf-8")
-            command = self.command(names_file, self.resolvers())
+            resolvers = self.resolvers()
+            if not resolvers:  # internal names will not be found: say so
+                notes.append(
+                    "the system names no DNS server: dnsx asked public resolvers, "
+                    "names only internal DNS knows are not found"
+                )
+            command = self.command(names_file, resolvers)
             try:
                 proc = subprocess.run(
                     command,
@@ -207,6 +218,73 @@ def parse_wordlist(text: str) -> list[str]:
             if len(words) == MAX_WORDS:
                 break
     return list(words)
+
+
+MAX_RESOLVERS = 16
+
+
+def windows_resolvers() -> list[str]:
+    """The IPv4 DNS servers Windows resolves with (GetNetworkParams), in order; [] when
+    it cannot tell. (Its IPv6 list is mostly the obsolete fec0::/10 placeholders.)"""
+    return _ipv4_only(_network_params_dns())
+
+
+def _ipv4_only(found: list[str]) -> list[str]:
+    kept: dict[str, None] = {}
+    for text in found:
+        try:
+            if isinstance(ipaddress.ip_address(text), ipaddress.IPv4Address):
+                kept[text] = None
+        except ValueError:
+            continue
+    return list(kept)[:MAX_RESOLVERS]
+
+
+def _network_params_dns() -> list[str]:
+    if sys.platform != "win32":
+        return []
+    import ctypes
+    from ctypes import wintypes
+
+    class IpAddrString(ctypes.Structure):
+        pass
+
+    IpAddrString._fields_ = [
+        ("Next", ctypes.POINTER(IpAddrString)),
+        ("IpAddress", ctypes.c_char * 16),
+        ("IpMask", ctypes.c_char * 16),
+        ("Context", wintypes.DWORD),
+    ]
+
+    class FixedInfo(ctypes.Structure):  # FIXED_INFO of iphlpapi.h
+        _fields_ = [
+            ("HostName", ctypes.c_char * 132),
+            ("DomainName", ctypes.c_char * 132),
+            ("CurrentDnsServer", ctypes.POINTER(IpAddrString)),
+            ("DnsServerList", IpAddrString),
+            ("NodeType", wintypes.UINT),
+            ("ScopeId", ctypes.c_char * 260),
+            ("EnableRouting", wintypes.UINT),
+            ("EnableProxy", wintypes.UINT),
+            ("EnableDns", wintypes.UINT),
+        ]
+
+    try:
+        get = ctypes.windll.iphlpapi.GetNetworkParams
+        size = wintypes.ULONG(0)
+        get(None, ctypes.byref(size))  # ERROR_BUFFER_OVERFLOW: the size it needs
+        buffer = ctypes.create_string_buffer(max(size.value, ctypes.sizeof(FixedInfo)))
+        if get(buffer, ctypes.byref(size)) != 0:
+            return []
+        info = FixedInfo.from_buffer(buffer)
+        found: list[str] = []
+        entry = ctypes.pointer(info.DnsServerList)
+        while entry and len(found) < MAX_RESOLVERS:
+            found.append(entry.contents.IpAddress.decode("ascii", "replace"))
+            entry = entry.contents.Next
+        return found
+    except (OSError, AttributeError, ValueError):
+        return []
 
 
 def parse_resolv_conf(text: str) -> list[str]:

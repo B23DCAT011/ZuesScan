@@ -506,9 +506,13 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     bằng hai tên ngẫu nhiên, resolver của hệ thống; hết giờ thì giữ tên đã xác nhận. Đã thử
     thật với CoreDNS riêng (vùng thường và vùng wildcard).
   - Còn lại:
-    - **Windows:** không có `/etc/resolv.conf`, dnsx dùng resolver công khai của nó (1.1.1.1,
-      8.8.8.8…) → tên chỉ có trong DNS nội bộ không tìm được. Sửa: đọc DNS server của Windows
-      (`GetNetworkParams` / `Get-DnsClientServerAddress`) hoặc tham số `resolvers`.
+    - ✅ **Windows** (`feat/dnsx-windows-resolvers`): dnsx hỏi DNS server mà Windows dùng
+      (`GetNetworkParams` qua ctypes, IPv4), không còn rơi về resolver công khai; hệ thống không
+      nêu resolver nào thì run ghi chú; `zues doctor` hiện danh sách. Thử thật trên Windows 11
+      (`-r 172.11.0.1,8.8.8.8,8.8.4.4`). Còn lại: DNS server IPv6 của Windows bị bỏ qua (thường
+      chỉ là `fec0::` giữ chỗ đã lỗi thời); chưa có tham số `resolvers` riêng cho một target;
+      DNS theo từng card mạng / theo hậu tố (NRPT, VPN split DNS) không được xét — Windows chọn
+      server theo tên, dnsx hỏi cả danh sách.
     - Resolver IPv6 trong resolv.conf bị bỏ qua (chưa thử cú pháp `-r` của dnsx với IPv6).
     - Wildcard chỉ nhận ra khi mọi địa chỉ của tên nằm trong địa chỉ của hai tên ngẫu nhiên:
       wildcard trả về địa chỉ xoay vòng từ một dải lớn (CDN) có thể lọt qua — cổng scope vẫn

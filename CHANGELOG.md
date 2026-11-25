@@ -7,6 +7,10 @@ section of a version as its release notes, so every tag needs one.
 ## [Unreleased]
 
 ### Added
+- dnsx on Windows asks the DNS servers Windows itself uses (GetNetworkParams), as the
+  scope guard does, instead of dnsx's public resolvers: names only internal DNS knows are
+  found there too. When the system names no DNS server, the run says dnsx asked public
+  resolvers. `zues doctor` shows the DNS servers dnsx will ask.
 - Virtual hosts in the web check (G29): every web service is also asked under each name
   of its host (the target's name, names discovery found pointing at it), with that name
   as the Host header while still connecting to the address the scope guard approved
