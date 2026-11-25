@@ -41,6 +41,77 @@ section of a version as its release notes, so every tag needs one.
   those never delivered (e.g. the webhook was removed) raised that long ago. The minimum
   is longer than any alert's deduplication window, so pruning never lets one repeat.
   Settings -> Alerts says how long they are kept.
+- Settings → **Sessions**: who is signed in, from where, since when, until when; **End**
+  ends a session. API: `GET /api/v1/admin/sessions`, `DELETE /api/v1/admin/sessions/{id}`.
+- Audit kind `auth`: signed in, signed out, session ended (by whom), address locked out.
+- Alerts are no longer lost: they wait in the database (`alert_outbox`, schema 16) until the
+  webhook takes them. A scan's alerts are saved in the same transaction as its run; the
+  worker sends them right away and the scheduler retries what failed at every round (after
+  1, 2, 4 ... minutes, at most an hour apart, `Retry-After` honoured), giving up after 24
+  hours, or at once on a 4xx that retrying cannot change or a redirect. Every retry carries
+  the same `X-ZuesScan-Delivery` id for receivers to deduplicate on.
+- Signed alerts: with `[notify] secret` (or `ZUES_WEBHOOK_SECRET`) every POST carries
+  `X-ZuesScan-Timestamp` and `X-ZuesScan-Signature: sha256=HMAC(secret, "<ts>." + body)`;
+  `zues_scan.server.notify.verify()` is the receiver's check.
+- New alerts: a target's scans failing `failed_scans` times in a row (default 3, once) and
+  working again; a scan not started (refused by its scope, e.g. an expired authorisation;
+  once a day); a scan job that failed without saving a run (RQ's failure callback; once
+  every 6 hours); an address locked out of the dashboard (once an hour); a test alert.
+- Settings → **Alerts**: where alerts go (host only), whether they are signed, each alert's
+  delivery state, **Send now**, **Send a test alert**. API: `GET /api/v1/admin/alerts`,
+  `POST /api/v1/admin/alerts/test`, `POST /api/v1/admin/alerts/{id}/retry`.
+- compose.yaml passes ZUES_WEBHOOK, ZUES_WEBHOOK_SECRET, ZUES_NOTIFY_MIN_PRIORITY and
+  ZUES_NOTIFY_FAILED_SCANS (e.g. from a `.env` file): the three-command install can alert.
+- `cron` schedules for targets, instead of `every`: `cron = "0 2 * * sat Asia/Ho_Chi_Minh"`
+  — the five crontab fields (lists, ranges, steps, month and day names; day of month OR day
+  of week when both are set), with an optional time zone (IANA name with daylight saving
+  time, `UTC` or `+07:00`). At least 5 minutes between scans. In service.toml, the API and
+  the dashboard (the Schedule box takes `24h` or a cron line). `zues-scan[server]` installs
+  `tzdata` on Windows, which has no time zone data of its own.
+- Compare runs in the dashboard: a run's **Changes** (against the run of the same target
+  before it) or any two runs ticked in Runs: hosts that appeared or went away, ports opened
+  or closed, software versions that changed, findings that appeared or went away, with the
+  caveats `zues diff` gives when runs are not comparable. API:
+  `GET /api/v1/runs/{id}/diff[?against=<id>]`; MCP tool `compare_runs`.
+- Pages: `GET /api/v1/runs?before=<id>` (the dashboard's **Older runs**) and
+  `GET /api/v1/findings?limit=&offset=` with `X-Total-Count` (**Show more**). Without them the
+  answers are what they were.
+- Every change of a scope, target or token — in the dashboard or with `zues user` — raises a
+  `config_changed` alert (who, what), queued in the same transaction as its audit event: one
+  admin can widen what may be scanned, and now the others know at once.
+
+### Changed
+- `DELETE /api/v1/session` with the session cookie needs the `X-ZuesScan: 1` header, like
+  every other change made with the cookie.
+- `zues scheduler --once` also sends the alerts that are due, and says how many.
+- The webhook is posted without following redirects (a redirect would drop the POST's body).
+- The database uses write-ahead logging: a long read (the dashboard, a report) no longer
+  holds back the save of a run, and saves no longer block readers; a busy database is
+  waited on for 15 seconds (was 5). Set when a database is created or migrated, and by
+  `web`, `worker` and `scheduler` at start (e.g. after a restore) — never by merely opening
+  one, so reading a backup leaves it byte for byte as hashed. Backups are written as one
+  self-contained file. `zues doctor` reports a database that is not in WAL mode. Restoring:
+  delete the old `zues.db-wal` / `zues.db-shm` first (README).
+- `zues doctor` checks the service that `$ZUES_CONFIG` or the `ZUES_*` variables describe
+  when no `--config` is given: in the image (`docker compose exec web zues doctor`) it now
+  checks the database and Redis too.
+- `zues user add` takes `--expires` (default 90d); `zues user list` shows when each token
+  expires.
+
+### Fixed
+- The scheduler read its configuration once, at start: a target added or changed in the
+  dashboard (or in service.toml) was never scheduled until the scheduler restarted — the
+  three-command install's "add a target, every 24h" did not scan. It now re-reads the
+  configuration at every round; an invalid one schedules nothing until it is fixed.
+- Scheduled scans drifted: a target was due `every` after its last scan *started* (or was
+  queued), so a scan that waited 40 minutes in the queue moved every later one by 40
+  minutes. The scheduler now keeps each target's slot: due at the last slot + `every`,
+  whenever the scan actually ran; several missed slots are made up with one scan.
+- nuclei missed network flaws on busy servers: its network checks (SSH, TLS handshakes) ran
+  with the HTTP settings, 10 s per request and one retry. Against a CPU-starved SSH server it
+  missed Terrapin (CVE-2023-48795) on 4 of 10 runs — the lab's CI job failed twice that way.
+  The network run now waits 30 s with 3 retries (5 of 5); web checks keep 10 s / 1, and the
+  check's overall time budget is unchanged.
 
 ### Security
 - Scan limits (D17). A target is never scanned twice at once: while a scan of it waits or
@@ -131,79 +202,6 @@ section of a version as its release notes, so every tag needs one.
 - Tokens are rotated: Settings → Tokens → **Rotate**, `zues user rotate NAME`,
   `POST /api/v1/admin/tokens/{name}/rotate` give a new value under the same name and role;
   the old value, and every session opened with it, stop working at once. Audited.
-
-### Added
-- Settings → **Sessions**: who is signed in, from where, since when, until when; **End**
-  ends a session. API: `GET /api/v1/admin/sessions`, `DELETE /api/v1/admin/sessions/{id}`.
-- Audit kind `auth`: signed in, signed out, session ended (by whom), address locked out.
-- Alerts are no longer lost: they wait in the database (`alert_outbox`, schema 16) until the
-  webhook takes them. A scan's alerts are saved in the same transaction as its run; the
-  worker sends them right away and the scheduler retries what failed at every round (after
-  1, 2, 4 ... minutes, at most an hour apart, `Retry-After` honoured), giving up after 24
-  hours, or at once on a 4xx that retrying cannot change or a redirect. Every retry carries
-  the same `X-ZuesScan-Delivery` id for receivers to deduplicate on.
-- Signed alerts: with `[notify] secret` (or `ZUES_WEBHOOK_SECRET`) every POST carries
-  `X-ZuesScan-Timestamp` and `X-ZuesScan-Signature: sha256=HMAC(secret, "<ts>." + body)`;
-  `zues_scan.server.notify.verify()` is the receiver's check.
-- New alerts: a target's scans failing `failed_scans` times in a row (default 3, once) and
-  working again; a scan not started (refused by its scope, e.g. an expired authorisation;
-  once a day); a scan job that failed without saving a run (RQ's failure callback; once
-  every 6 hours); an address locked out of the dashboard (once an hour); a test alert.
-- Settings → **Alerts**: where alerts go (host only), whether they are signed, each alert's
-  delivery state, **Send now**, **Send a test alert**. API: `GET /api/v1/admin/alerts`,
-  `POST /api/v1/admin/alerts/test`, `POST /api/v1/admin/alerts/{id}/retry`.
-- compose.yaml passes ZUES_WEBHOOK, ZUES_WEBHOOK_SECRET, ZUES_NOTIFY_MIN_PRIORITY and
-  ZUES_NOTIFY_FAILED_SCANS (e.g. from a `.env` file): the three-command install can alert.
-- `cron` schedules for targets, instead of `every`: `cron = "0 2 * * sat Asia/Ho_Chi_Minh"`
-  — the five crontab fields (lists, ranges, steps, month and day names; day of month OR day
-  of week when both are set), with an optional time zone (IANA name with daylight saving
-  time, `UTC` or `+07:00`). At least 5 minutes between scans. In service.toml, the API and
-  the dashboard (the Schedule box takes `24h` or a cron line). `zues-scan[server]` installs
-  `tzdata` on Windows, which has no time zone data of its own.
-- Compare runs in the dashboard: a run's **Changes** (against the run of the same target
-  before it) or any two runs ticked in Runs: hosts that appeared or went away, ports opened
-  or closed, software versions that changed, findings that appeared or went away, with the
-  caveats `zues diff` gives when runs are not comparable. API:
-  `GET /api/v1/runs/{id}/diff[?against=<id>]`; MCP tool `compare_runs`.
-- Pages: `GET /api/v1/runs?before=<id>` (the dashboard's **Older runs**) and
-  `GET /api/v1/findings?limit=&offset=` with `X-Total-Count` (**Show more**). Without them the
-  answers are what they were.
-- Every change of a scope, target or token — in the dashboard or with `zues user` — raises a
-  `config_changed` alert (who, what), queued in the same transaction as its audit event: one
-  admin can widen what may be scanned, and now the others know at once.
-
-### Changed
-- `DELETE /api/v1/session` with the session cookie needs the `X-ZuesScan: 1` header, like
-  every other change made with the cookie.
-- `zues scheduler --once` also sends the alerts that are due, and says how many.
-- The webhook is posted without following redirects (a redirect would drop the POST's body).
-- The database uses write-ahead logging: a long read (the dashboard, a report) no longer
-  holds back the save of a run, and saves no longer block readers; a busy database is
-  waited on for 15 seconds (was 5). Set when a database is created or migrated, and by
-  `web`, `worker` and `scheduler` at start (e.g. after a restore) — never by merely opening
-  one, so reading a backup leaves it byte for byte as hashed. Backups are written as one
-  self-contained file. `zues doctor` reports a database that is not in WAL mode. Restoring:
-  delete the old `zues.db-wal` / `zues.db-shm` first (README).
-- `zues doctor` checks the service that `$ZUES_CONFIG` or the `ZUES_*` variables describe
-  when no `--config` is given: in the image (`docker compose exec web zues doctor`) it now
-  checks the database and Redis too.
-- `zues user add` takes `--expires` (default 90d); `zues user list` shows when each token
-  expires.
-
-### Fixed
-- The scheduler read its configuration once, at start: a target added or changed in the
-  dashboard (or in service.toml) was never scheduled until the scheduler restarted — the
-  three-command install's "add a target, every 24h" did not scan. It now re-reads the
-  configuration at every round; an invalid one schedules nothing until it is fixed.
-- Scheduled scans drifted: a target was due `every` after its last scan *started* (or was
-  queued), so a scan that waited 40 minutes in the queue moved every later one by 40
-  minutes. The scheduler now keeps each target's slot: due at the last slot + `every`,
-  whenever the scan actually ran; several missed slots are made up with one scan.
-- nuclei missed network flaws on busy servers: its network checks (SSH, TLS handshakes) ran
-  with the HTTP settings, 10 s per request and one retry. Against a CPU-starved SSH server it
-  missed Terrapin (CVE-2023-48795) on 4 of 10 runs — the lab's CI job failed twice that way.
-  The network run now waits 30 s with 3 retries (5 of 5); web checks keep 10 s / 1, and the
-  check's overall time budget is unchanged.
 
 ## [0.2.0] - 2026-11-24
 
