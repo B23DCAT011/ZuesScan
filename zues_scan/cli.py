@@ -98,6 +98,11 @@ def _print_summary(run: ScanRun, run_id: int, db_path: str) -> None:
             print(f"    {f'{s.port}/{s.protocol}':<11}{(s.name or '-'):<16}{pv}")
             if s.web is not None:
                 print(f"    {'':<11}{'':<16}{_web_line(s.web)}")
+            for page in s.vhosts[:MAX_VHOSTS_SHOWN]:
+                print(f"    {'':<11}{'':<16}{_web_line(page)}")
+            if len(s.vhosts) > MAX_VHOSTS_SHOWN:
+                more = len(s.vhosts) - MAX_VHOSTS_SHOWN
+                print(f"    {'':<11}{'':<16}... and {more} more site(s) by name: zues report")
         # Most urgent first: known-exploited, then likely-exploited, then impact.
         ranked = sorted(asset.findings, key=priority.sort_key)
         for f in ranked[:MAX_FINDINGS_SHOWN]:
@@ -123,11 +128,16 @@ def _print_summary(run: ScanRun, run_id: int, db_path: str) -> None:
         )
 
 
+MAX_VHOSTS_SHOWN = 10
+
+
 def _web_line(web: WebPage) -> str:
-    """One line for what httpx saw, e.g. `200 "Welcome to nginx!"  Nginx:1.20.0`."""
+    """One line for what httpx saw, e.g. `200 "Welcome to nginx!"  Nginx:1.20.0`; a site
+    asked by name says which (`web (shop.acme.test): ...`)."""
     title = f' "{web.title}"' if web.title else ""
     techs = ", ".join(web.technologies[:6]) + (" ..." if len(web.technologies) > 6 else "")
-    return f"web: {web.status or '-'}{title}" + (f"  [{techs}]" if techs else "")
+    label = f"web ({web.host})" if web.host else "web"
+    return f"{label}: {web.status or '-'}{title}" + (f"  [{techs}]" if techs else "")
 
 
 def _risk_line(f: Finding) -> str:

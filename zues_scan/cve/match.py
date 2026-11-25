@@ -75,10 +75,9 @@ def components(service: Service) -> list[Service]:
     """Software a web check saw behind `service` (httpx: "PHP:7.4.3"), as services on
     the same port, so the CVE stage matches them like any other. Without a version, or
     under a name not in `TECH_NAMES`, nothing is matched."""
-    if service.web is None:
-        return []
     found = []
-    for tech in service.web.technologies:
+    techs = dict.fromkeys(t for page in service.pages() for t in page.technologies)
+    for tech in techs:  # each once: several sites may run the same software
         name, sep, version = tech.rpartition(":")
         name, version = name.strip(), version.strip()
         known = TECH_NAMES.get(name.lower()) if sep else None

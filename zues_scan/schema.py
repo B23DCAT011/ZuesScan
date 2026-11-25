@@ -107,6 +107,9 @@ class WebPage:
     # Technologies recognised (Wappalyzer names), "Name" or "Name:version",
     # e.g. "Apache HTTP Server:2.4.49", "PHP:7.4.3". Versions feed the CVE stage.
     technologies: tuple[str, ...] = ()
+    # The name sent as the Host header (a virtual host), the connection still going to
+    # the scanned address; None: asked by address, the server's default site.
+    host: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -115,6 +118,7 @@ class WebPage:
             "title": self.title,
             "server": self.server,
             "technologies": list(self.technologies),
+            "host": self.host,
         }
 
     @classmethod
@@ -126,6 +130,7 @@ class WebPage:
             title=data.get("title"),
             server=data.get("server"),
             technologies=tuple(str(t) for t in data.get("technologies") or ()),
+            host=str(data["host"]) if data.get("host") else None,
         )
 
 
@@ -142,6 +147,13 @@ class Service:
     cpe: str | None = None  # e.g. "cpe:/a:openbsd:openssh:7.4"
     banner: str | None = None
     web: WebPage | None = None  # set by an HTTP check (httpx) on a web service
+    # The same port asked under each name of the host (virtual hosts): one page per name,
+    # its `host` set. Often other sites than `web`, the default one.
+    vhosts: tuple[WebPage, ...] = ()
+
+    def pages(self) -> tuple[WebPage, ...]:
+        """Every page seen on this service: the default site first, then by name."""
+        return ((self.web,) if self.web else ()) + self.vhosts
 
 
 # Which recipe a fingerprint was made with. Fingerprints are only comparable within
