@@ -101,7 +101,7 @@ def test_discover_tries_every_word_and_two_random_names(
     words.write_text("vpn\nnope\nintranet\n", encoding="utf-8")
     resolv = tmp_path / "resolv.conf"
     resolv.write_text("nameserver 10.0.0.53\n", encoding="utf-8")
-    plugin = DnsxPlugin(wordlist=str(words), rate=20, resolv_conf=str(resolv))
+    plugin = DnsxPlugin(wordlist=str(words), rate=20, resolv_conf=str(resolv), recurse=0)
     result = plugin.discover("Example.com.")
     assert result.names == ["intranet.example.com", "vpn.example.com"]
     (call,) = fake_dnsx
@@ -206,3 +206,68 @@ def test_windows_names_its_dns_servers() -> None:
     assert servers and all(
         isinstance(ipaddress.ip_address(s), ipaddress.IPv4Address) for s in servers
     )
+
+
+def zone(monkeypatch: pytest.MonkeyPatch, records: dict[str, str]) -> list[list[str]]:
+    """`subprocess.run` answering like dnsx over a zone: only `records` resolve (a key
+    `*.x` answers for every name under x)."""
+    asked: list[list[str]] = []
+
+    def address(name: str) -> str | None:
+        if name in records:
+            return records[name]
+        parent = name.split(".", 1)[1]
+        return records.get(f"*.{parent}")
+
+    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        names = Path(command[command.index("-l") + 1]).read_text(encoding="utf-8").split()
+        asked.append(names)
+        out = [line(n, a) for n in names if (a := address(n)) is not None]
+        return subprocess.CompletedProcess(command, 0, stdout="\n".join(out), stderr="")
+
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/dnsx")
+    monkeypatch.setattr(subprocess, "run", run)
+    return asked
+
+
+def test_one_level_deeper_under_what_was_found(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    words = tmp_path / "words.txt"
+    words.write_text("dev\napi\nwild\ndb\n", encoding="utf-8")
+    asked = zone(
+        monkeypatch,
+        {
+            "dev.example.com": "10.0.0.1",
+            "api.dev.example.com": "10.0.0.2",  # only found one level deeper
+            "db.api.dev.example.com": "10.0.0.3",  # two levels: not looked for
+            "wild.example.com": "10.0.0.9",
+            "*.wild.example.com": "10.0.0.9",  # a wildcard one level down
+        },
+    )
+    result = DnsxPlugin(wordlist=str(words), resolv_conf=str(tmp_path / "none")).discover(
+        "example.com"
+    )
+    assert result.names == ["api.dev.example.com", "dev.example.com", "wild.example.com"]
+    first, second = asked
+    assert {n.split(".", 1)[1] for n in second} == {"dev.example.com", "wild.example.com"}
+    assert len([n for n in second if n.startswith(PROBE)]) == 4  # two under each
+    assert len(result.raw) == 2
+    assert "one level deeper under 2 name(s) (dev.example.com, wild.example.com): 1 more found" in (
+        result.notes
+    )
+    assert any(n.startswith("wildcard DNS under wild.example.com: 4 name(s)") for n in result.notes)
+
+
+def test_the_deeper_pass_can_be_turned_off_and_is_capped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    words = tmp_path / "words.txt"
+    words.write_text("\n".join(f"w{i}" for i in range(15)) + "\n", encoding="utf-8")
+    asked = zone(monkeypatch, {f"w{i}.example.com": "10.0.0.1" for i in range(15)})
+    DnsxPlugin(wordlist=str(words), recurse=0).discover("example.com")
+    assert len(asked) == 1
+    asked.clear()
+    DnsxPlugin(wordlist=str(words)).discover("example.com")
+    parents = {n.split(".", 1)[1] for n in asked[1]}
+    assert len(parents) == dnsx_plugin.RECURSE == 10

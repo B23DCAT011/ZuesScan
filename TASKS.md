@@ -296,4 +296,6 @@ rồi độ tin cậy, rồi tiện dụng.
       mức / target / loại, mỗi nơi một dòng outbox. Thử thật hai receiver HTTP + Chrome.
 - [x] `feat/evidence-filter` (G24, G30) — lọc finding theo bằng chứng (confirmed / tried /
       untried) trên API, dashboard, MCP; lịch sử token trong Settings. Kiểm bằng Chrome.
+- [x] `feat/dnsx-recurse` (G27) — dnsx dò thêm một tầng dưới tên vừa tìm (tối đa 10), wildcard
+      theo từng tên. Thử thật dnsx + CoreDNS.
 

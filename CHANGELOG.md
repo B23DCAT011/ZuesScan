@@ -7,6 +7,11 @@ section of a version as its release notes, so every tag needs one.
 ## [Unreleased]
 
 ### Added
+- dnsx looks one level deeper (G27): after the first pass, the wordlist is tried again under
+  up to 10 of the names found directly under the domain (`api.dev.example.com` from
+  `dev.example.com`), with two random names under each to recognise a wildcard there.
+  One level only, within the same time limit; the run says under which names and how many
+  more were found.
 - Findings by evidence (G24): `GET /api/v1/findings?evidence=confirmed|tried|untried` -
   observed by a check, tried with its template and not matched, or inferred from a version
   and never tried; the Findings page has the filter and says each row's evidence, the MCP

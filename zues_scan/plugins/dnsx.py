@@ -13,6 +13,12 @@ Two random names are asked as well; a name that answers with nothing but the wil
 addresses is dropped here, and the scope guard checks every name again before anything
 is scanned (`Scope.plan_discovered`).
 
+One level deeper: names often nest (`api.dev.example.com`, `db.corp.example.com`), and a
+name that exists is the best hint that more live under it. After the first pass, the
+same wordlist is tried under up to `recurse` (10) of the names found directly under the
+domain, with two random names under each to recognise a wildcard there too. One level
+only: each level multiplies the queries by the wordlist's size.
+
 The wordlist is ZuesScan's own (`zues_scan/data/subdomains.txt`, a few hundred names
 common in companies), or any file given (`--dns-wordlist`, `dns_wordlist` in the service).
 The resolvers are the system's, the same the scope guard resolves with, so internal
@@ -31,6 +37,7 @@ import secrets
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from zues_scan import tools
@@ -43,6 +50,7 @@ _WORD = re.compile(rf"{_LABEL}(?:\.{_LABEL})*")
 _NAME = re.compile(r"(?=.{1,253}$)([a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?\.)+[a-z][a-z0-9-]*")
 PROBE = "zues-wildcard-"  # random names asked to recognise wildcard DNS
 MAX_WORDS = 50_000  # a bigger list would not finish within the time budget anyway
+RECURSE = 10  # names found under the domain that the wordlist is tried under again
 BUNDLED = Path(__file__).resolve().parent.parent / "data" / "subdomains.txt"
 
 
@@ -58,11 +66,13 @@ class DnsxPlugin:
         rate: int = 100,
         timeout: int = 600,
         resolv_conf: str | None = None,
+        recurse: int = RECURSE,
     ) -> None:
         self.wordlist = wordlist  # None: the bundled list
         self.rate = max(1, rate)  # DNS queries per second, at most
-        self.timeout = timeout  # seconds before ZuesScan stops dnsx
+        self.timeout = timeout  # seconds before ZuesScan stops dnsx (both passes)
         self.resolv_conf = resolv_conf  # None: the system's (Windows: its DNS servers)
+        self.recurse = max(0, recurse)  # names looked under one level deeper; 0: none
 
     def is_available(self) -> bool:
         return tools.which("dnsx") is not None
@@ -147,21 +157,70 @@ class DnsxPlugin:
         words, source = self.words()
         if not words:
             raise ScanError(f"the DNS wordlist ({source}) holds no usable word", plugin=self.name)
-        probes = [f"{PROBE}{secrets.token_hex(6)}.{domain}" for _ in range(2)]
-        candidates = [f"{word}.{domain}" for word in words] + probes
         notes = []
         if len(words) == MAX_WORDS:
             notes.append(f"only the first {MAX_WORDS} words of {source} were tried")
+        deadline = time.monotonic() + self.timeout
+        resolvers = self.resolvers()
+        if not resolvers:  # internal names will not be found: say so
+            notes.append(
+                "the system names no DNS server: dnsx asked public resolvers, "
+                "names only internal DNS knows are not found"
+            )
+        stdout, raw, stopped = self._pass([domain], words, resolvers, self.timeout)
+        names, wildcard, skipped = parse_jsonl(stdout, domain)
+        notes.insert(0, f"tried {len(words)} name(s) from {source}; {len(names)} found")
+        if wildcard:
+            notes.append(
+                f"wildcard DNS under {domain} (any name answers): {wildcard} name(s) "
+                "answering with nothing but the wildcard's addresses dropped"
+            )
+        raws = [raw]
+        # One level deeper, under the names found directly under the domain.
+        depth = domain.count(".") + 1
+        parents = [n for n in names if n.count(".") == depth][: self.recurse]
+        left = int(deadline - time.monotonic())
+        if parents and not stopped and left >= 1:
+            stdout, raw, stopped = self._pass(parents, words, resolvers, left)
+            raws.append(raw)
+            deeper: list[str] = []
+            for parent in parents:
+                found, dropped, _ = parse_jsonl(stdout, parent)
+                deeper += [n for n in found if n not in names]
+                if dropped:
+                    notes.append(
+                        f"wildcard DNS under {parent}: {dropped} name(s) answering with "
+                        "nothing but the wildcard's addresses dropped"
+                    )
+            shown = ", ".join(parents[:3]) + (
+                f" and {len(parents) - 3} more" if len(parents) > 3 else ""
+            )
+            notes.append(
+                f"one level deeper under {len(parents)} name(s) ({shown}): {len(deeper)} more found"
+            )
+            names = sorted({*names, *deeper})
+        elif parents and not stopped:
+            stopped = True
+        if stopped:
+            notes.append(
+                f"stopped after {self.timeout}s: only part of the wordlist was tried "
+                "(a smaller list or a higher check_rate finishes sooner)"
+            )
+        if skipped:
+            notes.append(f"ignored {skipped} line(s) of dnsx output it could not read")
+        return DiscoveryResult(names=names, raw=raws, notes=notes)
+
+    def _pass(
+        self, parents: list[str], words: list[str], resolvers: list[str], timeout: int
+    ) -> tuple[str, RawOutput, bool]:
+        """One dnsx run: every word under every parent, and two random names under each
+        (wildcards). Its output, kept as raw output, and whether it ran out of time."""
+        candidates = [f"{word}.{parent}" for parent in parents for word in words]
+        candidates += [f"{PROBE}{secrets.token_hex(6)}.{p}" for p in parents for _ in range(2)]
         stopped = False
         with tempfile.TemporaryDirectory(prefix="zues-dnsx-") as home:
             names_file = os.path.join(home, "names.txt")
             Path(names_file).write_text("\n".join(candidates) + "\n", encoding="utf-8")
-            resolvers = self.resolvers()
-            if not resolvers:  # internal names will not be found: say so
-                notes.append(
-                    "the system names no DNS server: dnsx asked public resolvers, "
-                    "names only internal DNS knows are not found"
-                )
             command = self.command(names_file, resolvers)
             try:
                 proc = subprocess.run(
@@ -170,7 +229,7 @@ class DnsxPlugin:
                     stdin=subprocess.DEVNULL,
                     encoding="utf-8",
                     errors="replace",
-                    timeout=self.timeout,
+                    timeout=timeout,
                     check=True,
                     env=_env(home),
                 )
@@ -180,7 +239,7 @@ class DnsxPlugin:
                 stdout, stderr, stopped = _text(exc.stdout), _text(exc.stderr), True
             except subprocess.CalledProcessError as exc:
                 raise ScanError(
-                    f"dnsx exited with code {exc.returncode} for {domain}",
+                    f"dnsx exited with code {exc.returncode} for {', '.join(parents[:3])}",
                     plugin=self.name,
                     stderr=(exc.stderr or "").strip() or None,
                 ) from exc
@@ -193,21 +252,7 @@ class DnsxPlugin:
             content=stdout,
             stderr=stderr.strip(),
         )
-        names, wildcard, skipped = parse_jsonl(stdout, domain)
-        notes.insert(0, f"tried {len(words)} name(s) from {source}; {len(names)} found")
-        if stopped:
-            notes.append(
-                f"stopped after {self.timeout}s: only part of the wordlist was tried "
-                "(a smaller list or a higher check_rate finishes sooner)"
-            )
-        if wildcard:
-            notes.append(
-                f"wildcard DNS under {domain} (any name answers): {wildcard} name(s) "
-                "answering with nothing but the wildcard's addresses dropped"
-            )
-        if skipped:
-            notes.append(f"ignored {skipped} line(s) of dnsx output it could not read")
-        return DiscoveryResult(names=names, raw=[raw], notes=notes)
+        return stdout, raw, stopped
 
 
 def parse_wordlist(text: str) -> list[str]:

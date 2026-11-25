@@ -416,6 +416,12 @@ Quy tắc của scope:
   công khai và run ghi rõ điều đó; `zues doctor` cho biết dnsx sẽ hỏi DNS server nào.
   Đã thử thật với một máy chủ DNS riêng (CoreDNS): tìm đủ 6 tên (kể cả tên chỉ có AAAA), và
   với một vùng wildcard thì loại cả 374 tên "giả".
+  **Thêm một tầng**: tên lồng nhau thường gặp (`api.dev.`, `db.corp.`), và một tên có thật là
+  gợi ý tốt nhất cho tên bên dưới nó — sau lượt đầu, wordlist được thử lại dưới tối đa 10 tên tìm
+  được ngay dưới tên miền, mỗi tên có hai tên ngẫu nhiên riêng để nhận ra wildcard ở tầng đó.
+  Chỉ một tầng (mỗi tầng nhân số truy vấn lên theo kích thước wordlist), chung giới hạn thời
+  gian. Thử thật (CoreDNS): `api.dev.example.test` chỉ thấy ở tầng hai, wildcard dưới
+  `wild.example.test` bị loại.
 - **IPv6 cũng vậy.** Tên được phân giải ra cả IPv4 và IPv6; địa chỉ IPv6 cũng phải có trong
   scope (vd `2001:db8::/64`), hoặc quét `--ipv4-only`. Không quét quét dải IPv6 lớn hơn /112.
 - **Deny thắng allow.** Quét một dải có chứa địa chỉ bị cấm thì địa chỉ đó được loại trừ
