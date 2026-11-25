@@ -236,7 +236,7 @@ def build(api: Api) -> MCPServer:
                 "host": h["host"],
                 "ip": h["ip"],
                 "services": [
-                    _pick(s, "port", "protocol", "name", "product", "version", "web")
+                    _pick(s, "port", "protocol", "name", "product", "version", "web", "vhosts")
                     for s in h["services"]
                 ],
                 "findings": [

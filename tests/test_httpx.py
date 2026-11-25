@@ -13,9 +13,10 @@ import pytest
 from zues_scan.cve import LocalCveSource
 from zues_scan.cve.match import components
 from zues_scan.orchestrator import Orchestrator
+from zues_scan.plugins import httpx as httpx_plugin
 from zues_scan.plugins import registry as plugin_registry
 from zues_scan.plugins.base import ScanError, ScanResult
-from zues_scan.plugins.httpx import HttpxPlugin, parse_jsonl
+from zues_scan.plugins.httpx import HttpxPlugin, parse_jsonl, plan_inputs
 from zues_scan.profiles import BUILTIN
 from zues_scan.schema import Asset, ScanTarget, Service, WebPage
 from zues_scan.scope import Activity, Scope
@@ -67,11 +68,74 @@ def test_parse_cleans_what_the_machine_sent() -> None:
     )
     pages, skipped = parse_jsonl(text)
     assert skipped == 2
-    nginx = pages[("10.0.0.5", 80)]
+    nginx = pages[("10.0.0.5", 80, None)]
     assert nginx.title == "Welcome [31m to nginx!"  # control and direction characters gone
     assert nginx.technologies[:2] == ("Nginx:1.20.0", "PHP:7.4.3")
     assert len(nginx.technologies[2]) == 200
-    assert pages[("fd00::7", 8080)] == WebPage(url="https://[fd00::7]:8080", status=401)
+    assert pages[("fd00::7", 8080, None)] == WebPage(url="https://[fd00::7]:8080", status=401)
+
+
+# --- virtual hosts -------------------------------------------------------------------------------
+
+
+def named_host() -> Asset:
+    return Asset(
+        "www.acme.test",
+        "10.0.0.5",
+        [Service(80, name="http"), Service(22, name="ssh"), Service(8443, name="https-alt")],
+        names=[
+            "shop.acme.test",
+            "WWW.acme.test.",  # the same name: once
+            "a,b.acme.test",  # would be two inputs to httpx
+            "x.acme.test:8080",  # would be another port
+            "http://y.acme.test",
+            "10.0.0.9",  # an address is not a name to send as Host
+            "a b.acme.test",
+            "",
+        ],
+    )
+
+
+def test_each_web_service_is_also_asked_under_each_name_of_its_host() -> None:
+    assert HttpxPlugin.names(named_host()) == ["www.acme.test", "shop.acme.test"]
+    assert HttpxPlugin.inputs([named_host()]) == [
+        "10.0.0.5:80",
+        "10.0.0.5:8443",
+        "www.acme.test,10.0.0.5:80",
+        "shop.acme.test,10.0.0.5:80",
+        "www.acme.test,10.0.0.5:8443",
+        "shop.acme.test,10.0.0.5:8443",
+    ]
+    v6 = Asset("v6.acme.test", "fd00::7", [Service(443, name="https")])
+    assert HttpxPlugin.inputs([v6]) == ["[fd00::7]:443", "v6.acme.test,[fd00::7]:443"]
+
+
+def test_names_are_capped_never_the_services_by_address(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(httpx_plugin, "MAX_VHOSTS", 3)
+    inputs, left_out = plan_inputs([named_host()])
+    assert inputs == [
+        "10.0.0.5:80",
+        "10.0.0.5:8443",
+        "www.acme.test,10.0.0.5:80",
+        "shop.acme.test,10.0.0.5:80",
+        "www.acme.test,10.0.0.5:8443",
+    ]
+    assert left_out == 1
+
+
+def test_a_page_asked_by_name_says_which() -> None:
+    text = "\n".join(
+        [
+            record("shop.acme.test,10.0.0.5:80", url="http://10.0.0.5:80", title="Shop"),
+            record("10.0.0.5:80", title="Welcome to nginx!"),
+            record("evil test,10.0.0.5:80", url="http://10.0.0.5:80"),  # not a name: ignored
+        ]
+    )
+    pages, skipped = parse_jsonl(text)
+    assert skipped == 1
+    shop = pages[("10.0.0.5", 80, "shop.acme.test")]
+    assert (shop.host, shop.title, shop.url) == ("shop.acme.test", "Shop", "http://10.0.0.5:80")
+    assert pages[("10.0.0.5", 80, None)].host is None
 
 
 @pytest.fixture
@@ -109,6 +173,34 @@ def test_check_reports_pages_on_their_services(fake_httpx: list[dict[str, Any]])
     assert "1 of 3 web service(s) answered" in result.notes
     assert result.raw[0].format == "httpx-jsonl"
     assert plugin.version() == "1.12.0"
+
+
+def test_check_keeps_every_site_on_its_service(
+    fake_httpx: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lines = [
+        record("www.acme.test,10.0.0.5:80", title="Acme", tech=["WordPress:5.8"]),
+        record("10.0.0.5:80", title="Welcome to nginx!"),
+        record("shop.acme.test,10.0.0.5:80", title="Shop", tech=["PHP:7.4.3"]),
+        record("shop.acme.test,10.0.0.5:8443", failed=True),
+    ]
+
+    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, "\n".join(lines), "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    result = HttpxPlugin().check(PLAN, [named_host()])
+    (asset,) = result.assets
+    (service,) = asset.services
+    assert service.web is not None and service.web.title == "Welcome to nginx!"
+    assert [(p.host, p.title) for p in service.vhosts] == [
+        ("shop.acme.test", "Shop"),
+        ("www.acme.test", "Acme"),
+    ]
+    assert "1 of 2 web service(s) answered" in result.notes
+    assert "2 of 4 site(s) by name answered" in result.notes
+    techs = [(s.product, s.version) for s in components(service)]
+    assert techs == [("PHP", "7.4.3"), ("WordPress", "5.8")]
 
 
 def test_nothing_to_look_at_runs_nothing(fake_httpx: list[dict[str, Any]]) -> None:
@@ -206,6 +298,36 @@ def test_a_version_only_the_web_check_saw_reaches_the_cve_stage(tmp_path: Path) 
         loaded = store.load_run(run_id)
     assert loaded is not None
     assert loaded.assets[0].services[0].web == service.web  # kept in the database
+
+
+class Sites(Web):
+    """A check that saw only sites by name (the address gives no answer)."""
+
+    def check(self, plan: ScanTarget, found: list[Asset]) -> ScanResult:
+        shop = WebPage(
+            "http://10.0.0.5:80",
+            200,
+            "Shop",
+            technologies=("Apache HTTP Server:2.4.49",),
+            host="shop.acme.test",
+        )
+        return ScanResult(assets=[Asset("10.0.0.5", "10.0.0.5", [Service(80, vhosts=(shop,))])])
+
+
+def test_sites_by_name_are_kept_and_reach_the_cve_stage(tmp_path: Path) -> None:
+    scope = Scope.from_entries(["10.0.0.0/24"])
+    run = Orchestrator([Ports()], scope, checks=[Sites()], cve_source=LocalCveSource()).run(
+        "10.0.0.5"
+    )
+    (service,) = run.assets[0].services
+    assert service.web is None and [p.host for p in service.vhosts] == ["shop.acme.test"]
+    assert any(f.cve == "CVE-2021-41773" for f in run.assets[0].findings)
+
+    with Storage(tmp_path / "zues.db") as store:
+        loaded = store.load_run(store.save_run(run))
+        (kept,) = store.services_for_run(1)
+    assert loaded is not None and loaded.assets[0].services[0].vhosts == service.vhosts
+    assert kept.vhosts == service.vhosts
 
 
 def test_registered_as_a_scan_level_check() -> None:

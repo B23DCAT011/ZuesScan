@@ -508,11 +508,13 @@ def _attach_web(known: Asset, found: Asset) -> None:
     """What a check saw on a web service (httpx) goes onto the scanned service: only
     services the scan found, never a port a check claims on its own."""
     for seen in found.services:
-        if seen.web is None:
+        if seen.web is None and not seen.vhosts:
             continue
         for i, service in enumerate(known.services):
             if (service.port, service.protocol) == (seen.port, seen.protocol):
-                known.services[i] = replace(service, web=seen.web)
+                known.services[i] = replace(
+                    service, web=seen.web or service.web, vhosts=seen.vhosts or service.vhosts
+                )
 
 
 def _merge_into(known: Asset, found: Asset) -> None:

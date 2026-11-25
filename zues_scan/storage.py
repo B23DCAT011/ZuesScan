@@ -54,7 +54,7 @@ log = logging.getLogger(__name__)
 
 # The schema version this code reads and writes. Bump it together with a new entry
 # in `_MIGRATIONS`; never edit a migration that has already shipped.
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 
 # How long a writer waits for another to finish before "database is locked".
 BUSY_SECONDS = 15.0
@@ -634,6 +634,10 @@ _V19 = (
 # Version 20: a dashboard token may be held to a number of scan requests an hour (G26).
 _V20 = ("ALTER TABLE managed_token ADD COLUMN scans_per_hour INTEGER",)
 
+# Version 21: what a web check saw under each name of the host (virtual hosts, G29):
+# a JSON list of pages like `web`'s (NULL: none asked by name).
+_V21 = ("ALTER TABLE service ADD COLUMN vhosts TEXT",)
+
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: _V1,
     2: _V2,
@@ -655,6 +659,7 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
     18: _V18,
     19: _V19,
     20: _V20,
+    21: _V21,
 }
 
 
@@ -1730,8 +1735,8 @@ class Storage:
         for s in services:
             cur = self._conn.execute(
                 "INSERT INTO service "
-                "(asset_id, port, protocol, state, name, product, version, cpe, banner, web) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(asset_id, port, protocol, state, name, product, version, cpe, banner, web, "
+                "vhosts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     asset_id,
                     s.port,
@@ -1743,6 +1748,7 @@ class Storage:
                     s.cpe,
                     s.banner,
                     json.dumps(s.web.to_dict()) if s.web else None,
+                    json.dumps([p.to_dict() for p in s.vhosts]) if s.vhosts else None,
                 ),
             )
             ids[(s.port, s.protocol)] = int(cur.lastrowid or 0)
@@ -1896,8 +1902,8 @@ class Storage:
         ).fetchall():
             asset = Asset(host=a["host"], ip=a["ip"], names=list(json.loads(a["names"] or "[]")))
             for s in self._conn.execute(
-                "SELECT id, port, protocol, state, name, product, version, cpe, banner, web "
-                "FROM service WHERE asset_id = ? ORDER BY id",
+                "SELECT id, port, protocol, state, name, product, version, cpe, banner, web, "
+                "vhosts FROM service WHERE asset_id = ? ORDER BY id",
                 (a["id"],),
             ):
                 service = _service(s)
@@ -2043,7 +2049,7 @@ class Storage:
         """The services recorded for a run, across all its hosts, by port."""
         rows = self._conn.execute(
             "SELECT s.port, s.protocol, s.state, s.name, s.product, s.version, s.cpe, s.banner, "
-            "s.web FROM service s JOIN asset a ON a.id = s.asset_id "
+            "s.web, s.vhosts FROM service s JOIN asset a ON a.id = s.asset_id "
             "WHERE a.run_id = ? ORDER BY s.port, s.id",
             (run_id,),
         ).fetchall()
@@ -2088,6 +2094,7 @@ def _service(row: sqlite3.Row) -> Service:
         cpe=row["cpe"],
         banner=row["banner"],
         web=WebPage.from_dict(json.loads(row["web"])) if row["web"] else None,
+        vhosts=tuple(WebPage.from_dict(p) for p in json.loads(row["vhosts"] or "[]")),
     )
 
 

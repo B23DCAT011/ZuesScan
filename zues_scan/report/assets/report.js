@@ -402,16 +402,18 @@
         ["host", host.host], ["state", svc.state], ["product", svc.product],
         ["version", svc.version], ["cpe", svc.cpe, "mono"], ["banner", svc.banner, "mono"]
       ]));
-      if (svc.web) {
-        // What httpx saw: all of it comes from the scanned machine, kv() sets it as text.
-        details.appendChild(el("h4", null, "Web"));
+      // What httpx saw: all of it comes from the scanned machine, kv() sets it as text.
+      // The default site (asked by address), then the site under each name of the host.
+      [svc.web].concat(svc.vhosts || []).forEach(function (page) {
+        if (!page) return;
+        details.appendChild(el("h4", null, page.host ? "Web — " + page.host : "Web"));
         details.appendChild(kv([
-          ["url", svc.web.url, "mono"],
-          ["status", svc.web.status === null ? null : String(svc.web.status)],
-          ["title", svc.web.title], ["server", svc.web.server, "mono"],
-          ["technologies", svc.web.technologies.length ? svc.web.technologies.join(", ") : null]
+          ["url", page.url, "mono"],
+          ["status", page.status === null ? null : String(page.status)],
+          ["title", page.title], ["server", page.server, "mono"],
+          ["technologies", page.technologies.length ? page.technologies.join(", ") : null]
         ]));
-      }
+      });
       var onIt = host.findings.filter(function (x) {
         return x.port === svc.port && x.protocol === svc.protocol;
       });

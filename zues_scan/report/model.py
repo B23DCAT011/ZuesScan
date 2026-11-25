@@ -138,6 +138,7 @@ def _service(s: Service) -> dict[str, Any]:
         "cpe": s.cpe,
         "banner": s.banner,
         "web": s.web.to_dict() if s.web else None,
+        "vhosts": [p.to_dict() for p in s.vhosts],
     }
 
 

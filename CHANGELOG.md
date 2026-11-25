@@ -7,6 +7,13 @@ section of a version as its release notes, so every tag needs one.
 ## [Unreleased]
 
 ### Added
+- Virtual hosts in the web check (G29): every web service is also asked under each name
+  of its host (the target's name, names discovery found pointing at it), with that name
+  as the Host header while still connecting to the address the scope guard approved
+  (httpx input `name,ip:port`; a name is never resolved again). Each site is kept on the
+  service (`vhosts`, schema 21), shown in `zues scan`, the HTML map, the API and MCP, and
+  its technologies reach the CVE stage. At most 200 (name, service) pairs a check; only
+  plain DNS names go on httpx's input. The TLS SNI stays the address.
 - Alerts are not kept forever: the scheduler deletes, once an hour, those sent or given up
   more than `[notify] keep_days` ago (default 90, 7-3650; `ZUES_NOTIFY_KEEP_DAYS`) and
   those never delivered (e.g. the webhook was removed) raised that long ago. The minimum
