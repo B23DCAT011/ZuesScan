@@ -1138,6 +1138,62 @@
     view.appendChild(el("p", null, el("a", { href: "#/settings" }, "← Settings")));
     view.appendChild(el("h1", null, isNew ? "New scope" : "Scope " + name));
     view.appendChild(form);
+    if (!isNew) view.appendChild(scopeHistory(name, existing.text, text, button));
+  }
+
+  // A scope's versions and the decisions about them, from the audit trail. A version can be
+  // compared with the current text, or loaded into the editor above: restoring is an
+  // ordinary change (checked, audited, approved by a second admin when that is on).
+  function scopeHistory(name, current, editor, saveButton) {
+    var body = el("div", null, el("p", { class: "muted small" }, "Loading…"));
+    var section = el("section", null, el("h2", null, "History"), body);
+    var base = "/admin/scopes/" + encodeURIComponent(name);
+    function version(sha) {
+      return api("GET", base + "/versions/" + sha).then(function (v) { return v.text; });
+    }
+    api("GET", base + "/history").then(function (h) {
+      clear(body);
+      var rows = [];
+      h.events.forEach(function (e) {
+        var shown = el("tr", { hidden: true }, el("td", { colspan: 5 }));
+        var actions = [];
+        var isCurrent = e.version && e.sha256 && e.sha256 === h.current_sha256;
+        if (e.version && e.sha256 && e.kept && !isCurrent) {
+          actions.push(el("button", { type: "button", class: "link", on: { click: function () {
+            if (!shown.hidden) { shown.hidden = true; return; }
+            version(e.sha256).then(function (text) {
+              clear(shown.firstChild);
+              append(shown.firstChild, [el("p", { class: "small" }, "− now, + this version:"), diffView(current, text)]);
+              shown.hidden = false;
+            }).catch(function (err) { flash(err.message, true); });
+          } } }, "Compare"), " ");
+          actions.push(el("button", { type: "button", class: "link", on: { click: function () {
+            version(e.sha256).then(function (text) {
+              editor.value = text;
+              editor.focus();
+              window.scrollTo(0, 0);
+              flash("The version of " + when(e.at) + " is in the editor: review it, then " +
+                saveButton.textContent.toLowerCase() + ".");
+            }).catch(function (err) { flash(err.message, true); });
+          } } }, "Load into editor"));
+        }
+        rows.push(el("tr", null,
+          el("td", null, when(e.at)),
+          el("td", null, e.by),
+          el("td", null, e.action || "-", e.proposal ? " (#" + e.proposal + ")" : "",
+            isCurrent ? el("span", { class: "muted" }, " — current") : ""),
+          el("td", { class: "wrap" }, e.sha256 ? el("span", { class: "mono small" }, e.sha256.slice(0, 12)) : "",
+            e.note ? el("div", { class: "small" }, e.note) : ""),
+          el("td", null, actions)));
+        rows.push(shown);
+      });
+      append(body, [
+        table(["When (UTC)", "Who", "What", "Version / note", ""], rows, "No change recorded."),
+        el("p", { class: "muted small" },
+          "From the audit trail. Load into editor puts an old version above; nothing changes until it is saved."),
+      ]);
+    }).catch(function (err) { clear(body); body.appendChild(el("p", { class: "error" }, err.message)); });
+    return section;
   }
 
   function targetEditor(view, cfg, name) {

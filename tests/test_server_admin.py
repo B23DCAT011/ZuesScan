@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -571,3 +572,81 @@ def test_settings_show_installed_plugins_the_service_does_not_load(
     target = {"target": "scanme.lab", "scope": "lab2", "checks": ["probe"]}
     saved = root.put("/api/v1/admin/targets/web", json=target)
     assert saved.status_code == 422 and "plugin probe is not loaded" in saved.text
+
+
+# --- a scope's history (G30) ---------------------------------------------------------------------
+
+WIDER = SCOPE + "10.0.1.0/24\n"
+
+
+def scope_sha(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def test_a_scope_history_lists_its_versions_and_gives_their_text(svc: App) -> None:
+    root = svc.client(ROOT)
+    assert root.put("/api/v1/admin/scopes/lab2", json={"text": SCOPE}).status_code == 200
+    assert root.put("/api/v1/admin/scopes/lab2", json={"text": WIDER}).status_code == 200
+
+    history = root.get("/api/v1/admin/scopes/lab2/history").json()
+    assert history["current_sha256"] == scope_sha(WIDER)
+    newest, first = history["events"]
+    assert (newest["action"], newest["by"], newest["version"], newest["kept"]) == (
+        "scope saved",
+        "root",
+        True,
+        True,
+    )
+    assert (newest["sha256"], newest["previous_sha256"]) == (scope_sha(WIDER), scope_sha(SCOPE))
+    assert first["sha256"] == scope_sha(SCOPE) and first["previous_sha256"] is None
+
+    old = root.get(f"/api/v1/admin/scopes/lab2/versions/{scope_sha(SCOPE).upper()}").json()
+    assert old == {"name": "lab2", "sha256": scope_sha(SCOPE), "text": SCOPE}
+
+    # Restoring is saving the old text again: an ordinary, audited change.
+    assert root.put("/api/v1/admin/scopes/lab2", json={"text": old["text"]}).status_code == 200
+    restored = root.get("/api/v1/admin/scopes/lab2/history").json()
+    assert restored["current_sha256"] == scope_sha(SCOPE) and len(restored["events"]) == 3
+
+
+def test_a_version_is_only_one_the_scope_had(svc: App) -> None:
+    root = svc.client(ROOT)
+    root.put("/api/v1/admin/scopes/lab2", json={"text": SCOPE})
+    root.put("/api/v1/admin/scopes/other", json={"text": WIDER})
+    other = scope_sha(WIDER)
+    assert root.get(f"/api/v1/admin/scopes/lab2/versions/{other}").status_code == 404
+    assert root.get(f"/api/v1/admin/scopes/lab2/versions/{other[:12]}").status_code == 422
+    assert root.get("/api/v1/admin/scopes/nope/history").status_code == 404
+    for token in (ALICE, BOB):  # operator, viewer: scopes are admins' business
+        client = svc.client(token)
+        assert client.get("/api/v1/admin/scopes/lab2/history").status_code == 403
+        assert (
+            client.get(f"/api/v1/admin/scopes/lab2/versions/{scope_sha(SCOPE)}").status_code == 403
+        )
+
+
+def test_a_deleted_scope_keeps_its_history(svc: App) -> None:
+    root = svc.client(ROOT)
+    root.put("/api/v1/admin/scopes/lab2", json={"text": SCOPE})
+    assert root.delete("/api/v1/admin/scopes/lab2").status_code == 204
+    history = root.get("/api/v1/admin/scopes/lab2/history").json()
+    assert history["current_sha256"] is None
+    assert [e["action"] for e in history["events"]] == ["scope deleted", "scope saved"]
+    text = root.get(f"/api/v1/admin/scopes/lab2/versions/{scope_sha(SCOPE)}").json()["text"]
+    assert text == SCOPE
+
+
+def test_proposals_and_decisions_are_in_the_history(svc: App) -> None:
+    with_approval(svc)
+    root = svc.client(ROOT)
+    pid = root.put(
+        "/api/v1/admin/scopes/lab2", json={"text": SCOPE, "reason": "PT-9 signed"}
+    ).json()["proposal"]
+    rotated_admin(svc, "carol").post(f"/api/v1/admin/proposals/{pid}/approve", json={})
+    events = root.get("/api/v1/admin/scopes/lab2/history").json()["events"]
+    assert [(e["action"], e["version"]) for e in events] == [
+        ("scope saved", True),
+        ("scope change proposed", False),
+    ]
+    assert events[0]["by"] == "carol" and events[0]["proposed_by"] == "root"
+    assert events[1]["note"] == "PT-9 signed"  # (its text is kept: it was approved)

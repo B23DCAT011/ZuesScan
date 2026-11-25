@@ -582,8 +582,11 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       OIDC; chưa ép đổi token admin theo chu kỳ (hạn dùng là trần, không phải chính sách riêng).
     - Target trên dashboard chưa dùng được credentials SSH hay file profile riêng (cố ý: không
       trỏ tới file trên máy chủ); chỉ các profile dựng sẵn.
-    - Chưa có lịch sử phiên bản scope để xem / khôi phục trên giao diện (đã có trong audit +
-      `scope_snapshot`, chưa có màn hình).
+    - ✅ Lịch sử scope trên giao diện (`feat/scope-history`): trang sửa scope có mục *History*
+      (từ audit trail: mọi phiên bản, đề xuất, quyết định), *Compare* với bản hiện tại, *Load into
+      editor* rồi lưu lại = khôi phục (vẫn qua kiểm tra, audit, duyệt hai người nếu bật). API
+      `GET /admin/scopes/{name}/history`, `/versions/{sha256}`. Còn lại: scope đã xoá chỉ xem được
+      qua API (Settings chỉ liệt kê scope đang có); chưa có lịch sử cho target / token.
 
 ## Mức 3 — Hoàn thiện sản phẩm / portfolio
 

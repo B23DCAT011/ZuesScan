@@ -7,6 +7,11 @@ section of a version as its release notes, so every tag needs one.
 ## [Unreleased]
 
 ### Added
+- A scope's history in the dashboard (G30): the scope editor lists every version (who, when,
+  SHA-256) and the proposals and decisions about it, from the audit trail; Compare shows the
+  difference with the current text, Load into editor puts an old version back in the editor -
+  restoring is saving it again, so it is checked, audited and approved like any change.
+  `GET /api/v1/admin/scopes/{name}/history` and `/versions/{sha256}` (deleted scopes too).
 - Tried, not matched (G24): a CVE inferred from a version only is tried with nuclei's own
   template for it, on that service (`-id ... -ms`). A match confirms the finding; a run
   without a match is recorded on it (`tried`, schema 22: on the run and, latest known, in
