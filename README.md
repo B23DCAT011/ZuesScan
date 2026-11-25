@@ -732,6 +732,13 @@ cùng scope thay đề xuất cũ; đề xuất làm trên một scope đã đ�
 lại). Mỗi bước vào audit và gửi cảnh báo `config_changed`. Ngoài phạm vi: người có quyền vào máy
 chủ (sửa `service.toml`, chạy `zues user`) — lớp kiểm soát đó là quyền hệ điều hành và audit.
 
+**Lịch sử scope**: trang sửa một scope có mục *History* — mọi phiên bản (ai, lúc nào, SHA-256),
+các đề xuất và quyết định, lấy từ audit trail. *Compare* cho xem khác biệt với bản hiện tại;
+*Load into editor* đưa một bản cũ vào ô soạn — khôi phục chỉ là lưu lại nó, nên vẫn qua mọi bước
+kiểm tra, vào audit, và cần admin thứ hai khi bật `scope_approval`. API:
+`GET /api/v1/admin/scopes/{name}/history`, `GET /api/v1/admin/scopes/{name}/versions/{sha256}`
+(cả với scope đã xoá).
+
 Trang **Settings**: bảng target / scope / token (mục của `service.toml` có nhãn riêng, chỉ
 đọc); form scope có sẵn mẫu và cú pháp các chỉ thị; form target chọn scope, profile, lịch quét
 và tool theo từng loại — mỗi tool ghi mức chủ động và báo nếu máy chủ chưa cài. Lỗi (vd target
