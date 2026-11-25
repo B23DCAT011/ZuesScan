@@ -188,6 +188,22 @@ jobs:
           # that anyone can see why without re-running the lab.
           sed -n '/== what the scans say now/,/^$/p' demo.txt | sed -n '2,10p'             | while IFS= read -r line; do echo "::warning title=lab finding::$line"; done
           docker compose -p zues-lab exec -T worker zues runs --db /data/zues.db || true
+          # Each run's nuclei notes and its network pass (Terrapin comes from there): how
+          # many lines it printed, how long it may run, what it said on stderr - as
+          # annotations, so that a flaky check can be told from a broken one.
+          docker compose -p zues-lab exec -T worker python -c "
+          from zues_scan.storage import Storage
+          with Storage('/data/zues.db') as store:
+              for s in store.list_runs():
+                  run = store.load_run(s.id)
+                  notes = '; '.join(n for n in run.notes if n.startswith('nuclei'))[:300]
+                  print(f'::warning title=lab run {s.id}::{run.target} {run.status.value} {notes}')
+                  for raw in run.raw_outputs:
+                      if raw.plugin == 'nuclei' and '-pt' in raw.command:
+                          err = ' '.join((raw.stderr or '').split())[-300:]
+                          lines = len(raw.content.splitlines())
+                          print(f'::warning title=lab run {s.id} nuclei network pass::{lines} line(s); stderr: {err}')
+          " || true
           docker compose -p zues-lab logs --no-color --tail 80 worker || true
       - if: always()
         run: sh lab/down.sh
