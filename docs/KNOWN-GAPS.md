@@ -360,8 +360,13 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     → khoá 15 phút (429, kể cả token đúng), log + audit `auth`; đếm trong Redis, Redis hỏng thì
     trong tiến trình. Đã thử bằng Chrome headless trên dịch vụ thật. Còn lại:
     - Khoá **theo địa chỉ**: mọi người sau cùng một NAT / proxy bị khoá chung khi một người đoán
-      sai. Thực tế: khoá theo địa chỉ + theo token (khi biết là token nào), CAPTCHA / bằng chứng
-      công việc trước khi khoá cứng, danh sách địa chỉ tin cậy.
+      sai. "Khoá theo tài khoản" như hệ thống mật khẩu **không áp dụng được**: đăng nhập chỉ bằng
+      token ngẫu nhiên 256 bit, không có tên người dùng — một lần thử sai không cho biết đó là
+      token của ai. Hai hướng còn lại đều là đánh đổi cần người vận hành chọn: danh sách địa chỉ
+      tin cậy không bị khoá (mạng văn phòng sau NAT — nhưng kẻ dò từ trong đó cũng không bị khoá),
+      hoặc cho token **đúng** vẫn vào được khi địa chỉ đang bị khoá (hết từ chối dịch vụ cho người
+      dùng thật; việc dò vẫn vô vọng với 256 bit, nhưng mất lớp chặn nếu token yếu được tạo tay
+      ngoài `zues token`). Hiện giữ cách chặt nhất (khoá cả token đúng) và ghi lại để quyết định.
     - ✅ Lần bị khoá còn được cảnh báo qua webhook (outbox, một lần mỗi giờ mỗi địa chỉ).
     - ✅ Token có hạn dùng và xoay vòng được (`feat/token-expiry`, schema 17): mặc định 90 ngày,
       cảnh báo một tuần trước hạn, Rotate thu hồi giá trị cũ và phiên của nó ngay. Còn lại: chưa
