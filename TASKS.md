@@ -286,4 +286,6 @@ rồi độ tin cậy, rồi tiện dụng.
 - [x] `feat/scanner-role` (G26) — vai trò `scanner` (viewer < scanner < operator < admin): đọc +
       xin quét, không quyết định, không cài đặt — cho token của AI agent / script. API, CLI,
       service.toml, Settings; dashboard kiểm bằng Chrome.
+- [x] `feat/config-history` (G30) — scope đã xoá trong Settings (xem, khôi phục từ bản cuối),
+      lịch sử target trên trang sửa, API lịch sử target / token. Kiểm bằng test + Chrome.
 

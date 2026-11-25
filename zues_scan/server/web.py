@@ -852,9 +852,18 @@ def admin_config(who: Admin, config: Config) -> dict[str, Any]:
         "sessions": _live_sessions(config, who),
         "scope_approval": config.scope_approval,
         "proposals": _proposals(config, who, ("pending",)),
+        # Gone from the dashboard, kept in the audit trail: to look at, or to restore.
+        "deleted_scopes": _deleted_scopes(config),
         "alerts": _alerts(config, 20),
         "problems": [*config.problems, *registry.problems],
     }
+
+
+def _deleted_scopes(config: ServiceConfig) -> list[dict[str, Any]]:
+    """Dashboard scopes deleted (and not made again since), newest first."""
+    with opened(config) as store:
+        found = store.deleted_scopes() if store else []
+    return [d for d in found if d["name"] not in config.scopes]
 
 
 def _target_settings(t: Any) -> dict[str, Any]:
@@ -1046,6 +1055,40 @@ def put_target(name: str, body: TargetBody, who: Admin, config: Config) -> dict[
         raise _refused(exc) from None
     log.info("%s saved the target %s", who.name, name)
     return {"name": saved.name, "warnings": saved.warnings}
+
+
+@api.get("/admin/targets/{name}/history")
+def target_history(name: str, who: Admin, config: Config) -> dict[str, Any]:
+    """A dashboard target's changes from the audit trail, newest first: who, when, and
+    its settings as saved. Works for a deleted target too."""
+    return _history(config, "target", name)
+
+
+@api.get("/admin/tokens/{name}/history")
+def token_history(name: str, who: Admin, config: Config) -> dict[str, Any]:
+    """A dashboard token's changes (made, rotated, limited, revoked), newest first. Never
+    its value: only its SHA-256 was ever kept, and the trail does not hold that either."""
+    return _history(config, "token", name)
+
+
+def _history(config: ServiceConfig, kind: str, name: str) -> dict[str, Any]:
+    with opened(config) as store:
+        events = store.config_history(f"{kind}:{name}") if store else []
+    if not events:
+        raise HTTPException(404, f"no history for a dashboard {kind} named {name!r}")
+    return {
+        "name": name,
+        "events": [
+            {
+                "id": event_id,
+                "at": e.at,
+                "by": e.operator,
+                "action": e.detail.get("action"),
+                "settings": {k: v for k, v in e.detail.items() if k != "action"},
+            }
+            for event_id, e in events
+        ],
+    }
 
 
 @api.delete("/admin/targets/{name}", status_code=204)

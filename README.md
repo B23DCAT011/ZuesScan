@@ -793,7 +793,13 @@ các đề xuất và quyết định, lấy từ audit trail. *Compare* cho xem
 *Load into editor* đưa một bản cũ vào ô soạn — khôi phục chỉ là lưu lại nó, nên vẫn qua mọi bước
 kiểm tra, vào audit, và cần admin thứ hai khi bật `scope_approval`. API:
 `GET /api/v1/admin/scopes/{name}/history`, `GET /api/v1/admin/scopes/{name}/versions/{sha256}`
-(cả với scope đã xoá).
+(cả với scope đã xoá). **Scope đã xoá** có mục riêng trong Settings (*Deleted scopes*: ai xoá,
+lúc nào, bản cuối); *History / restore* mở trang soạn một scope mới cùng tên với bản cuối trong
+ô soạn và lịch sử của nó — lưu (hoặc đề xuất) là tạo lại, như mọi scope mới. **Target** cũng có
+mục *History* trong trang sửa: mỗi lần thêm / sửa / xoá, ai, lúc nào, và thiết lập nào đổi
+(`profile: "quick" → "standard"`). API: `GET /api/v1/admin/targets/{name}/history`,
+`GET /api/v1/admin/tokens/{name}/history` (tạo, rotate, giới hạn, thu hồi — không bao giờ có
+giá trị hay SHA-256 của token), cả với mục đã xoá.
 
 Trang **Settings**: bảng target / scope / token (mục của `service.toml` có nhãn riêng, chỉ
 đọc); form scope có sẵn mẫu và cú pháp các chỉ thị; form target chọn scope, profile, lịch quét
