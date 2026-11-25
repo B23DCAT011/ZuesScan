@@ -1003,7 +1003,9 @@
   function settingsAlerts(alerts) {
     var where = alerts.webhook
       ? ["Sent to ", el("strong", { class: "mono" }, alerts.webhook), alerts.signed
-        ? " · signed (HMAC-SHA256, X-ZuesScan-Signature)"
+        ? " · signed (HMAC-SHA256, X-ZuesScan-Signature)" + (alerts.rotating
+          ? " with the new and the previous secret, while receivers change over: remove previous_secret once they all have"
+          : "")
         : el("span", { class: "error" }, " · not signed: set [notify] secret or ZUES_WEBHOOK_SECRET")]
       : el("span", { class: "muted" },
         "No webhook: set [notify] webhook in service.toml, or ZUES_WEBHOOK. Nothing is queued until then.");

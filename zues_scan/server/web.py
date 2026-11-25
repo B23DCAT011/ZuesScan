@@ -1157,6 +1157,7 @@ def _alerts(config: ServiceConfig, limit: int) -> dict[str, Any]:
     return {
         "webhook": (urlsplit(webhook).hostname or "?") if webhook else None,
         "signed": bool(config.notify.secret),
+        "rotating": bool(config.notify.previous_secret),  # signed with two secrets
         "min_priority": config.notify.min_priority,
         "failed_scans": config.notify.failed_scans,
         "keep_days": config.notify.keep_days,

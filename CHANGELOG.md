@@ -7,6 +7,12 @@ section of a version as its release notes, so every tag needs one.
 ## [Unreleased]
 
 ### Added
+- Changing the webhook secret without dropping alerts: `[notify] previous_secret`
+  (`ZUES_WEBHOOK_SECRET_PREVIOUS`) keeps the old one valid while receivers move over -
+  each alert then carries both signatures, `X-ZuesScan-Signature: sha256=<new>,
+  sha256=<old>`, and a receiver accepts one made with its secret (`notify.verify` and the
+  README's receiver do). Without it the header is unchanged. Settings -> Alerts says when
+  two secrets sign.
 - A scope's history in the dashboard (G30): the scope editor lists every version (who, when,
   SHA-256) and the proposals and decisions about it, from the audit trail; Compare shows the
   difference with the current text, Load into editor puts an old version back in the editor -
