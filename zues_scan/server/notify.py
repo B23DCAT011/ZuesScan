@@ -324,27 +324,35 @@ def verify(
     at: float | None = None,
     tolerance: int = TOLERANCE,
 ) -> bool:
-    """A receiver's check: signed with `secret`, over these exact bytes, recently."""
+    """A receiver's check: signed with `secret`, over these exact bytes, recently.
+    `signature` may hold several (`sha256=..., sha256=...`, while the sender changes its
+    secret): one made with `secret` is enough."""
     try:
         sent = int(timestamp)
     except (TypeError, ValueError):
         return False
     if abs((time.time() if at is None else at) - sent) > tolerance:
         return False  # too old (or from the future): possibly replayed
-    return hmac.compare_digest(sign(secret, sent, body), signature)
+    expected = sign(secret, sent, body)
+    found = [s.strip() for s in signature.split(",")][:MAX_SIGNATURES]
+    return any(hmac.compare_digest(expected, s) for s in found)
 
 
-def headers(row: Any, body: bytes, secret: str | None, at: datetime) -> dict[str, str]:
+MAX_SIGNATURES = 4  # a receiver looks at no more than this many in one header
+
+
+def headers(row: Any, body: bytes, secrets: tuple[str, ...], at: datetime) -> dict[str, str]:
+    """The headers of one delivery; signed with each of `secrets` (the current one first)."""
     sent = {
         "Content-Type": "application/json",
         "User-Agent": f"zues-scan/{__version__}",
         "X-ZuesScan-Delivery": str(row["id"]),
         "X-ZuesScan-Event": str(row["kind"]),
     }
-    if secret:
+    if secrets:
         timestamp = int(at.timestamp())
         sent["X-ZuesScan-Timestamp"] = str(timestamp)
-        sent["X-ZuesScan-Signature"] = sign(secret, timestamp, body)
+        sent["X-ZuesScan-Signature"] = ", ".join(sign(s, timestamp, body) for s in secrets)
     return sent
 
 
@@ -426,7 +434,7 @@ def flush(
                 at=stamp(at), lease_until=stamp(at + LEASE), limit=limit, ids=ids
             )
             for row in rows:
-                _send(store, row, webhook, where, config.notify.secret, post, report)
+                _send(store, row, webhook, where, config.notify.secrets(), post, report)
     except (StorageError, sqlite3.Error) as exc:
         log.error("could not deliver the queued alerts: %s", exc)
     return report
@@ -437,12 +445,12 @@ def _send(
     row: sqlite3.Row,
     webhook: str,
     where: str,
-    secret: str | None,
+    secrets: tuple[str, ...],
     post: Post | None,
     report: FlushReport,
 ) -> None:
     body = str(row["payload"]).encode("utf-8")
-    outcome = deliver(webhook, body, headers(row, body, secret, now()), post)
+    outcome = deliver(webhook, body, headers(row, body, secrets, now()), post)
     done = now()
     attempts = int(row["attempts"]) + 1  # the claim counted this attempt
     if outcome.ok:

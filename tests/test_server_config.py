@@ -149,6 +149,20 @@ def test_only_configured_targets_can_be_named(tmp_path: Path) -> None:
         ('[service]\ndb = "x"\n[notify]\nfailed_scans = 0\n', r"failed_scans must be a whole"),
         ('[service]\ndb = "x"\n[notify]\nfailed_scans = true\n', r"failed_scans must be a"),
         ('[service]\ndb = "x"\n[notify]\nkeep_days = 6\n', r"keep_days must be .* from 7 to 3650"),
+        (
+            '[service]\ndb = "x"\n[notify]\nprevious_secret = "0123456789abcdef-old"\n',
+            r"previous_secret is the secret being replaced: set the new one in \[notify\] secret",
+        ),
+        (
+            '[service]\ndb = "x"\n[notify]\nsecret = "0123456789abcdef-new"\n'
+            'previous_secret = "0123456789abcdef-new"\n',
+            r"previous_secret is the same as the secret",
+        ),
+        (
+            '[service]\ndb = "x"\n[notify]\nsecret = "0123456789abcdef-new"\n'
+            'previous_secret = "short"\n',
+            r"previous_secret must be at least 16",
+        ),
         ('[service]\ndb = "x"\n[notify]\nkeep_days = 3651\n', r"keep_days must be"),
         ('[service]\ndb = "x"\n[notify]\nkeep_days = true\n', r"keep_days must be"),
         ("[service\n", r"cannot read service config"),

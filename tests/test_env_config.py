@@ -30,6 +30,7 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         "ZUES_NOTIFY_MIN_PRIORITY",
         "ZUES_NOTIFY_FAILED_SCANS",
         "ZUES_NOTIFY_KEEP_DAYS",
+        "ZUES_WEBHOOK_SECRET_PREVIOUS",
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("ZUES_DB", str(tmp_path / "zues.db"))
@@ -77,6 +78,10 @@ def test_alert_settings_from_the_environment(monkeypatch: pytest.MonkeyPatch) ->
     with pytest.raises(ConfigError, match="ZUES_NOTIFY_KEEP_DAYS must be a whole number of days"):
         from_environment()
     monkeypatch.setenv("ZUES_NOTIFY_KEEP_DAYS", "")
+    monkeypatch.setenv("ZUES_WEBHOOK_SECRET", "0123456789abcdef-new")
+    monkeypatch.setenv("ZUES_WEBHOOK_SECRET_PREVIOUS", "0123456789abcdef-old")
+    assert from_environment().notify.secrets() == ("0123456789abcdef-new", "0123456789abcdef-old")
+    monkeypatch.setenv("ZUES_WEBHOOK_SECRET_PREVIOUS", "")
 
     monkeypatch.setenv("ZUES_WEBHOOK_SECRET", "0123456789abcdef-xyz")
     monkeypatch.setenv("ZUES_NOTIFY_FAILED_SCANS", "5")

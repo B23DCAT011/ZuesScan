@@ -37,6 +37,7 @@ target by its `name`; it never brings its own address, scope file or options.
     webhook = "https://hooks.example.com/..."   # optional; Slack-compatible {"text": ...}
     min_priority = "P2"                          # new findings at least this urgent
     secret = "..."             # optional: sign each alert (HMAC-SHA256), at least 16 chars
+    previous_secret = "..."    # while receivers move to a new secret: signed with both
     failed_scans = 3           # alert when a target's scans fail this many times in a row
     keep_days = 90             # alerts are deleted this long after delivery (7-3650)
 
@@ -174,6 +175,14 @@ class Notify:
     webhook: str | None = None
     min_priority: str = "P2"
     secret: str | None = None  # signs every alert (X-ZuesScan-Signature), when set
+    # The secret being replaced: while set, each alert carries both signatures, so that
+    # receivers can move to the new one one by one. Removed once they all have.
+    previous_secret: str | None = None
+
+    def secrets(self) -> tuple[str, ...]:
+        """The secrets to sign with: the current one first."""
+        return tuple(s for s in (self.secret, self.previous_secret) if s)
+
     failed_scans: int = 3  # failed runs in a row that raise an alert
     # Days an alert is kept once it is over (sent, given up) or, never delivered, since
     # it was raised; then the scheduler deletes it.
@@ -245,6 +254,7 @@ def from_environment() -> ServiceConfig:
             # Empty counts as unset: compose passes every variable, set or not.
             "min_priority": env.get("ZUES_NOTIFY_MIN_PRIORITY") or "P2",
             "secret": env.get("ZUES_WEBHOOK_SECRET") or None,
+            "previous_secret": env.get("ZUES_WEBHOOK_SECRET_PREVIOUS") or None,
             "failed_scans": env.get("ZUES_NOTIFY_FAILED_SCANS") or "3",
             "keep_days": env.get("ZUES_NOTIFY_KEEP_DAYS") or "90",
         },
@@ -316,7 +326,7 @@ def load_config(path: str | Path | None = None) -> ServiceConfig:
     notify_table = data.get("notify") or {}
     _only(
         notify_table,
-        {"webhook", "min_priority", "secret", "failed_scans", "keep_days"},
+        {"webhook", "min_priority", "secret", "previous_secret", "failed_scans", "keep_days"},
         "[notify]",
     )
     notify = _notify(notify_table, "[notify] ")
@@ -364,6 +374,7 @@ def _notify(raw: dict[str, Any], where: str) -> Notify:
         "webhook": "webhook",
         "min_priority": "min_priority",
         "secret": "secret",
+        "previous_secret": "previous_secret",
         "failed_scans": "failed_scans",
         "keep_days": "keep_days",
     }
@@ -372,6 +383,7 @@ def _notify(raw: dict[str, Any], where: str) -> Notify:
             "webhook": "WEBHOOK",
             "min_priority": "NOTIFY_MIN_PRIORITY",
             "secret": "WEBHOOK_SECRET",
+            "previous_secret": "WEBHOOK_SECRET_PREVIOUS",
             "failed_scans": "NOTIFY_FAILED_SCANS",
             "keep_days": "NOTIFY_KEEP_DAYS",
         }
@@ -385,6 +397,17 @@ def _notify(raw: dict[str, Any], where: str) -> Notify:
     secret = raw.get("secret")
     if secret is not None and (not isinstance(secret, str) or len(secret) < 16):
         raise ConfigError(f"{where}{names['secret']} must be at least 16 characters")
+    previous = raw.get("previous_secret")
+    if previous is not None:
+        if not isinstance(previous, str) or len(previous) < 16:
+            raise ConfigError(f"{where}{names['previous_secret']} must be at least 16 characters")
+        if secret is None:
+            raise ConfigError(
+                f"{where}{names['previous_secret']} is the secret being replaced: "
+                f"set the new one in {where}{names['secret']}"
+            )
+        if previous == secret:
+            raise ConfigError(f"{where}{names['previous_secret']} is the same as the secret")
     failed = raw.get("failed_scans", 3)
     try:
         failed_scans = int(failed)
@@ -406,6 +429,7 @@ def _notify(raw: dict[str, Any], where: str) -> Notify:
         webhook=str(webhook) if webhook else None,
         min_priority=min_priority,
         secret=secret,
+        previous_secret=previous,
         failed_scans=failed_scans,
         keep_days=keep_days,
     )

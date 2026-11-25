@@ -101,6 +101,41 @@ def test_a_signed_alert_verifies_only_as_sent_and_while_fresh() -> None:
     assert not notify.verify(SECRET, body, "soon", signature)
 
 
+NEW = "the-new-secret-of-32-characters!"
+
+
+def test_while_the_secret_changes_both_sign_and_either_verifies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    Clock(monkeypatch)
+    queued(tmp_path, notify.delivery_test("root"))
+    receiver = Receiver()
+    rotating = ServiceConfig(
+        path=str(tmp_path / "service.toml"),
+        db=str(tmp_path / "zues.db"),
+        notify=Notify(webhook="https://hooks.example.com/x", secret=NEW, previous_secret=SECRET),
+    )
+    notify.flush(rotating, post=receiver)
+    [(body, headers)] = receiver.got
+    timestamp, signature = headers["X-ZuesScan-Timestamp"], headers["X-ZuesScan-Signature"]
+    stamp = int(timestamp)
+    assert signature == f"{notify.sign(NEW, stamp, body)}, {notify.sign(SECRET, stamp, body)}"
+    at = T0.timestamp()
+    assert notify.verify(NEW, body, timestamp, signature, at=at)  # a receiver moved over
+    assert notify.verify(SECRET, body, timestamp, signature, at=at)  # one not yet
+    assert not notify.verify("some-other-secret-0123456789", body, timestamp, signature, at=at)
+
+
+def test_a_receiver_reads_a_few_signatures_at_most() -> None:
+    body = b"{}"
+    good = notify.sign(SECRET, 1_800_000_000, body)
+    padded = ", ".join(["sha256=" + "0" * 64] * notify.MAX_SIGNATURES + [good])
+    assert not notify.verify(SECRET, body, "1800000000", padded, at=1_800_000_000)
+    assert notify.verify(
+        SECRET, body, "1800000000", "sha256=" + "0" * 64 + "," + good, at=1_800_000_000
+    )
+
+
 def test_backoff_doubles_up_to_an_hour() -> None:
     minutes = [notify.backoff(n).total_seconds() / 60 for n in range(1, 10)]
     assert minutes == [1, 2, 4, 8, 16, 32, 60, 60, 60]
