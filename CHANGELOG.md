@@ -7,6 +7,14 @@ section of a version as its release notes, so every tag needs one.
 ## [Unreleased]
 
 ### Added
+- Alert routes (G23): `[[notify.routes]]` (or `ZUES_NOTIFY_ROUTES`, JSON) send some
+  alerts to more webhooks besides the main one - by priority (`min_priority`: the on-call
+  channel gets P1 only), by target (`targets`: a customer's channel gets its targets) and
+  by kind. A run's alert is narrowed for each destination; fake fixes and reappeared
+  findings always go. Each destination is a row of its own in the outbox (schema 23:
+  `destination`), delivered, retried and given up on its own; one held back by a dedupe
+  key does not hold back the others. Settings -> Alerts lists the routes (hosts only) and
+  where each alert went; the test alert goes everywhere.
 - The lab has a Log4Shell app and its own interactsh server (G24): nuclei confirms
   CVE-2021-44228 through a DNS callback, after httpx found the web service nmap calls
   "nagios-nsca". The CI lab job checks it on every run. The lab's scope leaves out the

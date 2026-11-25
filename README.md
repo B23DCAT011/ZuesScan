@@ -608,7 +608,28 @@ secret = "…"          # tuỳ chọn, ≥ 16 ký tự: ký mỗi cảnh báo b
 # previous_secret = "…"   # khi đổi secret: ký bằng cả hai tới khi bên nhận chuyển xong
 failed_scans = 3      # báo khi các lần quét một target hỏng chừng này lần liền
 keep_days = 90       # xoá cảnh báo chừng này ngày sau khi gửi xong (7–3650)
+
+# Tuỳ chọn: gửi thêm một số cảnh báo tới nơi khác (mỗi route một webhook riêng).
+[[notify.routes]]
+name = "oncall"                                  # kênh trực: chỉ P1 (và fix giả, xuất hiện lại)
+webhook = "https://hooks.slack.com/services/…"
+min_priority = "P1"
+
+[[notify.routes]]
+name = "acme"                                    # kênh của khách hàng: chỉ target của họ
+webhook = "https://acme.example.com/zues"
+targets = ["acme-*"]                             # mẫu tên target (không có: mọi target)
+kinds = ["run", "scan_failed", "scan_recovered"] # loại cảnh báo (không có: mọi loại)
 ```
+
+**Định tuyến cảnh báo**: mỗi cảnh báo tới webhook chính (như trước) và tới **mỗi route nhận
+nó**. Cảnh báo của một lần quét được lọc lại cho từng nơi theo `min_priority` của nơi đó (fix
+giả và finding xuất hiện lại luôn được gửi); route có `targets` chỉ nhận cảnh báo của target
+khớp — cảnh báo không thuộc target nào (khoá đăng nhập, token sắp hết hạn, thay đổi cài đặt)
+chỉ tới route không có `targets`. Mỗi nơi là một dòng riêng trong outbox: gửi, thử lại và bỏ
+cuộc độc lập — một kênh hỏng không chặn kênh khác. Cùng secret ký cho mọi nơi. Biến môi trường:
+`ZUES_NOTIFY_ROUTES` = danh sách JSON với cùng các khoá. Settings → Alerts liệt kê các route (chỉ
+tên máy, không lộ URL) và mỗi cảnh báo đi đâu; *Send a test alert* gửi tới mọi nơi.
 
 ```bash
 zues token --name alice --role operator     # in token MỘT lần + dòng [[tokens]] để dán vào file

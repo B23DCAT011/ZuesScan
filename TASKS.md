@@ -292,4 +292,6 @@ rồi độ tin cậy, rồi tiện dụng.
       CVE-2021-44228 `confirmed` qua callback (nmap sai tên → httpx → nuclei OOB).
 - [x] `feat/httpx-sni` (G29) — vhost trên TLS được hỏi với SNI của nó (một lượt httpx mỗi tên);
       sửa lỗi tìm ra khi thử: công cụ ngoài đọc stdin của ZuesScan (httpx treo tới hết giờ).
+- [x] `feat/alert-routes` (G23, schema 23) — `[[notify.routes]]`: cảnh báo tới thêm webhook theo
+      mức / target / loại, mỗi nơi một dòng outbox. Thử thật hai receiver HTTP + Chrome.
 
