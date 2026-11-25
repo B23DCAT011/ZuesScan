@@ -910,7 +910,7 @@ SERVICE_CONFIG_HELP = (
 
 def _cmd_user(args: argparse.Namespace) -> int:
     """Dashboard tokens, kept in the service's database: the first admin is made here."""
-    from zues_scan.server import managed
+    from zues_scan.server import managed, notify
     from zues_scan.server.config import ConfigError, load_config
     from zues_scan.storage import Storage, StorageError
 
@@ -922,7 +922,9 @@ def _cmd_user(args: argparse.Namespace) -> int:
     actor = f"{default_operator()} (zues user)"
     try:
         with Storage(config.db) as store:
-            store.config_alerts = bool(config.notify.webhook)  # as in the dashboard
+            # As in the dashboard: to the webhook and the routes that take it.
+            store.config_alerts = config.notify.sends()
+            store.alert_router = lambda alert: notify.route(config.notify, alert)
             if args.user_command == "list":
                 print(
                     f"{'NAME':<24} {'ROLE':<9} {'SOURCE':<10} {'EXPIRES (UTC)':<26} "

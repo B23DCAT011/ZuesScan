@@ -1040,8 +1040,15 @@
         : el("span", { class: "error" }, " · not signed: set [notify] secret or ZUES_WEBHOOK_SECRET")]
       : el("span", { class: "muted" },
         "No webhook: set [notify] webhook in service.toml, or ZUES_WEBHOOK. Nothing is queued until then.");
+    var routes = alerts.routes.length ? el("div", null,
+      el("p", { class: "small" }, "Also sent through " + alerts.routes.length + " route(s):"),
+      table(["Route", "To", "New findings from", "Targets", "Kinds"], alerts.routes.map(function (r) {
+        return [el("strong", null, r.name), el("span", { class: "mono" }, r.host), r.min_priority,
+          r.targets ? el("span", { class: "mono small" }, r.targets.join(", ")) : el("span", { class: "muted" }, "all, and alerts about none"),
+          r.kinds ? r.kinds.join(", ") : el("span", { class: "muted" }, "all")];
+      }).map(row), "")) : null;
     var test = el("button", {
-      type: "button", class: "primary", disabled: alerts.webhook ? null : true,
+      type: "button", class: "primary", disabled: alerts.webhook || alerts.routes.length ? null : true,
       on: { click: function () { sendTest(test); } },
     }, "Send a test alert");
     var rows = alerts.latest.map(function (a) {
@@ -1053,14 +1060,17 @@
       }, "Send now");
       return [
         "#" + a.id, when(a.created_at), ALERT_KINDS[a.kind] || a.kind,
-        el("span", { class: "wrap" }, a.summary), state, String(a.attempts),
+        el("span", { class: "wrap" }, a.summary),
+        a.destination ? el("span", { class: "mono small" }, a.destination) : el("span", { class: "muted small" }, "webhook"),
+        state, String(a.attempts),
         a.last_error ? el("span", { class: "error small" }, a.last_error) : "", retry,
       ];
     });
     return el("section", null,
       el("div", { class: "toolbar" }, el("h2", null, "Alerts (webhook)"), test),
       el("p", { class: "small" }, where),
-      table(["#", "Raised", "Kind", "What", "Delivery", "Tries", "Last error", ""], rows.map(row),
+      routes,
+      table(["#", "Raised", "Kind", "What", "To", "Delivery", "Tries", "Last error", ""], rows.map(row),
         "No alert yet."),
       el("p", { class: "muted small" },
         "Alerts wait in the database until the webhook takes them: retried after 1, 2, 4 … minutes " +

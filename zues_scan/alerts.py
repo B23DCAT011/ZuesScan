@@ -28,6 +28,9 @@ class Alert:
     payload: dict[str, Any]  # posted as it is (JSON): Slack's "text" and structured fields
     dedupe_key: str | None = None
     dedupe_seconds: int = 0
+    # Where it goes: None, the main webhook; else the name of a [[notify.routes]] entry.
+    # One outbox row per destination, each delivered (and retried) on its own.
+    destination: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

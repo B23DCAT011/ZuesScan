@@ -43,8 +43,9 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -152,12 +153,61 @@ class RunAlerts:
             if facts.failed_before + 1 == threshold:
                 decided.append(scan_failed(self.target, facts, threshold))
         else:
-            self.items = alerts(facts.run, facts.changes, self.notify.min_priority)
-            if self.items:
-                decided.append(Alert("run", message(self.target, facts.run_id, self.items)))
+            # Every item any destination wants; each one keeps its own below (`route`).
+            loosest = max(
+                [self.notify.min_priority, *(r.min_priority or "" for r in self.notify.routes)]
+            )
+            found = alerts(facts.run, facts.changes, loosest)
+            self.items = _wanted(found, self.notify.min_priority)
+            if found:
+                decided.append(Alert("run", message(self.target, facts.run_id, found)))
             if facts.failed_before >= threshold:
                 decided.append(scan_recovered(self.target, facts))
-        return decided if self.notify.webhook else []
+        return [routed for alert in decided for routed in route(self.notify, alert)]
+
+
+def route(notify: Notify, alert: Alert) -> list[Alert]:
+    """`alert` for each place it goes: the main webhook (destination None), and every
+    route that takes it - a run's alert keeps, for each, only the new findings from that
+    destination's priority (fake fixes and reappeared findings always). None: nowhere."""
+    out = []
+    if notify.webhook:
+        main = _narrowed(alert, notify.min_priority, None, None)
+        if main is not None:
+            out.append(main)
+    for r in notify.routes:
+        narrowed = _narrowed(alert, r.min_priority or notify.min_priority, r.targets, r.kinds)
+        if narrowed is not None:
+            out.append(replace(narrowed, destination=r.name))
+    return out
+
+
+def _narrowed(
+    alert: Alert,
+    min_priority: str,
+    targets: tuple[str, ...] | None,
+    kinds: tuple[str, ...] | None,
+) -> Alert | None:
+    if kinds is not None and alert.kind not in kinds:
+        return None
+    if targets is not None:
+        target = alert.payload.get("target")
+        if not isinstance(target, str) or not any(fnmatchcase(target, p) for p in targets):
+            return None  # another customer's, or about no target (sign-ins, settings)
+    if alert.kind != "run":
+        return alert
+    items = list(alert.payload.get("items") or [])
+    kept = _wanted(items, min_priority)
+    if not kept:
+        return None
+    if kept == items:
+        return alert
+    payload = message(str(alert.payload["target"]), int(alert.payload["run_id"]), kept)
+    return replace(alert, payload=payload)
+
+
+def _wanted(items: list[dict[str, Any]], min_priority: str) -> list[dict[str, Any]]:
+    return [i for i in items if i["kind"] != "new" or str(i.get("priority", "P4")) <= min_priority]
 
 
 def _short(text: str | None, size: int = 300) -> str:
@@ -280,15 +330,24 @@ def delivery_test(actor: str) -> Alert:
 
 
 def queue(config: ServiceConfig, alert: Alert) -> int | None:
-    """Queue one alert outside a scan (not started, job failed, ...); its id, or None."""
-    if not config.notify.webhook:
-        return None
+    """Queue one alert outside a scan (not started, job failed, ...) for each place it
+    goes; the first one's id, or None (nowhere to go, or held back)."""
+    ids = queue_all(config, alert)
+    return ids[0] if ids else None
+
+
+def queue_all(config: ServiceConfig, alert: Alert) -> list[int]:
+    """Queue `alert` for each place it goes; the ids queued (none held back)."""
+    routed = route(config.notify, alert)
+    if not routed:
+        return []
     try:
         with Storage(config.db) as store:
-            return store.queue_alert(alert, stamp(now()))
+            ids = [store.queue_alert(a, stamp(now())) for a in routed]
     except (StorageError, sqlite3.Error) as exc:
         log.error("could not queue the %s alert: %s", alert.kind, exc)
-        return None
+        return []
+    return [i for i in ids if i is not None]
 
 
 def prune(config: ServiceConfig, at: datetime | None = None) -> int:
@@ -423,10 +482,8 @@ def flush(
 ) -> FlushReport:
     """Send the alerts that are due (only `ids`, if given); never raises."""
     report = FlushReport()
-    webhook = config.notify.webhook
-    if not webhook or not Path(config.db).is_file():
+    if not config.notify.sends() or not Path(config.db).is_file():
         return report  # nowhere to send to (alerts wait), or nothing queued yet
-    where = urlsplit(webhook).hostname or "the webhook"  # the URL itself is a secret
     try:
         with Storage(config.db) as store:
             at = now()
@@ -434,10 +491,30 @@ def flush(
                 at=stamp(at), lease_until=stamp(at + LEASE), limit=limit, ids=ids
             )
             for row in rows:
+                webhook = _webhook(config.notify, row["destination"])
+                if webhook is None:
+                    gone = f"no route named {row['destination']!r} any more"
+                    if row["destination"] is None:
+                        gone = "no webhook any more"
+                    store.alert_failed(row["id"], gone, retry_at=None, at=stamp(now()))
+                    report.gave_up += 1
+                    log.error("gave up alert #%d (%s): %s", row["id"], row["kind"], gone)
+                    continue
+                # The URL itself is a secret: only its host goes in the log.
+                where = urlsplit(webhook).hostname or "the webhook"
+                if row["destination"] is not None:
+                    where = f"{where} (route {row['destination']})"
                 _send(store, row, webhook, where, config.notify.secrets(), post, report)
     except (StorageError, sqlite3.Error) as exc:
         log.error("could not deliver the queued alerts: %s", exc)
     return report
+
+
+def _webhook(notify: Notify, destination: str | None) -> str | None:
+    if destination is None:
+        return notify.webhook
+    found = notify.route(destination)
+    return found.webhook if found is not None else None
 
 
 def _send(
@@ -503,6 +580,7 @@ def describe(row: Any) -> dict[str, Any]:
         "kind": row["kind"],
         "summary": str(payload.get("text", "")).splitlines()[0] if payload.get("text") else "",
         "run_id": row["run_id"],
+        "destination": row["destination"],  # None: the main webhook; else a route's name
         "state": state,
         "attempts": row["attempts"],
         "next_try_at": row["next_try_at"] if state == "waiting" else None,

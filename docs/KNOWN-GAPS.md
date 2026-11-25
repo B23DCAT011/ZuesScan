@@ -326,8 +326,12 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     lại, cùng `X-ZuesScan-Delivery`, bên nhận xác minh chữ ký. Còn lại:
     - Gửi *ít nhất một lần*: POST thành công mà chưa kịp đánh dấu "đã gửi" (tiến trình chết đúng
       lúc) thì gửi lại — bên nhận phải bỏ trùng theo `X-ZuesScan-Delivery`.
-    - Chỉ có webhook: chưa email / PagerDuty / Teams gốc; chưa định tuyến theo mức (P1 tới kênh
-      trực, P3 tới kênh thường) hay theo target.
+    - ✅ Định tuyến (`feat/alert-routes`, schema 23): `[[notify.routes]]` / `ZUES_NOTIFY_ROUTES`
+      — webhook riêng theo mức (`min_priority`), theo target (`targets`) và theo loại (`kinds`);
+      mỗi nơi một dòng outbox, gửi / thử lại độc lập. Thử thật: hai receiver HTTP nhận cảnh báo
+      thử có chữ ký hợp lệ; Settings → Alerts bằng Chrome. Còn lại: chỉ có webhook (chưa email /
+      PagerDuty / Teams gốc — một receiver nhỏ chuyển tiếp được); mọi nơi dùng chung secret; route
+      chỉ sửa trong `service.toml` / biến môi trường (không trên dashboard: URL là bí mật).
     - ✅ Đổi secret có giai đoạn chuyển tiếp (`feat/webhook-secret-rotation`): `previous_secret`
       → mỗi cảnh báo mang hai chữ ký, bên nhận khớp một là đủ. Còn lại: bên nhận phải dùng cách
       kiểm nhiều chữ ký (README); chưa có nhắc bỏ `previous_secret` khi quá lâu.

@@ -261,7 +261,7 @@ def _wrong_token(request: Request, config: ServiceConfig) -> None:
                 at=stamp(sessions.now()),
                 alert=(
                     notify.locked_out(client, failures, sessions.LOCKOUT)
-                    if config.notify.webhook
+                    if config.notify.sends()
                     else None
                 ),
             )
@@ -900,7 +900,8 @@ def _writable(config: ServiceConfig) -> Iterator[Storage]:
     """The database, created if needed (an admin may configure before the first scan);
     with a webhook, every change of the configuration also raises an alert."""
     with Storage(config.db) as store:
-        store.config_alerts = bool(config.notify.webhook)
+        store.config_alerts = config.notify.sends()
+        store.alert_router = lambda alert: notify.route(config.notify, alert)
         yield store
 
 
@@ -1209,6 +1210,17 @@ def _alerts(config: ServiceConfig, limit: int) -> dict[str, Any]:
         "signed": bool(config.notify.secret),
         "rotating": bool(config.notify.previous_secret),  # signed with two secrets
         "min_priority": config.notify.min_priority,
+        # The routes: names, hosts and what they take (never the URLs).
+        "routes": [
+            {
+                "name": r.name,
+                "host": urlsplit(r.webhook).hostname or "?",
+                "min_priority": r.min_priority or config.notify.min_priority,
+                "targets": list(r.targets) if r.targets is not None else None,
+                "kinds": list(r.kinds) if r.kinds is not None else None,
+            }
+            for r in config.notify.routes
+        ],
         "failed_scans": config.notify.failed_scans,
         "keep_days": config.notify.keep_days,
         "latest": [notify.describe(r) for r in rows],
@@ -1232,17 +1244,19 @@ def admin_alerts(
 
 @api.post("/admin/alerts/test")
 def send_test_alert(who: Admin, config: Config) -> dict[str, Any]:
-    """Queue a test alert and send it now: whether the webhook (and its signature) works."""
-    if not config.notify.webhook:
+    """Queue a test alert for the webhook and every route, and send them now: whether
+    each destination (and the signature) works. The first one is returned; all are in the
+    list of latest alerts."""
+    if not config.notify.sends():
         raise HTTPException(
             409, "no webhook is set: [notify] webhook in service.toml, or ZUES_WEBHOOK"
         )
-    alert_id = notify.queue(config, notify.delivery_test(who.name))
-    if alert_id is None:
+    ids = notify.queue_all(config, notify.delivery_test(who.name))
+    if not ids:
         raise HTTPException(503, "the alert could not be queued; see the server log")
-    notify.flush(config, ids=[alert_id])
-    log.info("%s sent a test alert (#%d)", who.name, alert_id)
-    return _alert(config, alert_id)
+    notify.flush(config, ids=ids)
+    log.info("%s sent a test alert (#%s)", who.name, ", #".join(map(str, ids)))
+    return _alert(config, ids[0])
 
 
 @api.post("/admin/alerts/{alert_id}/retry")
