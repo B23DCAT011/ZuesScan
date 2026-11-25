@@ -409,8 +409,28 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       `-timeout 30 -retries 3` cho lần chạy template mạng: 5/5. Lỗi của sản phẩm, không riêng
       CI — máy chủ SSH / TLS bận ngoài thực tế cũng chậm như vậy. Job lab giờ ghi rõ kiểm tra nào
       hỏng và in bảng finding thành annotation (xem được không cần đăng nhập).
-    - **Không interactsh** → template phát hiện qua kênh ngoài (OAST: Log4Shell mù, SSRF mù…)
-      không chạy. Thực tế: tự dựng máy chủ interactsh trong mạng của mình (`-iserver`, `-itoken`).
+    - ✅ **Kênh ngoài (OAST) với máy chủ interactsh tự dựng** (`feat/interactsh-self-hosted`,
+      D18): `ZUES_INTERACTSH_SERVER` / `ZUES_INTERACTSH_TOKEN`; máy chủ công cộng và địa chỉ IP
+      bị từ chối; token chỉ nằm trong file cấu hình của từng lần chạy (không trên dòng lệnh,
+      không trong bằng chứng, plugin bên thứ ba không thấy); máy chủ được hỏi trước khi quét,
+      không trả lời thì `-ni` + ghi chú; `zues doctor`. Kiểm thật: interactsh-server 1.4.1 +
+      nuclei 3.11.1, app Log4Shell → CVE-2021-44228 `confirmed` qua callback DNS. **Lỗi tìm ra
+      khi thử thật**: khi interactsh hỏng (sai token, không tới được), nuclei vẫn chạy tiếp và in
+      `"error": "interactsh client not initialized"` + `matcher-status: false`; dòng có `error`
+      (kể cả bị từ chối kết nối với template thường) trước đây được tính là "đã thử, không
+      khớp" — giờ không tính, và được ghi chú. Còn lại:
+      - máy chủ chỉ được kiểm từ phía máy quét: mục tiêu có tới được nó không (DNS của mục tiêu
+        dẫn tới máy chủ, tường lửa cho ra) thì không biết trước — "không có callback" được ghi
+        đúng như vậy, không phải "không lỗi";
+      - lab và CI chưa có máy chủ interactsh + app Log4Shell (đã thử thật bằng tay, các bước ở
+        README); `-iserver` qua HTTPS dùng kiểm tra chứng chỉ của nuclei (chưa thử với chứng chỉ
+        nội bộ tự ký);
+      - interactsh chỉ giữ tương tác trong bộ nhớ đệm 60 s của nuclei (`-interactions-eviction`):
+        callback tới rất muộn (hàng đợi, job chạy sau) bị bỏ lỡ.
+    - **Dịch vụ web mà nmap gọi sai tên** không được kiểm như web: app Spring Boot (Log4Shell)
+      trả 404 JSON nên nmap gọi cổng 8080 là `nagios-nsca`; httpx và nuclei chỉ coi là web dịch
+      vụ có `http` trong tên → chỉ chạy template mạng trên nó. Thực tế: cho httpx thử mọi cổng
+      TCP mở chưa rõ là gì (như `naabu | httpx`), rồi đánh dấu web theo kết quả của httpx.
     - ✅ Bằng chứng của nuclei được che trước khi lưu (`feat/evidence-redaction`,
       `zues_scan/redact.py`): header đăng nhập / phiên, mẫu bí mật (mật khẩu, JWT, khoá AWS, PEM,
       hash shadow, mật khẩu trong URL), thân response cắt còn 2 KB. Còn lại: che theo mẫu là cố

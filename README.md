@@ -253,7 +253,8 @@ zues scan 10.0.0.0/24 --scope scope.txt --nuclei --nuclei-templates /opt/nuclei-
   lượt riêng chỉ với template mạng (`-pt javascript,tcp,ssl`) — vd OpenSSH dính *Terrapin*
   (CVE-2023-48795). Đo trên lab: cho cổng SSH chạy qua mọi template mất 147 s, chỉ template mạng
   thì tức thì, cùng kết quả.
-- **An toàn**: không interactsh (mục tiêu không gọi ra máy chủ công cộng), bỏ template `dos`,
+- **An toàn**: không dùng máy chủ interactsh công cộng (mục tiêu không gọi ra ngoài cuộc kiểm
+  thử; muốn chạy template kênh ngoài thì tự dựng máy chủ, xem dưới), bỏ template `dos`,
   `fuzz`, `intrusive`, `bruteforce`, không bật template `code` / `headless` / `file` / DAST,
   chỉ chạy template **có chữ ký hợp lệ** của ProjectDiscovery (`-dut`: template bị sửa hay bị
   cài thêm không chạy), bỏ mức `info` (nhận diện công nghệ, thiếu header — không phải lỗ hổng),
@@ -274,9 +275,48 @@ zues scan 10.0.0.0/24 --scope scope.txt --nuclei --nuclei-templates /opt/nuclei-
   chạy mà không khớp → ghi lên finding (`tried`: "nuclei 3.11.1 (templates 10.5.2): template
   CVE-2021-41773 ran at http://10.0.0.5:8080 and did not match"), hiện ở CLI, bản đồ HTML,
   dashboard (*Tried*), API, MCP, SARIF. Đây là dữ kiện để phân loại (bản vá backport, cấu hình
-  không lỗi), **không** phải bằng chứng là sạch: độ tin cậy và mức ưu tiên giữ nguyên. Template
-  cần kênh ngoài (interactsh, vd Log4Shell) không được chạy cũng không được ghi — dưới `-ni`
-  chúng không thể khớp nhưng nuclei vẫn báo "không khớp". Tối đa 5 phút cho bước này.
+  không lỗi), **không** phải bằng chứng là sạch: độ tin cậy và mức ưu tiên giữ nguyên. Không
+  có máy chủ interactsh riêng thì template cần kênh ngoài (vd Log4Shell) không được chạy cũng
+  không được ghi — dưới `-ni` chúng không thể khớp nhưng nuclei vẫn báo "không khớp". Template
+  chạy mà kết thúc bằng lỗi (bị từ chối kết nối, "interactsh client not initialized") cũng
+  không tính là đã thử. Tối đa 5 phút cho bước này.
+
+#### Kênh ngoài (OAST) với máy chủ interactsh tự dựng
+
+Có lỗ hổng không lộ ra trong response: Log4Shell, SSRF mù, chèn lệnh mù. Template gửi một
+payload chứa tên `<id>.<domain>`; mục tiêu bị lỗi sẽ tra DNS (hay gọi HTTP / LDAP) tên đó, và
+máy chủ interactsh quản `<domain>` ghi lại. Mặc định nuclei dùng máy chủ công cộng của
+ProjectDiscovery (`oast.pro`, `oast.fun`…) — tức là mục tiêu tự khai mình ra ngoài cuộc kiểm
+thử. ZuesScan không bao giờ làm vậy: chỉ dùng máy chủ của bạn.
+
+```bash
+# Máy chủ trong mạng của bạn, là DNS có thẩm quyền cho oast.example.internal
+# (bản ghi NS của zone, hoặc DNS nội bộ chuyển tiếp zone đó tới nó):
+docker run -d --name interactsh -p 53:53/udp -p 80:80 -p 389:389 \
+  projectdiscovery/interactsh-server -d oast.example.internal -ip 10.0.0.53 -t "$TOKEN" -sa
+
+export ZUES_INTERACTSH_SERVER=http://oast.example.internal   # URL theo tên miền của máy chủ
+export ZUES_INTERACTSH_TOKEN="$TOKEN"                        # nếu máy chủ có -token
+zues doctor            # "interactsh: ... answers (with a token)"
+zues scan ... --nuclei # template kênh ngoài chạy, kể cả khi thử CVE theo phiên bản
+```
+
+- Máy chủ công cộng (`oast.*`, `interact.sh`) và địa chỉ IP bị **từ chối** (payload là tên dưới
+  domain của máy chủ: `<id>.10.0.0.53` không phân giải được).
+- **Token không bao giờ nằm trên dòng lệnh** (ai trên máy cũng thấy, và lệnh được lưu làm bằng
+  chứng): ZuesScan ghi nó vào file cấu hình trong thư mục tạm của từng lần chạy nuclei. Plugin
+  bên thứ ba không thấy nó (môi trường sạch, D15). Biến môi trường được truyền vào worker trong
+  `compose.yaml`.
+- Trước khi quét, máy chủ được **hỏi một lần** (có trả lời như interactsh không, có nhận token
+  không). Không được thì quét vẫn chạy với `-ni` và ghi chú lý do — nuclei tự nó thì im lặng
+  chạy tiếp mà không có callback, khiến mục tiêu trông như không lỗi.
+- Callback được ghi vào bằng chứng (`out-of-band dns callback from 10.77.0.80`); callback HTTP
+  được che như mọi trao đổi HTTP. Không có callback thì ghi đúng như vậy: "no out-of-band
+  callback reached oast.example.internal within 15s (or the target cannot reach that server)" —
+  mục tiêu có thể không tới được máy chủ (DNS không dẫn tới nó, tường lửa chặn chiều ra).
+- Đã kiểm thật: interactsh-server 1.4.1 + nuclei 3.11.1 + templates 10.5.2, app Log4Shell
+  (log4j 2.14.1) → CVE-2021-44228 `confirmed` qua callback DNS; web server thường → "no
+  callback"; sai token → không chạy template kênh ngoài, có ghi chú.
 
 ### Quét có đăng nhập (Debian)
 
@@ -966,8 +1006,8 @@ internal do một sidecar dùng chung network namespace thêm vào rồi thoát.
 ZuesScan là bộ điều phối các công cụ mở, **không** thay được scanner thương mại (không có thư
 viện kiểm tra riêng; phát hiện chủ yếu theo phiên bản, trừ nuclei và quét có đăng nhập). Mọi
 điểm yếu đã biết, kèm hướng nâng cấp theo cách làm thật, nằm ở
-[`docs/KNOWN-GAPS.md`](docs/KNOWN-GAPS.md) — nổi bật: quét có đăng nhập mới có Debian; nuclei
-chưa có kênh OAST (interactsh) riêng; web chưa có xác thực hai lớp / SSO; plugin bên thứ ba
+[`docs/KNOWN-GAPS.md`](docs/KNOWN-GAPS.md) — nổi bật: quét có đăng nhập mới có Debian; kênh
+OAST cần bạn tự dựng máy chủ interactsh; web chưa có xác thực hai lớp / SSO; plugin bên thứ ba
 chạy chung tiến trình; cảnh báo mới chỉ có webhook (chưa email); SQLite là giới hạn khi nhiều
 worker / người dùng.
 

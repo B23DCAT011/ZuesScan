@@ -21,8 +21,12 @@ It is a **check** plugin: it runs after the port scan, on what the scan found
 
 Safe defaults, because a scan must not harm or leak:
 
-* `-ni`: no interactsh. Out-of-band checks would make targets call a public
-  ProjectDiscovery server, sending engagement data outside.
+* `-ni`: no interactsh, unless a server of your own is configured
+  (`ZUES_INTERACTSH_SERVER`, see `zues_scan.plugins.interactsh`). nuclei's default
+  servers are ProjectDiscovery's public ones: out-of-band checks would make targets call
+  out of the engagement. With your own server, out-of-band templates (Log4Shell, blind
+  SSRF) run too; the server is probed before the scan, and if it does not answer, the
+  scan goes on with `-ni` and says so.
 * `-etags dos,fuzz,intrusive,bruteforce`: no template that floods, fuzzes or tries
   passwords; `-rl`: requests per second capped (the profile's check_rate, else its
   max_rate, else 50).
@@ -41,7 +45,10 @@ match confirms the finding; a run without a match is written on the finding
 (`Finding.tried`) - a fact to triage with (a backported fix, a configuration that is not
 vulnerable), never proof. The main pass cannot tell: it runs thousands of templates and
 prints only matches. Templates that need interactsh (out-of-band) are left out and never
-claimed: under `-ni` they cannot match, yet nuclei reports them as "not matched".
+claimed when there is no server: under `-ni` they cannot match, yet nuclei reports them as
+"not matched". With a server they run, and a miss is worded as what it is: no callback
+reached the server (the target may not be able to reach it). A template run that ended
+in an error (a refused connection, "interactsh client not initialized") is not a try.
 
 Templates: given a directory (`templates`, e.g. the copy pinned in the Docker image),
 nuclei runs exactly those, offline, from a fresh configuration directory of its own for
@@ -66,6 +73,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from zues_scan import redact, tools
+from zues_scan.plugins import interactsh as oast
 from zues_scan.plugins.base import Attempt, ScanError, ScanResult
 from zues_scan.profiles import BUILTIN, DEFAULT_PROFILE, ScanProfile
 from zues_scan.schema import Asset, Confidence, Finding, RawOutput, ScanTarget, Service, Severity
@@ -147,11 +155,14 @@ class NucleiPlugin:
         profile: ScanProfile | None = None,
         timeout: int | None = None,
         templates: str | None = None,
+        interactsh: oast.Interactsh | None = None,
     ) -> None:
         self.profile = profile or BUILTIN[DEFAULT_PROFILE]
         self.timeout = timeout or self.profile.timeout  # for all of this check's runs
         self.rate = self.profile.check_rate or self.profile.max_rate or DEFAULT_RATE
         self.templates = templates
+        self.interactsh = interactsh  # a self-hosted server: out-of-band templates run
+        self._oast: bool | None = None  # the server answered (asked once per plugin)
         self.clock: Callable[[], float] = time.monotonic  # replaceable in tests
 
     def is_available(self) -> bool:
@@ -180,14 +191,42 @@ class NucleiPlugin:
             return match.group(1)
         return f"{match.group(1)} (templates {templates_version(self.templates) or 'unknown'})"
 
-    def command(self, vhost: str | None, network: bool = False) -> list[str]:
+    def oast_ready(self, notes: list[str]) -> bool:
+        """Can this check's runs use the configured interactsh server? Asked once; a
+        server that does not answer is said in `notes`, and the runs use `-ni`."""
+        if self.interactsh is None:
+            return False
+        if self._oast is None:
+            problem = self.interactsh.probe()
+            self._oast = problem is None
+            if problem:
+                notes.append(
+                    f"interactsh: {problem}; out-of-band templates (Log4Shell, blind SSRF...) "
+                    f"not run"
+                )
+            else:
+                notes.append(f"out-of-band templates on, callbacks to {self.interactsh.domain}")
+        return self._oast
+
+    def command(self, vhost: str | None, network: bool = False, oob: bool = False) -> list[str]:
+        """The nuclei command; `oob`: with the configured interactsh server (whose token
+        `_run` writes to a configuration file, never here)."""
+        if oob and self.interactsh is not None:
+            callbacks = [
+                "-iserver",
+                self.interactsh.server,
+                "-interactions-cooldown-period",
+                str(oast.COOLDOWN),
+            ]
+        else:
+            callbacks = ["-ni"]
         command = [
             tools.resolve("nuclei"),
             "-jsonl",
             "-silent",
             "-nc",
             "-duc",
-            "-ni",
+            *callbacks,
             "-dut",
             "-etags",
             ",".join(EXCLUDED_TAGS),
@@ -225,6 +264,7 @@ class NucleiPlugin:
             result.notes.append("no service to check")
             return result
         found: dict[str, Asset] = {}
+        oob = self.oast_ready(result.notes)
         deadline = self.clock() + self.timeout
         runs = [
             (vhost, part, network)
@@ -241,7 +281,7 @@ class NucleiPlugin:
                 result.incomplete = True
                 result.notes.append(f"not checked, out of time: {_label(vhost, inputs)}")
                 continue
-            raw, finished = self._run(self.command(vhost, network), inputs, left)
+            raw, finished = self._run(self.command(vhost, network, oob), inputs, left, oob)
             result.raw.append(raw)
             if not finished:
                 result.incomplete = True
@@ -271,16 +311,19 @@ class NucleiPlugin:
         if not self.is_available():
             return result
         cves = sorted({c.upper() for ids in wanted.values() for c in ids})
+        oob = self.oast_ready(result.notes) if cves else False
         index = template_index(self.templates) if self.templates is not None else None
         if index is not None:
-            oob = [c for c in cves if c in index and needs_interactsh(index[c])]
             missing = [c for c in cves if c not in index]
-            cves = [c for c in cves if c in index and c not in oob]
-            if oob:
-                result.notes.append(
-                    f"not tried, their templates need out-of-band callbacks (interactsh): "
-                    f"{_list(oob)}"
-                )
+            cves = [c for c in cves if c in index]
+            if not oob:
+                left_out = [c for c in cves if needs_interactsh(index[c])]
+                cves = [c for c in cves if c not in left_out]
+                if left_out:
+                    result.notes.append(
+                        f"not tried, their templates need out-of-band callbacks (interactsh, "
+                        f"see {oast.SERVER_ENV}): {_list(left_out)}"
+                    )
             if missing:
                 result.notes.append(f"no template to try: {_list(missing)}")
         if not cves:
@@ -299,6 +342,8 @@ class NucleiPlugin:
         deadline = self.clock() + min(self.timeout, VERIFY_TIMEOUT)
         failed: dict[tuple[str, int, str], list[str]] = defaultdict(list)
         matched: set[tuple[str, int, str]] = set()
+        waited: set[tuple[str, int, str]] = set()  # out-of-band: no callback came
+        errors: dict[str, int] = defaultdict(int)
         found: dict[str, Asset] = {}
         for vhost, inputs in groups.items():
             for network, part in (
@@ -311,16 +356,21 @@ class NucleiPlugin:
                         result.incomplete = True
                         result.notes.append(f"not tried, out of time: {_label(vhost, part)}")
                     continue
-                command = [*self.command(vhost, network), "-id", ",".join(cves), "-ms"]
-                raw, finished = self._run(command, part, left)
+                command = [*self.command(vhost, network, oob), "-id", ",".join(cves), "-ms"]
+                raw, finished = self._run(command, part, left, oob)
                 result.raw.append(raw)
                 if not finished:
                     result.incomplete = True
                 for line in raw.content.splitlines():
-                    outcome = _attempt(line, vhost if not network else None)
+                    outcome = _attempt(line, vhost if not network else None, oob)
                     if outcome is None:
                         continue
-                    key, hit, finding = outcome
+                    if isinstance(outcome, str):
+                        errors[outcome] += 1
+                        continue
+                    key, hit, finding, callback = outcome
+                    if callback and not hit:
+                        waited.add(key)
                     if hit and finding is not None:
                         matched.add(key)
                         found.setdefault(key[0], Asset(host=key[0], ip=key[0])).findings.append(
@@ -341,7 +391,18 @@ class NucleiPlugin:
                 continue
             shown = ", ".join(sorted(set(places))[:3])
             what = f"nuclei {version}: template {cve} ran at {shown} and did not match"
+            if key in waited and self.interactsh is not None:
+                what = (
+                    f"nuclei {version}: template {cve} ran at {shown}; no out-of-band callback "
+                    f"reached {self.interactsh.domain} within {oast.COOLDOWN}s (or the target "
+                    f"cannot reach that server)"
+                )
             result.tried.append(Attempt(ip, port, cve, what))
+        if errors:
+            result.notes.append(
+                "template runs that ended in an error, not counted as tried: "
+                + "; ".join(f"{n} x {reason}" for reason, n in sorted(errors.items())[:3])
+            )
         result.notes.append(
             f"tried {len(cves)} version-based CVE(s) with their templates: "
             f"{len(matched)} confirmed, {len(result.tried)} not matched"
@@ -378,10 +439,17 @@ class NucleiPlugin:
             "NUCLEI_CONFIG_DIR": str(Path(home, "config")),
         }
 
-    def _run(self, command: list[str], inputs: list[str], timeout: int) -> tuple[RawOutput, bool]:
-        """One nuclei run; its output and whether it finished in time."""
+    def _run(
+        self, command: list[str], inputs: list[str], timeout: int, oob: bool = False
+    ) -> tuple[RawOutput, bool]:
+        """One nuclei run; its output and whether it finished in time. `oob`: the
+        interactsh server's token goes in a configuration file of the run's own."""
         with tempfile.TemporaryDirectory(prefix="zues-nuclei-") as home:
             env = None
+            if oob and self.interactsh is not None:
+                settings = Path(home, "interactsh.yaml")
+                settings.write_text(self.interactsh.config(), encoding="utf-8")
+                command = [*command, "-config", str(settings)]
             if self.templates is not None:
                 config = Path(home, "config")
                 config.mkdir()
@@ -473,9 +541,10 @@ def needs_interactsh(template: Path) -> bool:
 
 
 def _attempt(
-    line: str, vhost: str | None
-) -> tuple[tuple[str, int, str], bool, Finding | None] | None:
-    """((address, port, CVE), matched, the finding if matched) of one `-ms` line."""
+    line: str, vhost: str | None, oob: bool = False
+) -> tuple[tuple[str, int, str], bool, Finding | None, bool] | str | None:
+    """((address, port, CVE), matched, the finding if matched, out-of-band) of one `-ms`
+    line; the error, if the template's run ended in one; None if it says nothing."""
     try:
         hit = json.loads(line)
     except json.JSONDecodeError:
@@ -485,6 +554,10 @@ def _attempt(
     template = str(hit["template-id"]).upper()
     if not _CVE_FILE.fullmatch(template):
         return None
+    if hit.get("error") and hit.get("matcher-status") is False:
+        # Not a try: nothing (or not all of it) reached the target, or nuclei could not
+        # have seen the answer ("interactsh client not initialized").
+        return str(hit["error"])[:120]
     url = str(hit.get("matched-at") or hit.get("url") or hit.get("host") or "")
     parts = urlsplit(url if "://" in url else f"tcp://{url}")
     ip = str(hit.get("ip") or parts.hostname or "")
@@ -493,13 +566,15 @@ def _attempt(
         return None
     matched = hit.get("matcher-status", True) is not False
     if not matched:
-        # The engine's own word that this template cannot be claimed (no callbacks).
         path = Path(str(hit.get("template-path") or ""))
-        if not path.is_file() or needs_interactsh(path):
+        if not path.is_file():
             return None
-        return (ip, port, template), False, None
+        callback = needs_interactsh(path)
+        if callback and not oob:
+            return None  # under -ni it could never match: not a try
+        return (ip, port, template), False, None, callback
     parsed = _finding(hit, vhost)
-    return (ip, port, template), True, parsed[1] if parsed else None
+    return (ip, port, template), True, parsed[1] if parsed else None, bool(hit.get("interaction"))
 
 
 def _where(line: str, vhost: str | None) -> str:
@@ -540,6 +615,11 @@ def _finding(hit: dict[str, Any], vhost: str | None) -> tuple[str, Finding] | No
     extracted = [str(x) for x in hit.get("extracted-results") or []][:3]
     if extracted:
         evidence += f"; extracted: {', '.join(e[:120] for e in extracted)}"
+    interaction = hit.get("interaction")
+    if isinstance(interaction, dict) and interaction.get("protocol"):
+        evidence += f"; out-of-band {interaction['protocol']} callback"
+        if interaction.get("remote-address"):
+            evidence += f" from {interaction['remote-address']}"
     if vhost:
         evidence += f"; sent as virtual host {vhost}"
     finding = Finding(

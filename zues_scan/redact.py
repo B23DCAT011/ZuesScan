@@ -142,8 +142,25 @@ def _hit(hit: dict[str, Any]) -> dict[str, Any]:
             out[key] = http(value)
         elif key == "response" and isinstance(value, str):
             out[key] = http(value, body_limit=MAX_BODY)
+        elif key == "interaction" and isinstance(value, dict):
+            out[key] = _interaction(value)
         else:
             out[key] = _value(value)
+    return out
+
+
+def _interaction(value: dict[str, Any]) -> dict[str, Any]:
+    """An out-of-band callback the target made (interactsh): an HTTP one is an HTTP
+    exchange like any other (a blind SSRF can carry the target's own credentials)."""
+    web = str(value.get("protocol", "")).lower() in ("http", "https")
+    out: dict[str, Any] = {}
+    for key, item in value.items():
+        if web and key == "raw-request" and isinstance(item, str):
+            out[key] = http(item)
+        elif web and key == "raw-response" and isinstance(item, str):
+            out[key] = http(item, body_limit=MAX_BODY)
+        else:
+            out[key] = _value(item)
     return out
 
 

@@ -19,6 +19,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -221,6 +222,34 @@ def check_templates(pinned: str | None, version: str | None, home: Path) -> Chec
         WARN,
         "none: nuclei would download templates during the first scan",
         tools_hint("nuclei-templates"),
+    )
+
+
+def check_interactsh(environ: Mapping[str, str]) -> Check:
+    """The self-hosted interactsh server for out-of-band templates, if any, and whether it
+    answers (G24)."""
+    from zues_scan.plugins import interactsh
+
+    name = "interactsh"
+    try:
+        server = interactsh.from_env(environ)
+    except interactsh.InteractshError as exc:
+        return Check(name, ERROR, str(exc), "nuclei scans fail until this is fixed")
+    if server is None:
+        return Check(
+            name,
+            INFO,
+            "none: nuclei runs without out-of-band templates (Log4Shell, blind SSRF...)",
+            f"run interactsh-server in your network and set {interactsh.SERVER_ENV}",
+        )
+    problem = server.probe()
+    if problem:
+        return Check(name, WARN, f"{problem}: scans go on without out-of-band templates", None)
+    token = "with a token" if server.token else "no token"
+    return Check(
+        name,
+        OK,
+        f"{server.server} answers ({token}); targets must resolve *.{server.domain} to it",
     )
 
 
@@ -428,6 +457,7 @@ def gather(config: str | None = None, cve_cache: str = "zues-cve.db") -> list[Ch
     checks.append(
         check_templates(pinned, templates_version(pinned) if pinned else None, Path.home())
     )
+    checks.append(check_interactsh(os.environ))
     subfinder = tools.which("subfinder")
     plugin = SubfinderPlugin()
     checks.append(

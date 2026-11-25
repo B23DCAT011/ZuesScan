@@ -97,7 +97,10 @@ def test_a_template_that_ran_without_matching_is_recorded(
     assert (attempt.ip, attempt.port, attempt.cve) == ("10.0.0.5", 8080, "CVE-2021-41773")
     assert attempt.what.startswith("nuclei 3.11.1 (templates ")
     assert "template CVE-2021-41773 ran at http://10.0.0.5:8080 and did not match" in attempt.what
-    assert any("need out-of-band callbacks (interactsh): CVE-2021-44228" in n for n in result.notes)
+    assert any(
+        "need out-of-band callbacks (interactsh, see ZUES_INTERACTSH_SERVER): CVE-2021-44228" in n
+        for n in result.notes
+    )
     assert any("no template to try: CVE-2099-0001" in n for n in result.notes)
     assert result.assets == []
 

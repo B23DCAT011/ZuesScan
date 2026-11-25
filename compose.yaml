@@ -38,6 +38,11 @@ x-zues: &zues
     # Third-party plugins the service may load (D14), as `zues plugins --pin NAME` prints
     # them, separated by commas; empty: the built-in plugins only.
     ZUES_PLUGINS: ${ZUES_PLUGINS:-}
+    # nuclei's out-of-band templates (Log4Shell, blind SSRF): your own interactsh server,
+    # by its domain, and its token. Empty: no out-of-band templates (public servers are
+    # refused: targets would call out of the engagement).
+    ZUES_INTERACTSH_SERVER: ${ZUES_INTERACTSH_SERVER:-}
+    ZUES_INTERACTSH_TOKEN: ${ZUES_INTERACTSH_TOKEN:-}
   volumes:
     - data:/data
     - ./deploy:/config:ro

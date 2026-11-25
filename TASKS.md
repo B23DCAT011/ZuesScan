@@ -272,4 +272,8 @@ rồi độ tin cậy, rồi tiện dụng.
       editor (khôi phục = lưu lại, qua kiểm tra / duyệt); API history + versions. Thử bằng Chrome.
 - [x] `feat/webhook-secret-rotation` (G23) — `previous_secret`: hai chữ ký trong lúc đổi secret,
       bên nhận khớp một là đủ; README có cách kiểm mới; Settings báo đang ký bằng hai secret.
+- [x] `feat/interactsh-self-hosted` (G24, D18) — template kênh ngoài với máy chủ interactsh tự
+      dựng (`ZUES_INTERACTSH_SERVER` / `_TOKEN`): máy chủ công cộng bị từ chối, token trong file
+      cấu hình từng lần chạy, hỏi máy chủ trước khi quét; dòng nuclei có `error` không còn tính
+      là "đã thử". Thử thật interactsh-server 1.4.1 + app Log4Shell → confirmed qua DNS.
 

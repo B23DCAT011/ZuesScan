@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from zues_scan.cve.cache import CveCache
+from zues_scan.plugins import interactsh
 from zues_scan.plugins.base import ScanError
 from zues_scan.plugins.dnsx import DnsxPlugin
 from zues_scan.plugins.httpx import HttpxPlugin
@@ -109,7 +110,13 @@ def _naabu(ctx: PluginContext) -> Any:
 
 
 def _nuclei(ctx: PluginContext) -> Any:
-    return NucleiPlugin(profile=ctx.profile, templates=ctx.nuclei_templates)
+    # The interactsh server comes from the environment, not the context: the context is
+    # handed to third-party plugins, and the server's token is not theirs to see.
+    try:
+        server = interactsh.from_env()
+    except interactsh.InteractshError as exc:
+        raise PluginError(f"nuclei: {exc}") from exc
+    return NucleiPlugin(profile=ctx.profile, templates=ctx.nuclei_templates, interactsh=server)
 
 
 def _subfinder(ctx: PluginContext) -> Any:

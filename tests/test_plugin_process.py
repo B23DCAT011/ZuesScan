@@ -228,6 +228,7 @@ def test_it_runs_with_a_clean_environment_in_an_empty_folder(
 ) -> None:
     monkeypatch.setenv("ZUES_WEBHOOK_SECRET", "s3cret-of-the-service")
     monkeypatch.setenv("ZUES_DB", "/data/zues.db")
+    monkeypatch.setenv("ZUES_INTERACTSH_TOKEN", "the-oast-server-token")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "abc")
     [note] = ask(built(probe), "env").notes
     facts = json.loads(note)
