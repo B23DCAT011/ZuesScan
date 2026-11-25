@@ -215,16 +215,27 @@ Wappalyzer) — hiện trong đầu ra `zues scan`, bản đồ HTML, API, MCP v
 ```
     80/tcp     http            nginx 1.20.0
                                web: 200 "Welcome to nginx!"  [Nginx:1.20.0]
+                               web (shop.acme.lab): 200 "Acme Shop"  [PHP:7.4.3, WordPress:5.8]
 ```
 
 Công nghệ **có phiên bản** mà ZuesScan biết tên CPE (Apache, nginx, IIS, Tomcat, Jetty, PHP,
 WordPress, Drupal, Moodle, phpMyAdmin, Grafana, Jenkins, GitLab, jQuery, Bootstrap, OpenSSL…)
 được đưa vào bước CVE như phần mềm chạy trên cổng đó — tìm được lỗ hổng của PHP 7.4 dù nmap chỉ
 thấy nginx. Cùng một CVE do nmap và httpx cùng suy ra là **một** finding, bằng chứng ghi cả hai
-("the web check (httpx) recognised 'Nginx:1.20.0' in the HTTP answer"). Chỉ dùng địa chỉ IP, không
-dùng tên (httpx sẽ tự phân giải lại tên, có thể ra địa chỉ cổng scope chưa duyệt) — nên chưa phân
-biệt virtual host (G29). Tiêu đề, tên công nghệ đến từ máy bị quét: bỏ ký tự điều khiển, giới hạn
-độ dài, luôn hiển thị dạng text. Lab chạy httpx cùng nuclei trên cả hai target.
+("the web check (httpx) recognised 'Nginx:1.20.0' in the HTTP answer").
+
+**Virtual host:** một máy thường phục vụ nhiều trang theo tên. Mỗi dịch vụ web được hỏi một lần
+theo địa chỉ (trang mặc định), rồi một lần **dưới mỗi tên của host đó** — tên target, các tên mà
+bước tìm tên (subfinder / dnsx) thấy trỏ về nó — với header `Host: <tên>`, nhưng **vẫn kết nối
+tới đúng địa chỉ đã được cổng scope duyệt**: tên không bao giờ được phân giải lại (dòng
+`tên,ip:cổng` của httpx), nên không thể dẫn tới địa chỉ chưa duyệt. Mỗi trang theo tên được lưu
+riêng trên dịch vụ (`vhosts`, schema 21), công nghệ của mọi trang đều vào bước CVE (WordPress
+chỉ có ở `shop.` vẫn được đối chiếu). Tối đa 200 cặp tên–dịch vụ mỗi lần (ghi chú nếu bỏ bớt);
+tên phải là tên DNS thuần (không dấu phẩy, khoảng trắng, cổng, URL). Giới hạn: TLS SNI vẫn là địa
+chỉ — máy chủ chọn trang **chỉ** theo SNI thì trả trang mặc định (G29).
+
+Tiêu đề, tên công nghệ đến từ máy bị quét: bỏ ký tự điều khiển, giới hạn độ dài, luôn hiển thị
+dạng text. Lab chạy httpx cùng nuclei trên cả hai target.
 
 ### Kiểm tra chủ động bằng nuclei
 

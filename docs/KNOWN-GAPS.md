@@ -533,8 +533,18 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     database (schema 13), hiện ở CLI, bản đồ, API, MCP; công nghệ có phiên bản → bước CVE, gộp
     với finding của nmap. Thử thật trên lab (Apache, nginx) và trong job lab của CI.
   - Còn lại:
-    - **Virtual host:** chỉ hỏi theo IP; một máy chủ nhiều tên (vhost) chỉ được thấy trang mặc
-      định. Sửa: gửi `Host:` = tên đã được cổng scope duyệt, nhưng vẫn kết nối tới đúng IP đó.
+    - ✅ **Virtual host** (`feat/httpx-vhosts`, schema 21): mỗi dịch vụ web còn được hỏi dưới mỗi
+      tên của host (`Host:` = tên, kết nối vẫn tới IP đã duyệt — dòng `tên,ip:cổng` của httpx,
+      tên không được phân giải lại); trang theo tên lưu ở `Service.vhosts`, công nghệ vào bước
+      CVE. Thử thật với httpx 1.12.0: HTTP, HTTPS, IPv6, mỗi tên đúng một request. Còn lại:
+      - **SNI** vẫn là địa chỉ (cờ `-sni` của httpx là một tên cho cả lần chạy): máy chủ chọn
+        trang chỉ theo SNI (HAProxy / Traefik định tuyến TLS theo SNI, CDN) trả trang mặc định.
+        Sửa: một lần chạy httpx cho mỗi tên với `-sni`, hoặc client HTTP riêng.
+      - Chỉ các tên đã biết (tên target, tên tìm được bằng DNS); chưa đoán vhost (brute-force
+        Host header bằng wordlist — mức `active`, dễ bị coi là tấn công) hay đọc tên từ chứng
+        chỉ TLS (SAN).
+      - Nhiều tên × nhiều cổng có thể nhiều request: giới hạn 200 cặp mỗi lần, theo `check_rate`.
+      - nuclei vẫn chỉ quét theo địa chỉ.
     - Chỉ trang gốc `/`, không theo redirect: ứng dụng ở `/app/` hay sau một redirect sang HTTPS
       có thể không được nhận diện đầy đủ.
     - `TECH_NAMES` là danh sách tay (~20 tên); công nghệ khác hiện ra nhưng không đối chiếu CVE.

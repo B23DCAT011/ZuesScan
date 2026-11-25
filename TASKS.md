@@ -260,4 +260,7 @@ rồi độ tin cậy, rồi tiện dụng.
       trượt trong Redis, 429 + `Retry-After`; Settings, `zues user quota`, `service.toml`, MCP).
 - [x] `feat/outbox-retention` (G23) — cảnh báo cũ được xoá: `[notify] keep_days` (mặc định 90,
       tối thiểu 7 > cửa sổ chống lặp) / `ZUES_NOTIFY_KEEP_DAYS`; scheduler dọn vòng đầu rồi mỗi giờ.
+- [x] `feat/httpx-vhosts` (G29) — httpx hỏi mỗi dịch vụ web dưới mỗi tên của host (`Host:` = tên,
+      kết nối tới IP đã duyệt); `Service.vhosts` (schema 21), công nghệ của mọi trang vào bước
+      CVE; CLI, bản đồ, API, MCP. Thử thật httpx 1.12.0 (HTTP / HTTPS / IPv6).
 
