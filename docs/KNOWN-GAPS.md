@@ -427,9 +427,10 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       - máy chủ chỉ được kiểm từ phía máy quét: mục tiêu có tới được nó không (DNS của mục tiêu
         dẫn tới máy chủ, tường lửa cho ra) thì không biết trước — "không có callback" được ghi
         đúng như vậy, không phải "không lỗi";
-      - lab và CI chưa có máy chủ interactsh + app Log4Shell (đã thử thật bằng tay, các bước ở
-        README); `-iserver` qua HTTPS dùng kiểm tra chứng chỉ của nuclei (chưa thử với chứng chỉ
-        nội bộ tự ký);
+      - ✅ lab và CI có máy chủ interactsh + app Log4Shell (`feat/lab-oast`): job lab của CI
+        kiểm CVE-2021-44228 được xác nhận qua callback (máy chủ không token: lab cách ly).
+        Còn: `-iserver` qua HTTPS dùng kiểm tra chứng chỉ của nuclei (chưa thử với chứng chỉ
+        nội bộ tự ký); đường có token chỉ được kiểm bằng tay (Log4Shell, sai token → không chạy);
       - interactsh chỉ giữ tương tác trong bộ nhớ đệm 60 s của nuclei (`-interactions-eviction`):
         callback tới rất muộn (hàng đợi, job chạy sau) bị bỏ lỡ.
     - ✅ **Dịch vụ web mà nmap gọi sai tên** (`feat/web-detect`): app Spring Boot (Log4Shell)
