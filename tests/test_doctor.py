@@ -217,7 +217,15 @@ def test_a_working_service_is_ready(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     checks = {c.name: c for c in doctor.check_service(str(config))}
     assert checks["service config"].detail.endswith("1 target(s)")
     assert checks["database"].status == INFO  # the first scan creates it
-    assert checks["redis"].status == OK
+    assert checks["redis"].status == WARN and "has no password" in checks["redis"].detail
+
+    (tmp_path / "redis.pass").write_text("s3cret\n", encoding="utf-8")
+    text = config.read_text(encoding="utf-8").replace(
+        "[service]\n", f'[service]\nredis_password_file = "{tmp_path.as_posix()}/redis.pass"\n'
+    )
+    config.write_text(text, encoding="utf-8")
+    checks = {c.name: c for c in doctor.check_service(str(config))}
+    assert checks["redis"].status == OK and checks["redis"].detail.endswith("(password)")
 
 
 def test_the_database_should_use_write_ahead_logging(tmp_path: Path) -> None:

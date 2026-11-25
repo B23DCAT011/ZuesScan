@@ -387,7 +387,20 @@ def check_service(config_path: str) -> list[Check]:
         return checks
     try:
         queue.connect(config).ping()
-        checks.append(Check("redis", OK, queue.safe_url(config.redis_url)))
+        if queue.has_password(config):
+            checks.append(Check("redis", OK, f"{queue.safe_url(config.redis_url)} (password)"))
+        else:
+            checks.append(
+                Check(
+                    "redis",
+                    WARN,
+                    f"{queue.safe_url(config.redis_url)} has no password: any program that "
+                    "reaches it (another container, a plugin) can read and change the queue",
+                    "requirepass in Redis + redis_password_file (compose sets both up)",
+                )
+            )
+    except ConfigError as exc:
+        checks.append(Check("redis", ERROR, str(exc), required=True))
     except queue.UNREACHABLE as exc:
         checks.append(
             Check(

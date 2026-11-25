@@ -132,6 +132,16 @@ section of a version as its release notes, so every tag needs one.
   check's overall time budget is unchanged.
 
 ### Security
+- Writing to Redis no longer means running code in a worker (G25, D19). RQ's default
+  pickle let any job name any function: a third-party plugin, inside the worker's
+  container with its network, could queue a call on the open Redis and have it run outside
+  its sandbox (checked for real). Jobs are now JSON, and a worker runs only ZuesScan's scan
+  job (and its failure callback): any other job - another function, a foreign callback,
+  pickled data - is failed unrun and logged. Redis has a password in compose, made on the
+  first start and kept in a `secrets` volume only ZuesScan's user can read;
+  `redis_password_file` / `ZUES_REDIS_PASSWORD_FILE` (a file, never a variable a plugin
+  could inherit). `zues doctor` warns about a Redis without a password. Upgrading: jobs
+  queued by an older version are refused - let the queue drain first.
 - Scan limits (D17). A target is never scanned twice at once: while a scan of it waits or
   runs, another request (dashboard, API, MCP, `zues enqueue`) is refused with 409 and the
   job that is there; a scheduled slot that falls then is skipped, the next comes on time.

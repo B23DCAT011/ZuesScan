@@ -279,4 +279,8 @@ rồi độ tin cậy, rồi tiện dụng.
 - [x] `feat/web-detect` (G24) — httpx hỏi mọi cổng TCP mở (trừ giao thức rõ không phải web, cổng
       máy in); cổng trả lời HTTP được nuclei kiểm như web dù nmap gọi tên khác (Spring Boot =
       `nagios-nsca`). Thử thật: `zues scan --check httpx --check nuclei` → Log4Shell confirmed.
+- [x] `feat/queue-hardening` (G25, D19) — ghi được vào Redis không còn là chạy được code trong
+      worker: job RQ là JSON, worker chỉ chạy job quét của ZuesScan; Redis có mật khẩu (compose
+      tự sinh, file trong volume `secrets`). Thử thật: trước — job của "plugin" chạy ngoài
+      sandbox; sau — `NOAUTH`, job lạ (pickle / JSON) bị từ chối không chạy; lab quét đủ.
 

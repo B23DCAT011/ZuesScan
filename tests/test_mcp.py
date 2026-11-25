@@ -24,11 +24,12 @@ from conftest import FakePlugin, lab_asset, lab_resolver  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from mcp import Client  # noqa: E402
 from mcp.client.session import ClientRequestContext, ElicitationFnT  # noqa: E402
-from rq import Queue, SimpleWorker  # noqa: E402
+from rq import Queue  # noqa: E402
 
 from zues_scan import cli  # noqa: E402
 from zues_scan.mcp_server import Api, build, clean  # noqa: E402
 from zues_scan.schema import Service  # noqa: E402
+from zues_scan.server import queue as rkqueue  # noqa: E402
 from zues_scan.server.web import create_app  # noqa: E402
 
 OPERATOR = "agent-operator-token-0123456789abcdefghijklmnop"
@@ -75,8 +76,8 @@ class Service_:
         return Api("http://testserver", token, send=send)
 
     def work(self) -> None:
-        q = Queue("mcp", connection=self.redis)
-        SimpleWorker([q], connection=self.redis).work(burst=True)
+        q = Queue("mcp", connection=self.redis, serializer=rkqueue.SERIALIZER)
+        rkqueue.make_worker(q, fork=False).work(burst=True)
 
 
 @pytest.fixture

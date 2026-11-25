@@ -902,8 +902,23 @@ Image và compose được làm cứng theo cách làm thật:
   web / scheduler **không chạy được nmap** dù có bị chiếm quyền.
 - Web chỉ publish ra `127.0.0.1:8000`; Redis không publish cổng nào. Muốn phục vụ máy khác:
   đặt reverse proxy có TLS phía trước (xem "Web API & dashboard").
-- Healthcheck: Redis (`PING`), web (`/healthz` — cấu hình, database, hàng đợi). Log xoay vòng
-  10 MB × 5.
+- **Ghi được vào Redis không có nghĩa là chạy được code** (D19). Mặc định của RQ là pickle: job
+  là một lời gọi hàm, worker chạy bất kỳ hàm nào job ghi. Plugin bên thứ ba chạy trong container
+  worker, có mạng của worker: trước đây nó gọi được `redis:6379` không mật khẩu, đặt một job
+  của riêng nó, và job đó chạy **ngoài sandbox** trong worker (đã thử thật). Giờ:
+  - Redis **có mật khẩu**: service `redis` tự sinh 256 bit ngẫu nhiên ở lần chạy đầu, giữ trong
+    volume `secrets`, chỉ user `zues` đọc được; các container ZuesScan đọc qua
+    `ZUES_REDIS_PASSWORD_FILE=/secrets/redis.pass` (hoặc `redis_password_file` trong
+    `service.toml`). Tiến trình của plugin không có biến `ZUES_*` nào và Landlock không cho đọc
+    `/secrets` → `NOAUTH`.
+  - Job là **JSON** (đọc một job không bao giờ chạy code), và worker **chỉ chạy job quét của
+    ZuesScan**: job khác (gọi hàm khác, callback lạ, dữ liệu pickle) bị đánh dấu failed mà
+    không chạy, log ghi `refused job …`.
+  - **Nâng cấp**: job xếp hàng từ bản cũ (pickle) sẽ bị từ chối như vậy — để hàng đợi chạy hết
+    trước khi nâng cấp. Redis cũ không mật khẩu: `docker compose up -d` tạo mật khẩu và khởi
+    động lại Redis với nó; `zues doctor` cảnh báo Redis không có mật khẩu.
+- Healthcheck: Redis (`PING`, có mật khẩu), web (`/healthz` — cấu hình, database, hàng đợi).
+  Log xoay vòng 10 MB × 5.
 
 Mạng quét: worker nằm trong mạng bridge của compose (quét ra ngoài qua NAT; traceroute thấy
 gateway của Docker là hop đầu). Để quét LAN của máy chủ không qua NAT (Linux):

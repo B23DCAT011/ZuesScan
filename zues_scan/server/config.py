@@ -11,6 +11,7 @@ target by its `name`; it never brings its own address, scope file or options.
     subfinder_config = "/config/subfinder.yaml"  # optional: API keys of subfinder's sources
     dns_wordlist = "/config/words.txt"   # optional: dnsx's wordlist (default: ZuesScan's)
     redis_url = "redis://redis:6379/0"
+    redis_password_file = "/secrets/redis.pass"   # optional: Redis's password, from a file
     queue = "zues"
     scope_approval = false         # true: a scope change in the dashboard needs a 2nd admin
 
@@ -194,6 +195,9 @@ class ServiceConfig:
     path: str
     db: str
     redis_url: str = "redis://localhost:6379/0"
+    # Redis's password, read from this file when connecting (not kept in the URL, the
+    # environment or the configuration: a plugin's process gets none of them, D19).
+    redis_password_file: str | None = None
     queue: str = "zues"
     cve_cache: str | None = None
     nuclei_templates: str | None = None
@@ -264,6 +268,7 @@ def from_environment() -> ServiceConfig:
         path=ENVIRONMENT,
         db=env.get("ZUES_DB") or "zues.db",
         redis_url=env.get("ZUES_REDIS_URL") or "redis://localhost:6379/0",
+        redis_password_file=env.get("ZUES_REDIS_PASSWORD_FILE") or None,
         queue=env.get("ZUES_QUEUE") or "zues",
         cve_cache=env.get("ZUES_CVE_CACHE") or None,
         notify=notify,
@@ -301,6 +306,7 @@ def load_config(path: str | Path | None = None) -> ServiceConfig:
             "db",
             "cve_cache",
             "redis_url",
+            "redis_password_file",
             "queue",
             "nuclei_templates",
             "subfinder_config",
@@ -344,6 +350,10 @@ def load_config(path: str | Path | None = None) -> ServiceConfig:
         path=str(path),
         db=str(service["db"]),
         redis_url=str(service.get("redis_url", "redis://localhost:6379/0")),
+        # Unset here: the environment's (compose sets it for every container).
+        redis_password_file=service.get("redis_password_file")
+        or os.environ.get("ZUES_REDIS_PASSWORD_FILE")
+        or None,
         queue=str(service.get("queue", "zues")),
         cve_cache=service.get("cve_cache"),
         nuclei_templates=service.get("nuclei_templates"),

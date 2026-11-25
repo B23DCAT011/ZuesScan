@@ -24,6 +24,9 @@ x-zues: &zues
     ZUES_CONFIG: ${ZUES_CONFIG:-}
     ZUES_DB: /data/zues.db
     ZUES_REDIS_URL: redis://redis:6379/0
+    # Redis's password, made by the redis service on its first start (D19). A file, not
+    # a variable: a plugin's process gets no ZUES_* variable and cannot read /secrets.
+    ZUES_REDIS_PASSWORD_FILE: /secrets/redis.pass
     # Alerts (optional; e.g. in a .env file next to this one, never committed):
     # the webhook, the HMAC secret that signs each alert, from which priority new
     # findings alert, after how many failed scans in a row.
@@ -46,6 +49,7 @@ x-zues: &zues
   volumes:
     - data:/data
     - ./deploy:/config:ro
+    - secrets:/secrets:ro
   cap_drop: [ALL]
   security_opt:
     - no-new-privileges:true
@@ -62,13 +66,30 @@ services:
     restart: unless-stopped
     # The queue survives a restart: append-only file in its own volume. No port is
     # published: only the containers of this project can reach it.
-    command: ["redis-server", "--appendonly", "yes", "--save", "300 1"]
+    # It needs a password (D19): made on the first start, 256 random bits, kept in the
+    # secrets volume, readable by ZuesScan's user (10001) only. Whoever reaches Redis
+    # without it - another container, a third-party plugin - gets NOAUTH. To change it,
+    # write a new one into the file (docker compose run) and restart everything.
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        umask 077
+        if [ ! -s /secrets/redis.pass ]; then
+          head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > /secrets/redis.pass.new
+          mv /secrets/redis.pass.new /secrets/redis.pass
+        fi
+        chown 10001:10001 /secrets/redis.pass
+        chmod 400 /secrets/redis.pass
+        printf 'requirepass %s\n' "$$(cat /secrets/redis.pass)" > /tmp/auth.conf
+        chown redis /tmp/auth.conf
+        exec docker-entrypoint.sh redis-server /tmp/auth.conf --appendonly yes --save "300 1"
     volumes:
       - redis:/data
+      - secrets:/secrets
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$(cat /secrets/redis.pass)\" redis-cli ping | grep -q PONG"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -111,3 +132,4 @@ services:
 volumes:
   data:
   redis:
+  secrets:

@@ -75,7 +75,7 @@ def taken(q: Queue) -> None:
 
 def work(q: Queue) -> None:
     """Run every queued job in this process, then return."""
-    SimpleWorker([q], connection=q.connection).work(burst=True)
+    rkqueue.make_worker(q, fork=False).work(burst=True)
 
 
 # --- the queue ---------------------------------------------------------------------------------
@@ -141,7 +141,7 @@ def test_the_worker_suits_the_platform(q: Queue, monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(sys, "platform", "linux")
     unix = rkqueue.make_worker(q)
-    assert type(unix) is Worker  # a fresh process per job
+    assert isinstance(unix, Worker) and not isinstance(unix, SimpleWorker)  # a process per job
 
 
 # --- the scheduler -----------------------------------------------------------------------------
@@ -251,9 +251,8 @@ def test_cli_enqueue_then_worker_then_scheduler(
     from zues_scan import cli
 
     # The CLI's worker is the platform's; the in-process one keeps the fakes in effect.
-    monkeypatch.setattr(
-        rkqueue, "make_worker", lambda q: SimpleWorker([q], connection=q.connection)
-    )
+    make = rkqueue.make_worker
+    monkeypatch.setattr(rkqueue, "make_worker", lambda q: make(q, fork=False))
     config = service.path
 
     assert cli.main(["enqueue", "manual", "--config", config, "--operator", "alice"]) == 0

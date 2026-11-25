@@ -97,3 +97,4 @@ def _own_tools_dir(
     monkeypatch.delenv("ZUES_SUBFINDER_CONFIG", raising=False)
     monkeypatch.delenv("ZUES_INTERACTSH_SERVER", raising=False)
     monkeypatch.delenv("ZUES_INTERACTSH_TOKEN", raising=False)
+    monkeypatch.delenv("ZUES_REDIS_PASSWORD_FILE", raising=False)
