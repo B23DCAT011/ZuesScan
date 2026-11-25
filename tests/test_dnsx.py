@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from zues_scan.plugins import dnsx as dnsx_plugin
 from zues_scan.plugins import registry as plugin_registry
 from zues_scan.plugins.base import ScanError
 from zues_scan.plugins.dnsx import (
@@ -172,3 +175,34 @@ def test_registered_as_a_scan_level_discoverer_with_the_profiles_rate() -> None:
     ctx = plugin_registry.PluginContext(profile=profile, dns_wordlist="w.txt")
     (built,) = plugin_registry.load(lambda: []).build(["dnsx"], "discovery", ctx)
     assert (built.wordlist, built.rate) == ("w.txt", profile.check_rate or 100)
+
+
+def test_on_windows_the_dns_servers_of_windows(
+    fake_dnsx: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    found = ["10.1.0.53", "fec0:0:0:ffff::1", "10.1.0.53", "not an address", "10.2.0.53"]
+    monkeypatch.setattr(dnsx_plugin, "_network_params_dns", lambda: found)
+    result = DnsxPlugin().discover("example.com")
+    command = fake_dnsx[0]["command"]
+    assert command[command.index("-r") + 1] == "10.1.0.53,10.2.0.53"  # IPv4, each once
+    assert not any("public resolvers" in n for n in result.notes)
+
+
+def test_without_a_system_resolver_the_run_says_so(
+    fake_dnsx: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(dnsx_plugin, "_network_params_dns", lambda: [])
+    result = DnsxPlugin().discover("example.com")
+    assert "-r" not in fake_dnsx[0]["command"]
+    assert any("dnsx asked public resolvers" in n for n in result.notes)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows' own API")
+def test_windows_names_its_dns_servers() -> None:
+    # Any Windows machine with a network has at least one; each is an IPv4 address.
+    servers = dnsx_plugin.windows_resolvers()
+    assert servers and all(
+        isinstance(ipaddress.ip_address(s), ipaddress.IPv4Address) for s in servers
+    )

@@ -190,6 +190,18 @@ def check_tool(name: str, path: str | None, version: str | None, system: System)
     return Check(name, OK, f"{version or 'version unknown'} ({path})")
 
 
+def check_dns_resolvers(resolvers: list[str]) -> Check:
+    """The DNS servers dnsx asks: the system's, as the scope guard resolves with."""
+    if resolvers:
+        return Check("dns resolvers", OK, f"{', '.join(resolvers)} (the system's)")
+    return Check(
+        "dns resolvers",
+        WARN,
+        "the system names none: dnsx would ask public resolvers, internal names not found",
+        "set a nameserver in /etc/resolv.conf (or the network's DNS servers on Windows)",
+    )
+
+
 def check_templates(pinned: str | None, version: str | None, home: Path) -> Check:
     name = "nuclei templates"
     if pinned:
@@ -424,6 +436,8 @@ def gather(config: str | None = None, cve_cache: str = "zues-cve.db") -> list[Ch
     checks.append(check_providers(os.environ.get("ZUES_SUBFINDER_CONFIG") or plugin.providers()))
     dnsx = tools.which("dnsx")
     checks.append(check_tool("dnsx", dnsx, DnsxPlugin().version() if dnsx else None, system))
+    if dnsx:
+        checks.append(check_dns_resolvers(DnsxPlugin().resolvers()))
     naabu = tools.which("naabu")
     # Its own version only: nmap has its own line above.
     naabu_version = NaabuPlugin(nmap=_no_nmap).version() if naabu else None

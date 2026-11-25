@@ -19,6 +19,7 @@ from zues_scan.doctor import (
     WARN,
     System,
     check_cve_cache,
+    check_dns_resolvers,
     check_nmap,
     check_nmap_rights,
     check_providers,
@@ -253,3 +254,10 @@ def test_doctor_checks_the_service_the_environment_describes(
 
     names = {c["name"] for c in json.loads(capsys.readouterr().out)["checks"]}
     assert {"service config", "database"} <= names
+
+
+def test_dns_resolvers_are_shown_or_their_absence_warned() -> None:
+    shown = check_dns_resolvers(["10.0.0.53", "8.8.8.8"])
+    assert (shown.status, shown.detail) == (OK, "10.0.0.53, 8.8.8.8 (the system's)")
+    missing = check_dns_resolvers([])
+    assert missing.status == WARN and "internal names not found" in missing.detail
