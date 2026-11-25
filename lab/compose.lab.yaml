@@ -1,7 +1,8 @@
 # ZuesScan lab: deliberately vulnerable services on two ISOLATED networks, scanned by the
 # worker of compose.yaml. Start it with lab/up.sh (or see the commands in README "Lab").
 #
-#   lab-dmz       10.66.1.0/24   worker, Apache 2.4.49 (.20), OpenSSH 7.5 (.22), router (.254)
+#   lab-dmz       10.66.1.0/24   worker, Apache 2.4.49 (.20), OpenSSH 7.5 (.22), a Log4Shell
+#                                app (.25), the lab's own interactsh server (.53), router (.254)
 #   lab-internal  10.66.2.0/24   nginx 1.20.0 (.30), router (.254)
 #
 # Both networks are isolated: the host side of their bridge has no address (the host is
@@ -16,6 +17,9 @@ services:
   worker:
     environment:
       ZUES_CONFIG: /config/service.toml   # the lab's own file
+      # nuclei's out-of-band templates call back to the lab's own interactsh server
+      # (G24, D18): never a public one.
+      ZUES_INTERACTSH_SERVER: http://oast.zues.lab
     networks:
       default: { gw_priority: 1 }  # its default route stays the normal network's
       lab-dmz: {}
@@ -75,6 +79,30 @@ services:
     image: zues-lab-ssh:local
     networks:
       lab-dmz: { ipv4_address: 10.66.1.22 }
+    restart: unless-stopped
+
+  log4shell:
+    # A Spring Boot app with log4j 2.14.1: CVE-2021-44228 (Log4Shell, on CISA's KEV list).
+    # Its flaw shows in no response: the app looks up a name that the payload carries, so
+    # nuclei confirms it only through the out-of-band server below. nmap calls its port
+    # "nagios-nsca" (a 404 in JSON); httpx finds it is a web service, nuclei tests it as one.
+    image: ghcr.io/christophetd/log4shell-vulnerable-app@sha256:6f88430688108e512f7405ac3c73d47f5c370780b94182854ea2cddc6bd59929
+    dns: [10.66.1.53]  # its lookups reach the lab's interactsh server, nothing else
+    networks:
+      lab-dmz: { ipv4_address: 10.66.1.25 }
+    restart: unless-stopped
+
+  oast:
+    # The lab's own interactsh server, the DNS authority for oast.zues.lab: a payload's name
+    # (<id>.oast.zues.lab) looked up by a target lands here, and nuclei asks it what came.
+    # Part of the scanner, not a target: the scope excludes its address. No token (an
+    # isolated lab); a real one takes -t and ZUES_INTERACTSH_TOKEN.
+    image: projectdiscovery/interactsh-server@sha256:246d8988fed0cfefb28f904c4e1ec4a6bb4b6931288d10794a31577687f02471
+    command: ["-d", "oast.zues.lab", "-ip", "10.66.1.53", "-sa", "-duc"]
+    networks:
+      lab-dmz:
+        ipv4_address: 10.66.1.53
+        aliases: [oast.zues.lab]  # how the worker (nuclei's client) reaches it
     restart: unless-stopped
 
   nginx:

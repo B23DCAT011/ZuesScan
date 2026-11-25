@@ -7,6 +7,10 @@ section of a version as its release notes, so every tag needs one.
 ## [Unreleased]
 
 ### Added
+- The lab has a Log4Shell app and its own interactsh server (G24): nuclei confirms
+  CVE-2021-44228 through a DNS callback, after httpx found the web service nmap calls
+  "nagios-nsca". The CI lab job checks it on every run. The lab's scope leaves out the
+  interactsh server's address.
 - Deleted scopes in Settings, and the history of targets and tokens (G30): Settings lists
   dashboard scopes that were deleted (when, by whom, last version); History / restore puts
   the last version in the editor of a new scope of that name - saving makes it again,

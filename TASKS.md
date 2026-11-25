@@ -288,4 +288,6 @@ rồi độ tin cậy, rồi tiện dụng.
       service.toml, Settings; dashboard kiểm bằng Chrome.
 - [x] `feat/config-history` (G30) — scope đã xoá trong Settings (xem, khôi phục từ bản cuối),
       lịch sử target trên trang sửa, API lịch sử target / token. Kiểm bằng test + Chrome.
+- [x] `feat/lab-oast` (G24) — lab có app Log4Shell + máy chủ interactsh riêng; CI kiểm
+      CVE-2021-44228 `confirmed` qua callback (nmap sai tên → httpx → nuclei OOB).
 

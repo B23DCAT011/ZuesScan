@@ -5,4 +5,5 @@
 10.66.1.0/24
 10.66.2.0/24
 !10.66.1.0/28   # the workers' own addresses (see ip_range in compose.lab.yaml)
+!10.66.1.53     # the lab's interactsh server: part of the scanner, not a target
 !10.66.2.1      # the bridge's gateway address: the Docker host's side, never a target

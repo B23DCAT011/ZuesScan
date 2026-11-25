@@ -997,6 +997,8 @@ sh lab/down.sh      # xoá sạch lab (cả database của nó)
                  lab-dmz 10.66.1.0/24                          lab-internal 10.66.2.0/24
  worker ──────┬── Apache 2.4.49  .20  (CVE-2021-41773, KEV → P1, nuclei: confirmed)
  (.1-.14)     ├── OpenSSH 7.5    .22  (CVE-2018-15473 → P4; Terrapin CVE-2023-48795: confirmed)
+              ├── Log4Shell app  .25  (CVE-2021-44228: confirmed out of band)
+              ├── interactsh     .53  (oast.zues.lab: máy chủ OAST của lab, không phải target)
               └── router        .254 ═══ NAT ═══ .254 ──┬── nginx 1.20.0 .30 (CVE-2021-23017 → P3)
 ```
 
@@ -1009,6 +1011,12 @@ sh lab/down.sh      # xoá sạch lab (cả database của nó)
   7.5 bị xác nhận dính **Terrapin** qua template mạng. Với cấu hình mặc định của httpd 2.4.49,
   cùng template đó *không* khai thác được — phiên bản dính lỗi chưa chắc khai thác được, và
   ZuesScan giữ đúng mức `firm` khi chưa có bằng chứng.
+- **Log4Shell qua kênh ngoài**: app Spring Boot dùng log4j 2.14.1 (`.25`) không lộ lỗi trong
+  response nào — nó tra một tên mà payload mang theo. Lab có **máy chủ interactsh riêng** (`.53`,
+  DNS có thẩm quyền cho `oast.zues.lab`; app dùng nó làm DNS), worker có
+  `ZUES_INTERACTSH_SERVER=http://oast.zues.lab`. Cả chuỗi được kiểm mỗi lần CI chạy: nmap gọi
+  cổng 8080 là `nagios-nsca`, httpx thấy đó là web, nuclei gửi payload và nhận callback DNS →
+  CVE-2021-44228 `confirmed`. Scope của lab loại trừ địa chỉ của máy chủ OAST.
 - `demo.sh`: báo đã sửa Apache và nginx, chấp nhận rủi ro OpenSSH (có lý do + ngày xem lại),
   rồi chỉ nâng cấp **nginx** lên 1.27.5 và quét lại → nginx **fixed** (đã xác minh), Apache
   **fake fix** (báo sửa mà vẫn còn — và nuclei vừa khai thác lại được) — kèm cảnh báo webhook
