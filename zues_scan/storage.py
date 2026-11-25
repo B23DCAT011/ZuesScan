@@ -27,6 +27,7 @@ import json
 import logging
 import sqlite3
 import zlib
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -54,7 +55,7 @@ log = logging.getLogger(__name__)
 
 # The schema version this code reads and writes. Bump it together with a new entry
 # in `_MIGRATIONS`; never edit a migration that has already shipped.
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 23
 
 # How long a writer waits for another to finish before "database is locked".
 BUSY_SECONDS = 15.0
@@ -645,6 +646,10 @@ _V22 = (
     "ALTER TABLE inv_finding ADD COLUMN tried TEXT",
 )
 
+# Version 23: where an alert goes (G23): NULL, the main webhook; else a route's name
+# ([[notify.routes]]). One row per destination, delivered and retried on its own.
+_V23 = ("ALTER TABLE alert_outbox ADD COLUMN destination TEXT",)
+
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: _V1,
     2: _V2,
@@ -668,6 +673,7 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
     20: _V20,
     21: _V21,
     22: _V22,
+    23: _V23,
 }
 
 
@@ -681,6 +687,9 @@ class Storage:
         # Set by the service when it has a webhook: each change of a scope, target or token
         # queues a `config_changed` alert with its audit event (G30).
         self.config_alerts = False
+        # Who gets a configuration change's alert (the service's routes); None: the main
+        # webhook only.
+        self.alert_router: Callable[[Alert], list[Alert]] | None = None
         try:
             self._conn = sqlite3.connect(self.path, timeout=BUSY_SECONDS)
         except sqlite3.Error as exc:
@@ -942,6 +951,9 @@ class Storage:
         with self._conn:
             return self._queue_alert(alert, at, run_id)
 
+    def _routed(self, alert: Alert) -> list[Alert]:
+        return self.alert_router(alert) if self.alert_router is not None else [alert]
+
     def _queue_alert(self, alert: Alert, at: str, run_id: int | None) -> int | None:
         # One format in this table (UTC, to the second), so that text order is time order.
         moment = datetime.fromisoformat(at).astimezone(UTC)
@@ -949,15 +961,16 @@ class Storage:
         if alert.dedupe_key is not None and alert.dedupe_seconds > 0:
             since = moment - timedelta(seconds=alert.dedupe_seconds)
             recent = self._conn.execute(
-                "SELECT 1 FROM alert_outbox WHERE dedupe_key = ? AND created_at > ? LIMIT 1",
-                (alert.dedupe_key, since.isoformat(timespec="seconds")),
+                "SELECT 1 FROM alert_outbox WHERE dedupe_key = ? AND created_at > ? "
+                "AND destination IS ? LIMIT 1",
+                (alert.dedupe_key, since.isoformat(timespec="seconds"), alert.destination),
             ).fetchone()
             if recent is not None:
                 log.info("alert %s held back: the same was queued recently", alert.dedupe_key)
                 return None
         cur = self._conn.execute(
             "INSERT INTO alert_outbox (created_at, kind, dedupe_key, payload, run_id, "
-            "next_try_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "next_try_at, destination) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 at,
                 alert.kind,
@@ -965,6 +978,7 @@ class Storage:
                 json.dumps(alert.payload, ensure_ascii=False, sort_keys=True),
                 run_id,
                 at,
+                alert.destination,
             ),
         )
         return int(cur.lastrowid or 0)
@@ -1156,7 +1170,8 @@ class Storage:
         self._conn.execute("BEGIN IMMEDIATE")
         with self._conn:
             if alert is not None:
-                self._queue_alert(alert, at, None)
+                for routed in self._routed(alert):
+                    self._queue_alert(routed, at, None)
             self._append_audit(
                 _auth_event(
                     at,
@@ -1371,7 +1386,8 @@ class Storage:
             self._append_audit(event)
             self._conn.execute("UPDATE managed_meta SET value = value + 1 WHERE key = 'version'")
             if self.config_alerts:
-                self._queue_alert(_config_alert(event), event.at, None)
+                for routed in self._routed(_config_alert(event)):
+                    self._queue_alert(routed, event.at, None)
 
     # --- scope proposals (schema 18) --------------------------------------------------------
 
@@ -1537,7 +1553,8 @@ class Storage:
         )
         self._append_audit(event)
         if self.config_alerts:
-            self._queue_alert(_config_alert(event), at, None)
+            for routed in self._routed(_config_alert(event)):
+                self._queue_alert(routed, at, None)
 
     def _keep_scope(self, sha256: str | None, text: str | None) -> None:
         if sha256 and text is not None:

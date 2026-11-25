@@ -36,6 +36,9 @@ x-zues: &zues
     ZUES_NOTIFY_MIN_PRIORITY: ${ZUES_NOTIFY_MIN_PRIORITY:-P2}
     ZUES_NOTIFY_FAILED_SCANS: ${ZUES_NOTIFY_FAILED_SCANS:-3}
     ZUES_NOTIFY_KEEP_DAYS: ${ZUES_NOTIFY_KEEP_DAYS:-90}
+    # More places some alerts go, as JSON: [{"name": "oncall", "webhook": "https://...",
+    # "min_priority": "P1"}, {"name": "acme", "webhook": "...", "targets": ["acme-*"]}]
+    ZUES_NOTIFY_ROUTES: ${ZUES_NOTIFY_ROUTES:-}
     # on: a scope change in the dashboard needs a second admin's approval (D12).
     ZUES_SCOPE_APPROVAL: ${ZUES_SCOPE_APPROVAL:-off}
     # Third-party plugins the service may load (D14), as `zues plugins --pin NAME` prints

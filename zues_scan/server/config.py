@@ -175,6 +175,33 @@ class Target:
     scope_text: str | None = None
 
 
+# What an alert can be (Alert.kind), for a route's `kinds`.
+ALERT_KINDS = (
+    "run",
+    "scan_failed",
+    "scan_recovered",
+    "not_started",
+    "job_failed",
+    "locked_out",
+    "token_expiring",
+    "config_changed",
+    "test",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class Route:
+    """One more place alerts go ([[notify.routes]]), besides the main webhook: e.g. P1
+    findings to the on-call channel, one customer's targets to that customer's channel."""
+
+    name: str
+    webhook: str
+    min_priority: str | None = None  # new findings from this one; None: [notify]'s
+    targets: tuple[str, ...] | None = None  # name patterns; None: every target, and the
+    # alerts about no target (sign-in lock-outs, tokens, settings)
+    kinds: tuple[str, ...] | None = None  # alert kinds; None: all
+
+
 @dataclass(frozen=True, slots=True)
 class Notify:
     webhook: str | None = None
@@ -192,6 +219,14 @@ class Notify:
     # Days an alert is kept once it is over (sent, given up) or, never delivered, since
     # it was raised; then the scheduler deletes it.
     keep_days: int = 90
+    routes: tuple[Route, ...] = ()
+
+    def sends(self) -> bool:
+        """Does any alert have somewhere to go?"""
+        return bool(self.webhook or self.routes)
+
+    def route(self, name: str) -> Route | None:
+        return next((r for r in self.routes if r.name == name), None)
 
 
 @dataclass(frozen=True)
@@ -265,6 +300,7 @@ def from_environment() -> ServiceConfig:
             "previous_secret": env.get("ZUES_WEBHOOK_SECRET_PREVIOUS") or None,
             "failed_scans": env.get("ZUES_NOTIFY_FAILED_SCANS") or "3",
             "keep_days": env.get("ZUES_NOTIFY_KEEP_DAYS") or "90",
+            "routes": _env_routes(env.get("ZUES_NOTIFY_ROUTES") or ""),
         },
         "environment: ZUES_",
     )
@@ -336,7 +372,15 @@ def load_config(path: str | Path | None = None) -> ServiceConfig:
     notify_table = data.get("notify") or {}
     _only(
         notify_table,
-        {"webhook", "min_priority", "secret", "previous_secret", "failed_scans", "keep_days"},
+        {
+            "webhook",
+            "min_priority",
+            "secret",
+            "previous_secret",
+            "failed_scans",
+            "keep_days",
+            "routes",
+        },
         "[notify]",
     )
     notify = _notify(notify_table, "[notify] ")
@@ -439,6 +483,12 @@ def _notify(raw: dict[str, Any], where: str) -> Notify:
             f"{where}{names['keep_days']} must be a whole number of days "
             f"from {MIN_KEEP_DAYS} to {MAX_KEEP_DAYS}"
         )
+    tables = raw.get("routes") or []
+    if not isinstance(tables, list):
+        raise ConfigError(f"{where}routes: write each route as a [[notify.routes]] table")
+    routes = tuple(_route(t, f"{where}routes #{i}") for i, t in enumerate(tables, start=1))
+    if len({r.name for r in routes}) != len(routes):
+        raise ConfigError(f"{where}routes: two routes have the same name")
     return Notify(
         webhook=str(webhook) if webhook else None,
         min_priority=min_priority,
@@ -446,7 +496,45 @@ def _notify(raw: dict[str, Any], where: str) -> Notify:
         previous_secret=previous,
         failed_scans=failed_scans,
         keep_days=keep_days,
+        routes=routes,
     )
+
+
+def _route(raw: object, where: str) -> Route:
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{where}: a table with name and webhook")
+    _only(raw, {"name", "webhook", "min_priority", "targets", "kinds"}, where)
+    name = raw.get("name")
+    if not isinstance(name, str) or not NAME.fullmatch(name):
+        raise ConfigError(f"{where}: name must be lowercase letters, digits, - and _")
+    webhook = raw.get("webhook")
+    if not isinstance(webhook, str) or not webhook.startswith(("https://", "http://")):
+        raise ConfigError(f"{where} ({name}): webhook must be an http(s) URL")
+    priority = raw.get("min_priority")
+    if priority is not None and priority not in ("P1", "P2", "P3", "P4"):
+        raise ConfigError(f"{where} ({name}): min_priority must be P1, P2, P3 or P4")
+    targets = target_patterns(raw.get("targets"), f"{where} ({name}): targets")
+    kinds = raw.get("kinds")
+    if kinds is not None:
+        if not isinstance(kinds, list) or not kinds or any(k not in ALERT_KINDS for k in kinds):
+            raise ConfigError(
+                f"{where} ({name}): kinds must be a list of: {', '.join(ALERT_KINDS)}"
+            )
+        kinds = tuple(dict.fromkeys(kinds))
+    return Route(name, webhook, priority, targets, kinds)
+
+
+def _env_routes(text: str) -> list[Any]:
+    """ZUES_NOTIFY_ROUTES: the routes as a JSON list of objects (the same keys)."""
+    if not text.strip():
+        return []
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ConfigError(f"ZUES_NOTIFY_ROUTES must be a JSON list of routes: {exc}") from None
+    if not isinstance(value, list):
+        raise ConfigError("ZUES_NOTIFY_ROUTES must be a JSON list of routes")
+    return value
 
 
 # How long alerts are kept. At least a week: longer than any alert's deduplication window
