@@ -912,12 +912,25 @@ def _cmd_user(args: argparse.Namespace) -> int:
         with Storage(config.db) as store:
             store.config_alerts = bool(config.notify.webhook)  # as in the dashboard
             if args.user_command == "list":
-                print(f"{'NAME':<24} {'ROLE':<9} {'SOURCE':<10} {'EXPIRES (UTC)':<26} TARGETS")
+                print(
+                    f"{'NAME':<24} {'ROLE':<9} {'SOURCE':<10} {'EXPIRES (UTC)':<26} "
+                    f"{'SCANS/H':<8} TARGETS"
+                )
                 for t in sorted(config.tokens, key=lambda t: t.name):
                     seen = "all" if t.targets is None else ",".join(t.targets)
-                    print(f"{t.name:<24} {t.role:<9} {t.source:<10} {_token_expiry(t):<26} {seen}")
+                    per_hour = str(t.scans_per_hour or "-")
+                    print(
+                        f"{t.name:<24} {t.role:<9} {t.source:<10} {_token_expiry(t):<26} "
+                        f"{per_hour:<8} {seen}"
+                    )
                 for problem in config.problems:
                     print(f"note: {problem}")
+                return 0
+            if args.user_command == "quota":
+                quota = None if args.scans_per_hour == "none" else int(args.scans_per_hour)
+                managed.set_token_quota(store, config, args.name, quota, actor)
+                limit = f"{quota} scan request(s) an hour" if quota else "no limit"
+                print(f"{args.name}: {limit}")
                 return 0
             if args.user_command == "targets":
                 patterns = args.patterns or None
@@ -929,7 +942,14 @@ def _cmd_user(args: argparse.Namespace) -> int:
             valid_for = _validity(getattr(args, "expires", "90d"))  # not for remove
             if args.user_command == "add":
                 token = managed.create_token(
-                    store, config, args.name, args.role, actor, valid_for, args.targets
+                    store,
+                    config,
+                    args.name,
+                    args.role,
+                    actor,
+                    valid_for,
+                    args.targets,
+                    args.scans_per_hour,
                 )
                 print(f"{args.role} token for {args.name} (shown once, keep it secret):")
                 print(token)
@@ -948,6 +968,12 @@ def _cmd_user(args: argparse.Namespace) -> int:
     except (managed.ManagedError, LookupError, StorageError, ValueError) as exc:
         print(f"error: {str(exc).strip(chr(39))}", file=sys.stderr)
         return 2
+
+
+def _quota_arg(text: str) -> str:
+    if text.strip().lower() == "none" or text.strip().isdigit():
+        return text.strip().lower()
+    raise argparse.ArgumentTypeError("a number of scans an hour, or none")
 
 
 def _validity(text: str) -> timedelta | None:
@@ -991,7 +1017,7 @@ def _cmd_enqueue(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    except Exception as exc:  # noqa: BLE001 - an unknown target, a bad profile file, ...
+    except Exception as exc:  # noqa: BLE001 - an unknown target, already queued, ...
         print(f"error: {exc}", file=sys.stderr)
         return 1
     print(f"scan of {args.target} enqueued as job {job.id}")
@@ -1513,6 +1539,12 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATTERN",
         help="only these targets (names or patterns like acme-*); not for an admin",
     )
+    add.add_argument(
+        "--scans-per-hour",
+        type=int,
+        metavar="N",
+        help="scan requests it may make in any hour (1-1000; default: no limit)",
+    )
     rotate = users.add_parser(
         "rotate", help="a new value for a dashboard token: the old one stops working"
     )
@@ -1524,6 +1556,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     limit.add_argument("name")
     limit.add_argument("patterns", nargs="*", metavar="PATTERN")
+    quota = users.add_parser(
+        "quota", help="how many scans a dashboard token may request an hour (none: no limit)"
+    )
+    quota.add_argument("name")
+    quota.add_argument("scans_per_hour", metavar="N|none", type=_quota_arg)
     remove = users.add_parser("remove", help="revoke a dashboard token")
     remove.add_argument("name")
     user.set_defaults(func=_cmd_user)

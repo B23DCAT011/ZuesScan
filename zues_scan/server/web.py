@@ -186,6 +186,7 @@ class Caller:
     session: int | None = None  # the session's id when signed in with the browser
     # The targets this caller may see and act on (name patterns); None: every target.
     targets: tuple[str, ...] | None = None
+    scans_per_hour: int | None = None  # scan requests it may make an hour; None: no limit
 
     def sees(self, target_name: str | None) -> bool:
         return self.targets is None or (
@@ -310,7 +311,13 @@ def _session_caller(request: Request, config: ServiceConfig) -> Caller | None:
                 store.touch_session(session.id, stamp(at))
             except sqlite3.Error as exc:  # busy: the next request touches it instead
                 log.warning("could not record the use of session #%d: %s", session.id, exc)
-    return Caller(token.name, token.role, session=session.id, targets=token.targets)
+    return Caller(
+        token.name,
+        token.role,
+        session=session.id,
+        targets=token.targets,
+        scans_per_hour=token.scans_per_hour,
+    )
 
 
 def caller(request: Request, config: Annotated[ServiceConfig, Depends(current_config)]) -> Caller:
@@ -323,7 +330,9 @@ def caller(request: Request, config: Annotated[ServiceConfig, Depends(current_co
             _wrong_token(request, config)
             raise HTTPException(401, "a valid token is required", {"WWW-Authenticate": "Bearer"})
         _refuse_expired(token)
-        return Caller(token.name, token.role, targets=token.targets)
+        return Caller(
+            token.name, token.role, targets=token.targets, scans_per_hour=token.scans_per_hour
+        )
     if COOKIE in request.cookies:
         who = _session_caller(request, config)
         if who is None:
@@ -418,6 +427,13 @@ class TokenBody(BaseModel):
     valid_days: int | None = Field(default=90, ge=1, le=730)
     # Only these targets (name patterns, e.g. "acme-*"); null: every target. Not for admins.
     targets: list[str] | None = Field(default=None, max_length=50)
+    # Scan requests it may make in any hour; null: no limit. Not for viewers.
+    scans_per_hour: int | None = Field(default=None, ge=1, le=1000)
+
+
+class QuotaBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    scans_per_hour: int | None = Field(ge=1, le=1000)
 
 
 class TargetsBody(BaseModel):
@@ -578,7 +594,26 @@ def request_scan(
 ) -> dict[str, Any]:
     if body.target not in config.targets or not who.sees(body.target):
         raise HTTPException(404, f"no target named {body.target!r} in the service config")
-    job = rkqueue.enqueue_scan(holder.queue(config), config, body.target, who.name)
+    q = holder.queue(config)
+    active = rkqueue.active_scan(q, body.target)
+    if active is not None:  # before the count: a refused duplicate costs nothing
+        raise HTTPException(409, str(rkqueue.AlreadyQueued(body.target, *active)))
+    if who.scans_per_hour is not None:
+        wait = rkqueue.take_scan(q.connection, who.name, who.scans_per_hour)
+        if wait:
+            log.warning("%s asked for a scan of %s over its limit", who.name, body.target)
+            raise HTTPException(
+                429,
+                f"{who.name} may request {who.scans_per_hour} scan(s) an hour: the next one "
+                f"in {max(1, round(wait / 60))} min",
+                headers={"Retry-After": str(wait)},
+            )
+    try:
+        job = rkqueue.enqueue_scan(q, config, body.target, who.name)
+    except rkqueue.AlreadyQueued as exc:  # queued in between by someone else
+        raise HTTPException(409, str(exc)) from None
+    except TimeoutError as exc:  # the target's queue stayed locked: a stuck request
+        raise HTTPException(503, str(exc), headers={"Retry-After": "10"}) from None
     log.info("%s queued a scan of %s as job %s", who.name, body.target, job.id)
     return {"job": rkqueue.info(job).as_dict()}
 
@@ -785,6 +820,7 @@ def admin_config(who: Admin, config: Config) -> dict[str, Any]:
                 "you": t.name == who.name,
                 "expires_at": t.expires_at.isoformat() if t.expires_at else None,
                 "targets": list(t.targets) if t.targets is not None else None,
+                "scans_per_hour": t.scans_per_hour,
             }
             for t in sorted(config.tokens, key=lambda t: t.name)
         ],
@@ -972,6 +1008,7 @@ def post_token(body: TokenBody, who: Admin, config: Config) -> dict[str, Any]:
                 who.name,
                 _validity(body.valid_days),
                 body.targets,
+                body.scans_per_hour,
             )
     except managed.ManagedError as exc:
         raise _refused(exc) from None
@@ -990,6 +1027,18 @@ def put_token_targets(name: str, body: TargetsBody, who: Admin, config: Config) 
         raise _refused(exc) from None
     log.info("%s set the targets of the token %s: %s", who.name, name, body.targets or "all")
     return {"name": name, "targets": body.targets}
+
+
+@api.put("/admin/tokens/{name}/quota")
+def put_token_quota(name: str, body: QuotaBody, who: Admin, config: Config) -> dict[str, Any]:
+    """How many scans a token may request an hour (null: no limit); applies at once."""
+    try:
+        with _writable(config) as store:
+            managed.set_token_quota(store, config, name, body.scans_per_hour, who.name)
+    except (managed.ManagedError, LookupError) as exc:
+        raise _refused(exc) from None
+    log.info("%s set the scan limit of %s: %s", who.name, name, body.scans_per_hour or "none")
+    return {"name": name, "scans_per_hour": body.scans_per_hour}
 
 
 @api.post("/admin/tokens/{name}/rotate")

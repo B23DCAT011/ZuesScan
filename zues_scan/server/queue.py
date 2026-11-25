@@ -7,7 +7,12 @@ so that the API can show what is running.
 
 from __future__ import annotations
 
+import math
 import sys
+import time
+import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -46,10 +51,96 @@ def queue(config: ServiceConfig, connection: Redis | None = None) -> Queue:
     return Queue(config.queue, connection=connection or connect(config))
 
 
+class AlreadyQueued(Exception):
+    """A scan of that target waits or runs already: a second one would only double the
+    load on the target (and, scheduled, pile up behind a scan longer than its interval)."""
+
+    def __init__(self, target: str, job: Job, status: str) -> None:
+        super().__init__(f"a scan of {target} is already {status} (job {job.id})")
+        self.job = job
+
+
+_ACTIVE = ("queued", "started", "deferred", "scheduled")
+
+
+def active_scan(q: Queue, target_name: str) -> tuple[Job, str] | None:
+    """The job (and its status) of a scan of `target_name` that waits or runs, if any."""
+    ids = [*q.get_job_ids(), *q.started_job_registry.get_job_ids()]
+    for job in Job.fetch_many(ids, connection=q.connection):
+        if job is None or (job.meta or {}).get("target") != target_name:
+            continue
+        status = job.get_status()
+        state = str(status.value) if status is not None else ""
+        if state in _ACTIVE:
+            return job, "running" if state == "started" else "queued"
+    return None
+
+
+HOUR = 3600
+_QUOTA_KEY = "zues:scans:{name}"
+
+
+def take_scan(redis: Any, name: str, per_hour: int, now: float | None = None) -> int:
+    """Count one scan request of the token `name` if it has one left in the last hour;
+    0 then. Otherwise count nothing and return the seconds until it has one. The count
+    is a sorted set of request times, updated in one transaction (WATCH); a request
+    counts for one hour: from its time, up to (not including) an hour later."""
+    at = time.time() if now is None else now
+    key = _QUOTA_KEY.format(name=name)
+
+    def attempt(pipe: Any) -> int:
+        recent = sorted(
+            float(s) for _, s in pipe.zrangebyscore(key, f"({at - HOUR}", "+inf", withscores=True)
+        )
+        if len(recent) >= per_hour:
+            return max(1, math.ceil(recent[len(recent) - per_hour] + HOUR - at))
+        pipe.multi()
+        pipe.zremrangebyscore(key, "-inf", at - HOUR)
+        pipe.zadd(key, {f"{at:.6f}-{uuid.uuid4().hex[:8]}": at})
+        pipe.expire(key, HOUR + 60)
+        return 0
+
+    wait: int = redis.transaction(attempt, key, value_from_callable=True)
+    return wait
+
+
+_TARGET_LOCK = "zues:enqueue:{queue}:{target}"
+_LOCK_SECONDS = 10
+
+
+@contextmanager
+def _target_lock(q: Queue, target_name: str) -> Iterator[None]:
+    """Hold the target's short lock: two requests at once (dashboard, MCP, scheduler)
+    cannot both see "no scan yet" and both queue one. Waits up to its life for it."""
+    redis: Any = q.connection
+    key = _TARGET_LOCK.format(queue=q.name, target=target_name)
+    holder = uuid.uuid4().hex
+    deadline = time.monotonic() + _LOCK_SECONDS
+    while not redis.set(key, holder, nx=True, ex=_LOCK_SECONDS):
+        if time.monotonic() > deadline:
+            raise TimeoutError(f"another request holds the queue of {target_name}; try again")
+        time.sleep(0.05)
+    try:
+        yield
+    finally:
+        held = redis.get(key)
+        if (held.decode() if isinstance(held, bytes) else held) == holder:  # not another's
+            redis.delete(key)
+
+
 def enqueue_scan(q: Queue, config: ServiceConfig, target_name: str, operator: str) -> Job:
+    """Queue a scan of a configured target; AlreadyQueued if one waits or runs."""
     target = config.target(target_name)
     profile = load_profiles(target.config).get(target.profile)
     timeout = (profile.timeout if profile else 3600) + 600  # the scan's own limit + margin
+    with _target_lock(q, target_name):
+        active = active_scan(q, target_name)
+        if active is not None:
+            raise AlreadyQueued(target_name, *active)
+        return _enqueue(q, config, target_name, operator, timeout)
+
+
+def _enqueue(q: Queue, config: ServiceConfig, target_name: str, operator: str, timeout: int) -> Job:
     return q.enqueue(
         JOB,
         config.path,

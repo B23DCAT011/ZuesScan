@@ -40,7 +40,7 @@ from rq import Queue
 
 from zues_scan.server import notify
 from zues_scan.server.config import ConfigError, ServiceConfig, Target
-from zues_scan.server.queue import enqueue_scan
+from zues_scan.server.queue import AlreadyQueued, enqueue_scan
 from zues_scan.storage import Storage, StorageError
 
 log = logging.getLogger(__name__)
@@ -138,14 +138,20 @@ def _enqueue_due(config: ServiceConfig, q: Queue, redis: Redis, now: datetime) -
         last_run = history.get((target.target, target.profile))
         decision = decide(target, last_run, last_slot, now)
         if decision.due:
-            job = enqueue_scan(q, config, target.name, OPERATOR)
-            log.info(
-                "scheduled scan of %s (due %s) enqueued as job %s",
-                target.name,
-                decision.slot.isoformat(timespec="minutes") if decision.slot else "now",
-                job.id,
-            )
-            enqueued.append(target.name)
+            try:
+                job = enqueue_scan(q, config, target.name, OPERATOR)
+            except AlreadyQueued as exc:
+                # Not two scans of one target at once: this slot is skipped (as cron's
+                # "no overlap"), the next one comes on schedule.
+                log.warning("scheduled scan of %s skipped: %s", target.name, exc)
+            else:
+                log.info(
+                    "scheduled scan of %s (due %s) enqueued as job %s",
+                    target.name,
+                    decision.slot.isoformat(timespec="minutes") if decision.slot else "now",
+                    job.id,
+                )
+                enqueued.append(target.name)
         if decision.slot is not None:
             redis.set(key, decision.slot.isoformat())
     return enqueued

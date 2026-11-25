@@ -20,6 +20,7 @@ target by its `name`; it never brings its own address, scope file or options.
     role = "operator"              # "viewer": read only; "operator": scans, decisions
     expires = 2027-06-30           # optional: not accepted after that day (UTC)
     targets = ["acme-*"]           # optional: only these targets (name patterns); not admins
+    scans_per_hour = 6             # optional: scan requests it may make in any hour (1-1000)
 
     [[targets]]
     name = "office-lan"
@@ -93,6 +94,9 @@ class Token:
     issued_by: str | None = None
     # The targets this token may see and act on (name patterns, e.g. "acme-*"); None: all.
     targets: tuple[str, ...] | None = None
+    # Scan requests it may make in any hour (an agent, a script, a leaked token: none can
+    # keep a target under scan); None: no limit. The scheduler's scans do not count.
+    scans_per_hour: int | None = None
 
     def expired(self, at: datetime) -> bool:
         return self.expires_at is not None and at >= self.expires_at
@@ -105,6 +109,22 @@ class Token:
 
 
 TARGET_PATTERN = re.compile(r"[a-z0-9*?_-][a-z0-9*?_-]{0,63}")
+MAX_SCANS_PER_HOUR = 1000
+
+
+def scan_quota(value: object, role: str, where: str) -> int | None:
+    """A token's `scans_per_hour`: 1 to 1000, or None (no limit); a viewer cannot scan."""
+    if value is None:
+        return None
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 1 <= value <= MAX_SCANS_PER_HOUR
+    ):
+        raise ConfigError(f"{where}: scans_per_hour must be a whole number from 1 to 1000")
+    if role == "viewer":
+        raise ConfigError(f"{where}: a viewer cannot request scans: no scans_per_hour for it")
+    return value
 
 
 def target_patterns(value: object, where: str) -> tuple[str, ...] | None:
@@ -415,6 +435,7 @@ def with_dashboard(config: ServiceConfig) -> ServiceConfig:
                 expires_at=datetime.fromisoformat(expires) if expires else None,
                 issued_by=row["rotated_by"] or row["created_by"],
                 targets=tuple(json.loads(row["targets"])) if row["targets"] else None,
+                scans_per_hour=row["scans_per_hour"],
             )
         )
     return replace(
@@ -464,7 +485,7 @@ def _token(raw: dict[str, Any], i: int) -> Token:
     if "token" in raw or "secret" in raw:
         # Checked first: the helpful message, not just "unknown key".
         raise ConfigError(f"{where}: store the token's sha256, never the token")
-    _only(raw, {"name", "sha256", "role", "expires", "targets"}, where)
+    _only(raw, {"name", "sha256", "role", "expires", "targets", "scans_per_hour"}, where)
     try:
         name, digest, role = (
             str(raw["name"]),
@@ -481,7 +502,12 @@ def _token(raw: dict[str, Any], i: int) -> Token:
     if targets is not None and role == "admin":
         raise ConfigError(f"{where}: an admin token sees every target: no targets for it")
     return Token(
-        name, digest, role, expires_at=_expires(raw.get("expires"), where), targets=targets
+        name,
+        digest,
+        role,
+        expires_at=_expires(raw.get("expires"), where),
+        targets=targets,
+        scans_per_hour=scan_quota(raw.get("scans_per_hour"), role, where),
     )
 
 

@@ -164,6 +164,8 @@ def build(api: Api) -> MCPServer:
             hint = {
                 401: " (the token is not valid: check ZUES_TOKEN)",
                 403: " (this token's role does not allow it)",
+                409: " (follow that job with get_job instead of asking again)",
+                429: " (this token's scan limit: do not ask again before then)",
             }.get(exc.status, "")
             raise ToolError(f"ZuesScan refused: {exc.detail}{hint}") from None
 

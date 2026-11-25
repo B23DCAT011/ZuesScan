@@ -40,6 +40,7 @@ from zues_scan.server.config import (
     ConfigError,
     ServiceConfig,
     dashboard_target,
+    scan_quota,
     target_patterns,
 )
 
@@ -380,6 +381,23 @@ def set_token_targets(
     store.set_managed_token_targets(name, checked_targets(token.role, targets), actor)
 
 
+def checked_quota(role: str, scans_per_hour: int | None) -> int | None:
+    try:
+        return scan_quota(scans_per_hour, role, "scans_per_hour")
+    except ConfigError as exc:
+        raise ManagedError(str(exc)) from None
+
+
+def set_token_quota(
+    store: Any, config: ServiceConfig, name: str, scans_per_hour: int | None, actor: str
+) -> None:
+    """How many scans a dashboard token may request in any hour (None: no limit)."""
+    token = next((t for t in config.tokens if t.name == name), None)
+    if token is None or token.source != DASHBOARD:
+        raise LookupError(f"no dashboard token named {name!r}")
+    store.set_managed_token_quota(name, checked_quota(token.role, scans_per_hour), actor)
+
+
 def create_token(
     store: Any,
     config: ServiceConfig,
@@ -388,6 +406,7 @@ def create_token(
     actor: str,
     valid_for: timedelta | None = DEFAULT_VALIDITY,
     targets: list[str] | None = None,
+    scans_per_hour: int | None = None,
 ) -> str:
     """Create a token; return it. Only its SHA-256 is kept: it is shown this once."""
     name = name.strip()
@@ -399,9 +418,10 @@ def create_token(
         raise ManagedError(f"a token named {name!r} exists already")
     expires_at = expiry(valid_for)
     limited = checked_targets(role, targets)
+    quota = checked_quota(role, scans_per_hour)
     token = secrets.token_urlsafe(32)
     store.save_managed_token(
-        name, hashlib.sha256(token.encode()).hexdigest(), role, actor, expires_at, limited
+        name, hashlib.sha256(token.encode()).hexdigest(), role, actor, expires_at, limited, quota
     )
     return token
 
