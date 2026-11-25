@@ -347,6 +347,12 @@ def caller(request: Request, config: Annotated[ServiceConfig, Depends(current_co
     raise HTTPException(401, "a valid token is required", {"WWW-Authenticate": "Bearer"})
 
 
+def scanner(who: Annotated[Caller, Depends(caller)]) -> Caller:
+    if not managed.can(who.role, "scanner"):
+        raise HTTPException(403, "this needs a scanner, operator or admin token")
+    return who
+
+
 def operator(who: Annotated[Caller, Depends(caller)]) -> Caller:
     if not managed.can(who.role, "operator"):
         raise HTTPException(403, "this needs an operator token")
@@ -361,6 +367,7 @@ def admin(who: Annotated[Caller, Depends(caller)]) -> Caller:
 
 Config = Annotated[ServiceConfig, Depends(current_config)]
 Viewer = Annotated[Caller, Depends(caller)]
+Scanner = Annotated[Caller, Depends(scanner)]
 Operator = Annotated[Caller, Depends(operator)]
 Admin = Annotated[Caller, Depends(admin)]
 
@@ -422,7 +429,7 @@ class TargetBody(BaseModel):
 class TokenBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=64)
-    role: Literal["viewer", "operator", "admin"]
+    role: Literal["viewer", "scanner", "operator", "admin"]
     # How many days it is accepted; null: without end (e.g. a monitored service account).
     valid_days: int | None = Field(default=90, ge=1, le=730)
     # Only these targets (name patterns, e.g. "acme-*"); null: every target. Not for admins.
@@ -590,7 +597,7 @@ def targets(who: Viewer, config: Config) -> list[dict[str, Any]]:
 
 @api.post("/scans", status_code=202)
 def request_scan(
-    body: ScanRequest, who: Operator, config: Config, holder: Annotated[LiveConfig, Depends(live)]
+    body: ScanRequest, who: Scanner, config: Config, holder: Annotated[LiveConfig, Depends(live)]
 ) -> dict[str, Any]:
     if body.target not in config.targets or not who.sees(body.target):
         raise HTTPException(404, f"no target named {body.target!r} in the service config")

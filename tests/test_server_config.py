@@ -108,7 +108,7 @@ def test_only_configured_targets_can_be_named(tmp_path: Path) -> None:
         ('[service]\ndb = "x"\n[[tokens]]\nname = "a"\n', r"missing 'sha256'"),
         (
             '[service]\ndb = "x"\n[[tokens]]\nname = "a"\nsha256 = "{digest}"\nrole = "root"\n',
-            r"role must be one of viewer, operator",
+            r"role must be one of viewer, scanner, operator",
         ),
         (
             '[service]\ndb = "x"\n'

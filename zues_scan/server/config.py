@@ -18,7 +18,8 @@ target by its `name`; it never brings its own address, scope file or options.
     [[tokens]]                     # who may use the API; `name` is recorded as operator
     name = "alice"
     sha256 = "9f86d08..."          # of the token (zues token), never the token
-    role = "operator"              # "viewer": read only; "operator": scans, decisions
+    role = "operator"              # "viewer": read only; "scanner": + scan requests (an
+                                   # agent's); "operator": + decisions; "admin": + settings
     expires = 2027-06-30           # optional: not accepted after that day (UTC)
     targets = ["acme-*"]           # optional: only these targets (name patterns); not admins
     scans_per_hour = 6             # optional: scan requests it may make in any hour (1-1000)
@@ -72,8 +73,11 @@ from zues_scan.plugins.registry import (
 )
 from zues_scan.server.cron import Cron, CronError
 
-ROLES = ("viewer", "operator", "admin")
+ROLES = ("viewer", "scanner", "operator", "admin")
 # What each role may do includes what the roles before it may: an admin is an operator too.
+# viewer: read. scanner: + request scans of its targets (what an AI agent or a script
+# needs: no decision about a finding, no setting). operator: + decisions (fixed, accepted
+# risk...). admin: + the dashboard's settings.
 RANK = {role: i for i, role in enumerate(ROLES)}
 FILE, DASHBOARD = "file", "dashboard"  # where a target, scope or token is defined
 

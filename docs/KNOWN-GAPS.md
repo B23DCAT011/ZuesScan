@@ -409,6 +409,11 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       `-timeout 30 -retries 3` cho lần chạy template mạng: 5/5. Lỗi của sản phẩm, không riêng
       CI — máy chủ SSH / TLS bận ngoài thực tế cũng chậm như vậy. Job lab giờ ghi rõ kiểm tra nào
       hỏng và in bảng finding thành annotation (xem được không cần đăng nhập).
+      Còn lại: **hỏng lại một lần** (c581d77, 2026-11-25): lần quét lại của demo không thấy
+      Terrapin (`gone`); chạy lại ở máy và lần CI kế tiếp (7e4afc3, cùng code quét) đều thấy.
+      Sau 11 lần xanh liên tiếp — tỉ lệ thấp nhưng chưa bằng 0. Job lab giờ in thêm ghi chú
+      nuclei và lượt template mạng (số dòng, stderr) của từng run khi hỏng, để lần sau phân biệt
+      bắt tay chậm với check hỏng.
     - ✅ **Kênh ngoài (OAST) với máy chủ interactsh tự dựng** (`feat/interactsh-self-hosted`,
       D18): `ZUES_INTERACTSH_SERVER` / `ZUES_INTERACTSH_TOKEN`; máy chủ công cộng và địa chỉ IP
       bị từ chối; token chỉ nằm trong file cấu hình của từng lần chạy (không trên dòng lệnh,
@@ -529,8 +534,12 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       chỉ còn là hình thức; lớp bảo vệ thật vẫn là vai trò của token, danh sách target, scope,
       giới hạn quét và audit. ✅ `feat/scan-limits` (D17): token có `scans_per_hour` (quá thì
       429 + `Retry-After`), và một target không bao giờ bị quét chồng (đang chờ / đang chạy →
-      409, cả với scheduler). Còn: token agent chỉ `viewer` theo mặc định (hiện do người cấp
-      chọn); tách quyền "xin quét" thành một vai trò riêng.
+      409, cả với scheduler). ✅ `feat/scanner-role`: vai trò `scanner` (giữa `viewer` và
+      `operator`) — đọc + xin quét target của nó, có `targets` và `scans_per_hour` như operator,
+      **không** ghi quyết định về finding, không sửa cài đặt: token cho agent nên là `scanner`
+      (chỉ đọc thì `viewer`, mặc định của `zues token` / `zues user add`). Kiểm: test API + dashboard
+      bằng Chrome (scanner có "Scan now", không có form quyết định). Còn: chọn vai trò vẫn là việc
+      của người cấp token — ZuesScan không biết token nào do agent dùng.
     - Giới hạn đếm **số yêu cầu** quét, không đếm thời gian hay gói tin: vài lần quét `full` vẫn
       nặng — tải lên target do profile quyết định (`max_rate`, `timeout`). Một job kẹt ở trạng
       thái đang chạy (worker bị giết đột ngột) chặn target tới khi RQ dọn nó (hết `job_timeout`
