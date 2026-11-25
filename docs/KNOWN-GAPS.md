@@ -328,8 +328,9 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       lúc) thì gửi lại — bên nhận phải bỏ trùng theo `X-ZuesScan-Delivery`.
     - Chỉ có webhook: chưa email / PagerDuty / Teams gốc; chưa định tuyến theo mức (P1 tới kênh
       trực, P3 tới kênh thường) hay theo target.
-    - Đổi `secret` là đổi ngay: cảnh báo đang chờ được ký bằng khoá mới; chưa có giai đoạn chuyển
-      tiếp hai khoá cùng hợp lệ.
+    - ✅ Đổi secret có giai đoạn chuyển tiếp (`feat/webhook-secret-rotation`): `previous_secret`
+      → mỗi cảnh báo mang hai chữ ký, bên nhận khớp một là đủ. Còn lại: bên nhận phải dùng cách
+      kiểm nhiều chữ ký (README); chưa có nhắc bỏ `previous_secret` khi quá lâu.
     - ✅ Outbox tự dọn (`feat/outbox-retention`): `keep_days` (mặc định 90, tối thiểu 7 — dài
       hơn cửa sổ chống lặp), scheduler xoá mỗi giờ. Còn lại: các bảng khác giữ mãi (run, output
       gốc, audit) — đó là dữ liệu của đợt kiểm thử, xoá bằng `zues delete`; chưa có hạn giữ

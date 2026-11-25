@@ -270,4 +270,6 @@ rồi độ tin cậy, rồi tiện dụng.
       ghi cho template cần interactsh. Thử thật nuclei 3.11.1 + templates 10.5.2.
 - [x] `feat/scope-history` (G30) — lịch sử scope trên dashboard (từ audit trail): Compare, Load into
       editor (khôi phục = lưu lại, qua kiểm tra / duyệt); API history + versions. Thử bằng Chrome.
+- [x] `feat/webhook-secret-rotation` (G23) — `previous_secret`: hai chữ ký trong lúc đổi secret,
+      bên nhận khớp một là đủ; README có cách kiểm mới; Settings báo đang ký bằng hai secret.
 

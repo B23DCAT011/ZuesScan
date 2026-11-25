@@ -557,6 +557,7 @@ engagement = "PT-2026-014"
 webhook = "https://hooks.slack.com/services/…"   # tuỳ chọn, payload kiểu Slack {"text": …}
 min_priority = "P2"                              # báo finding mới từ mức này trở lên
 secret = "…"          # tuỳ chọn, ≥ 16 ký tự: ký mỗi cảnh báo bằng HMAC-SHA256
+# previous_secret = "…"   # khi đổi secret: ký bằng cả hai tới khi bên nhận chuyển xong
 failed_scans = 3      # báo khi các lần quét một target hỏng chừng này lần liền
 keep_days = 90       # xoá cảnh báo chừng này ngày sau khi gửi xong (7–3650)
 ```
@@ -627,11 +628,19 @@ zues scheduler --config service.toml --once                      # một vòng r
       if abs(time.time() - int(timestamp)) > 300:
           return False
       mac = hmac.new(secret.encode(), f"{timestamp}.".encode() + body, hashlib.sha256)
-      return hmac.compare_digest(f"sha256={mac.hexdigest()}", signature)
+      expected = f"sha256={mac.hexdigest()}"
+      # Several, comma-separated, while ZuesScan changes its secret: one made with yours is enough.
+      return any(hmac.compare_digest(expected, s.strip()) for s in signature.split(",")[:4])
   ```
 
   (`zues_scan.server.notify.verify` làm đúng việc này.) Slack bỏ qua các header này: với Slack,
   chính URL là bí mật.
+- **Đổi secret không làm rơi cảnh báo:** đặt secret mới vào `secret` và secret cũ vào
+  `previous_secret` (`ZUES_WEBHOOK_SECRET_PREVIOUS`). Trong lúc đó mỗi cảnh báo mang **hai** chữ
+  ký (`sha256=<mới>, sha256=<cũ>`): bên nhận còn dùng secret cũ vẫn xác minh được, từng bên chuyển
+  sang secret mới lúc nào tiện; khi tất cả đã chuyển thì bỏ `previous_secret`. Bên nhận cần cách
+  kiểm ở trên (chấp nhận nhiều chữ ký); không đặt `previous_secret` thì header y như trước. Settings →
+  Alerts cho biết đang ký bằng hai secret.
 - Lỗi cấu hình (khoá lạ, thiếu file scope, `every` quá ngắn, lưu token thay vì mã băm…) làm
   dịch vụ **không khởi động**, thay vì chạy sai. Redis không kết nối được thì báo một dòng (mật
   khẩu trong `redis_url` được che `***`), không in traceback.
