@@ -294,4 +294,6 @@ rồi độ tin cậy, rồi tiện dụng.
       sửa lỗi tìm ra khi thử: công cụ ngoài đọc stdin của ZuesScan (httpx treo tới hết giờ).
 - [x] `feat/alert-routes` (G23, schema 23) — `[[notify.routes]]`: cảnh báo tới thêm webhook theo
       mức / target / loại, mỗi nơi một dòng outbox. Thử thật hai receiver HTTP + Chrome.
+- [x] `feat/evidence-filter` (G24, G30) — lọc finding theo bằng chứng (confirmed / tried /
+      untried) trên API, dashboard, MCP; lịch sử token trong Settings. Kiểm bằng Chrome.
 

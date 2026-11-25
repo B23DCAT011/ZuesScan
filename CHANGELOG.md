@@ -7,6 +7,11 @@ section of a version as its release notes, so every tag needs one.
 ## [Unreleased]
 
 ### Added
+- Findings by evidence (G24): `GET /api/v1/findings?evidence=confirmed|tried|untried` -
+  observed by a check, tried with its template and not matched, or inferred from a version
+  and never tried; the Findings page has the filter and says each row's evidence, the MCP
+  tool `list_findings` takes `evidence` and returns `tried`. Settings -> Tokens: History
+  for a dashboard token (made, limited, rotated, revoked; never its value).
 - Alert routes (G23): `[[notify.routes]]` (or `ZUES_NOTIFY_ROUTES`, JSON) send some
   alerts to more webhooks besides the main one - by priority (`min_priority`: the on-call
   channel gets P1 only), by target (`targets`: a customer's channel gets its targets) and

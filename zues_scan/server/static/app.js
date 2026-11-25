@@ -499,9 +499,14 @@
 
   /* --- findings ----------------------------------------------------------------- */
 
+  var EVIDENCE = [["", "Any evidence"], ["confirmed", "Confirmed by a check"],
+    ["tried", "Tried, not matched"], ["untried", "Inferred, not tried"]];
+
   function findings(view) {
     var filter = sessionFilter();
+    var evidence = sessionEvidence();
     var query = filter === "active" ? "?" : filter === "all" ? "?all=true&" : "?status=" + encodeURIComponent(filter) + "&";
+    if (evidence) query += "evidence=" + encodeURIComponent(evidence) + "&";
     return api("GET", "/findings" + query + "limit=" + FINDINGS_PAGE).then(function (list) {
       clear(view);
       view.appendChild(el("h1", null, "Findings"));
@@ -515,8 +520,12 @@
         })
       );
       select.value = filter;
+      var proof = el("select", { id: "evidence", on: { change: function (e) { sessionEvidence(e.target.value || "-"); route(); } } },
+        EVIDENCE.map(function (e) { return el("option", { value: e[0] }, e[1]); }));
+      proof.value = evidence;
       var total = list.total === undefined ? list.length : list.total;
-      view.appendChild(el("div", { class: "toolbar" }, el("label", null, "Show ", select), el("span", { class: "muted small" }, total + " finding(s), most urgent first")));
+      view.appendChild(el("div", { class: "toolbar" }, el("label", null, "Show ", select), el("label", null, " ", proof),
+        el("span", { class: "muted small" }, total + " finding(s), most urgent first")));
       var rows = list.map(findingRow);
       var shown = list.length;
       var more = el("button", { type: "button", hidden: shown >= total ? true : null }, "Show more");
@@ -552,11 +561,24 @@
           el("td", null, "#" + f.id),
           el("td", null, prio(f.priority)),
           el("td", null, sev(f.severity)),
-          el("td", { class: "wrap" }, f.title, f.cve ? el("div", { class: "muted small mono" }, f.cve) : null),
+          el("td", { class: "wrap" }, f.title, f.cve ? el("div", { class: "muted small mono" }, f.cve) : null,
+            f.confidence === "confirmed" ? el("div", { class: "small" }, "confirmed by a check")
+              : f.tried ? el("div", { class: "muted small", title: f.tried }, "tried, not matched") : null),
           el("td", { class: "mono" }, where),
           el("td", null, status(f.status)),
           el("td", { class: "nowrap" }, when(f.last_seen))
         );
+  }
+
+  // "" (any) is kept as "-": sessionStorage holds strings, and "" reads as unset.
+  function sessionEvidence(value) {
+    try {
+      if (value) sessionStorage.setItem("zues-evidence", value);
+      var kept = sessionStorage.getItem("zues-evidence") || "-";
+      return kept === "-" ? "" : kept;
+    } catch (e) {
+      return value && value !== "-" ? value : "";
+    }
   }
 
   function sessionFilter(value) {
@@ -944,9 +966,14 @@
         type: "button", class: "link",
         on: { click: function () { removeToken(t.name); } },
       }, "Revoke") : "";
+      var past = own ? el("button", {
+        type: "button", class: "link",
+        on: { click: function () { tokenHistory(t.name, history); } },
+      }, "History") : "";
       return [el("strong", null, t.name), t.role, source(t.source), expiryCell(t), targetsCell(t),
-        quotaCell(t), t.you ? "you" : "", [rotate, " ", remove]];
+        quotaCell(t), t.you ? "you" : "", [rotate, " ", remove, " ", past]];
     });
+    var history = el("div", { hidden: true });
     var name = el("input", { id: "token-name", maxlength: "64", required: true, placeholder: "who it is for" });
     var role = el("select", { id: "token-role" }, ["viewer", "scanner", "operator", "admin"].map(function (r) {
       return el("option", { value: r }, r);
@@ -986,12 +1013,30 @@
     return el("section", null, el("h2", null, "Tokens (who may sign in)"),
       table(["Name", "Role", "Source", "Expires (UTC)", "Targets", "Scans / hour", "", ""], rows.map(row), "No token."),
       el("p", { class: "muted small" },
-        "viewer: reads; operator: also scans and records decisions; admin: also changes these settings. " +
+        "viewer: reads; scanner: also asks for scans (an agent, a script); operator: also records " +
+        "decisions; admin: also changes these settings. " +
         "A token stops working at its date (a week before, an alert goes out); Rotate gives it a new " +
         "value and date — the old value, and every session opened with it, stop at once. " +
         "Scans / hour: how many scans the token may ask for in any hour (an agent, a script); " +
         "scheduled scans do not count, and a target is never scanned twice at once."),
-      form, shown);
+      history, form, shown);
+  }
+
+  // A dashboard token's changes, from the audit trail (never its value).
+  function tokenHistory(name, box) {
+    clear(box);
+    box.hidden = false;
+    box.appendChild(el("p", { class: "muted small" }, "Loading…"));
+    api("GET", "/admin/tokens/" + encodeURIComponent(name) + "/history").then(function (h) {
+      clear(box);
+      var rows = h.events.map(function (e) {
+        var facts = Object.keys(e.settings).sort().filter(function (k) { return e.settings[k] !== null; })
+          .map(function (k) { return k + ": " + JSON.stringify(e.settings[k]); });
+        return [when(e.at), e.by, e.action || "-",
+          facts.length ? el("span", { class: "mono small wrap" }, facts.join("; ")) : el("span", { class: "muted" }, "-")];
+      });
+      append(box, [el("h3", null, "History of " + name), table(["When (UTC)", "Who", "What", "Details"], rows.map(row), "No change recorded.")]);
+    }).catch(function (err) { clear(box); box.appendChild(el("p", { class: "error" }, err.message)); });
   }
 
   function rotateToken(t, shown) {

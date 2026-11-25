@@ -458,7 +458,10 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       bao giờ được ghi là "đã thử" (dưới `-ni` nuclei vẫn báo không khớp — đã kiểm thật với
       CVE-2021-44228). Thử thật: nuclei 3.11.1 + templates 10.5.2. Còn lại: gửi lại request
       của template mà lượt chính đã gửi (một lần nữa cho vài CVE); chỉ CVE có template mang
-      đúng tên `CVE-….yaml`; chưa lọc / xếp hạng finding theo "đã thử" trên dashboard.
+      đúng tên `CVE-….yaml`. ✅ Lọc theo bằng chứng (`feat/evidence-filter`): Findings có bộ lọc
+      *Confirmed by a check* / *Tried, not matched* / *Inferred, not tried* (API `evidence=`, tool
+      MCP `list_findings`), mỗi dòng ghi bằng chứng của nó; kiểm bằng Chrome. Chưa xếp hạng lại
+      theo đó (mức ưu tiên vẫn theo CVSS / KEV / EPSS: "đã thử" không phải bằng chứng là sạch).
     - Templates mới ra hằng ngày: bản ghim cần cập nhật định kỳ (dựng lại image). Template tự
       viết phải được ký (`nuclei -sign`) mới chạy dưới `-dut`.
     - `zues tools install`: bản macOS (amd64, arm64) có trong lock nhưng chưa được chạy thử
@@ -646,8 +649,8 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
       đã xoá có mục *Deleted scopes* trong Settings → *History / restore* (bản cuối vào trang soạn
       scope mới cùng tên; lưu = tạo lại, qua kiểm tra / audit / duyệt); target có *History* (thiết
       lập nào đổi, ai, lúc nào); API lịch sử cho target và token (không có giá trị hay hash của
-      token). Kiểm bằng test API + Chrome. Còn lại: lịch sử token chỉ qua API (chưa có trên trang);
-      lịch sử là audit trail — xoá database là mất (như mọi bằng chứng khác, xem sao lưu).
+      token); ✅ token của dashboard có *History* trong Settings → Tokens (kiểm bằng Chrome). Còn
+      lại: lịch sử là audit trail — xoá database là mất (như mọi bằng chứng khác, xem sao lưu).
 
 ## Mức 3 — Hoàn thiện sản phẩm / portfolio
 

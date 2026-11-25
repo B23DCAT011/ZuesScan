@@ -853,6 +853,7 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/v1/runs/3/sarif
 | `GET /api/v1/runs/{id}/report.html`, `/sarif` | viewer | báo cáo HTML (bản đồ) / SARIF 2.1.0 |
 | `GET /api/v1/runs/{id}/diff[?against=<id>]` | viewer | khác gì so với run trước đó của cùng target (hoặc run `against`) |
 | `GET /api/v1/runs?limit=&before=<id>`, `GET /api/v1/findings?limit=&offset=` | viewer | từng trang (findings có `X-Total-Count`) |
+| `GET /api/v1/findings?evidence=confirmed\|tried\|untried` | viewer | theo bằng chứng: check xác nhận / template chạy mà không khớp / chỉ suy ra từ phiên bản |
 | `POST /api/v1/scans` `{"target": "<tên>"}` | scanner | xếp hàng quét một target **đã khai** |
 | `POST /api/v1/findings/{id}/decision` `{"action": "claim_fixed" \| "accept" \| "reopen", "note", "until"}` | operator | quyết định |
 | `GET /api/v1/admin/config` | admin | scope, target, token, plugin, profile — mọi thứ trang Settings cần |

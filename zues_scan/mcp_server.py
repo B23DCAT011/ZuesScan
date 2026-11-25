@@ -33,7 +33,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from mcp.server.elicitation import AcceptedElicitation, ElicitationResult
 from mcp.server.mcpserver import Elicit, MCPServer
@@ -287,14 +287,21 @@ def build(api: Api) -> MCPServer:
     @server.tool(
         description="Findings across all runs, most urgent first. By default the active ones "
         "(new, open, fix claimed, fake fix, reappeared); `status` picks others (fixed, gone, "
-        f"accepted ...), `all` returns every one. {UNTRUSTED}"
+        f"accepted ...), `all` returns every one. `evidence`: confirmed (a check observed "
+        "it), tried (its check ran and did not match: a backport? a safe configuration?) or "
+        f"untried (inferred from a version only). {UNTRUSTED}"
     )
     def list_findings(
         status: list[str] | None = None,
-        all: bool = False,
-        limit: int = 50,  # noqa: A002
+        all: bool = False,  # noqa: A002
+        limit: int = 50,
+        evidence: Literal["confirmed", "tried", "untried"] | None = None,
     ) -> dict[str, Any]:
-        rows = call(lambda: api.get("/findings", status=status, all="true" if all else None))
+        rows = call(
+            lambda: api.get(
+                "/findings", status=status, all="true" if all else None, evidence=evidence
+            )
+        )
         kept = [
             _pick(
                 f,
@@ -310,6 +317,7 @@ def build(api: Api) -> MCPServer:
                 "port",
                 "status",
                 "confidence",
+                "tried",
                 "first_seen",
                 "last_seen",
             )
