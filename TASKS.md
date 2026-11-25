@@ -255,4 +255,7 @@ rồi độ tin cậy, rồi tiện dụng.
       Landlock trước khi import (không cần root): đọc hệ thống / Python / gói / công cụ / templates,
       ghi thư mục tạm; DB, cấu hình, environ của dịch vụ → bị từ chối, cả với chương trình nó chạy;
       giới hạn hỏng → lời gọi hỏng; doctor báo. Thử trong container Linux (Landlock v1).
+- [x] `feat/scan-limits` (G26, D17) — một target không bị quét chồng (409; scheduler bỏ lượt;
+      khoá ngắn trên Redis cho yêu cầu cùng lúc) và `scans_per_hour` theo token (schema 20, cửa sổ
+      trượt trong Redis, 429 + `Retry-After`; Settings, `zues user quota`, `service.toml`, MCP).
 

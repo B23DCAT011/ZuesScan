@@ -482,9 +482,15 @@ Rà soát lần đầu: 2026-10-28 (trên `main` sau PR #6).
     #5 ghi `operator = lab-admin`; `8.8.8.8` → từ chối, không hỏi ai).
   - Còn lại:
     - **Việc hỏi người dùng là của client.** Một client tự động trả lời "đồng ý" thì xác nhận
-      chỉ còn là hình thức; lớp bảo vệ thật vẫn là vai trò của token, danh sách target, scope và
-      audit. Thực tế: token agent chỉ `viewer` theo mặc định; tách quyền "xin quét" thành một
-      vai trò riêng; giới hạn số lần quét mỗi giờ cho token agent.
+      chỉ còn là hình thức; lớp bảo vệ thật vẫn là vai trò của token, danh sách target, scope,
+      giới hạn quét và audit. ✅ `feat/scan-limits` (D17): token có `scans_per_hour` (quá thì
+      429 + `Retry-After`), và một target không bao giờ bị quét chồng (đang chờ / đang chạy →
+      409, cả với scheduler). Còn: token agent chỉ `viewer` theo mặc định (hiện do người cấp
+      chọn); tách quyền "xin quét" thành một vai trò riêng.
+    - Giới hạn đếm **số yêu cầu** quét, không đếm thời gian hay gói tin: vài lần quét `full` vẫn
+      nặng — tải lên target do profile quyết định (`max_rate`, `timeout`). Một job kẹt ở trạng
+      thái đang chạy (worker bị giết đột ngột) chặn target tới khi RQ dọn nó (hết `job_timeout`
+      của job đó).
     - Chỉ stdio: chưa có MCP qua HTTP (Streamable HTTP + OAuth) để agent ở máy khác dùng trực
       tiếp dịch vụ. Hiện agent ở máy khác dùng `ZUES_URL` qua HTTPS (reverse proxy).
     - Token nằm trong biến môi trường / file cấu hình của client MCP (không commit; nên dùng phạm

@@ -7,6 +7,18 @@ section of a version as its release notes, so every tag needs one.
 ## [Unreleased]
 
 ### Security
+- Scan limits (D17). A target is never scanned twice at once: while a scan of it waits or
+  runs, another request (dashboard, API, MCP, `zues enqueue`) is refused with 409 and the
+  job that is there; a scheduled slot that falls then is skipped, the next comes on time.
+  Requests at the same moment are serialised by a short per-target Redis lock, so exactly
+  one is queued. A token can be held to a number of scan requests in any hour
+  (`scans_per_hour`, 1-1000, not for viewers): Scans / hour in Settings,
+  `zues user add --scans-per-hour`, `zues user quota NAME N|none`, `scans_per_hour` in
+  service.toml, `PUT /api/v1/admin/tokens/{name}/quota` (audited, schema 20). Over it, a
+  request is refused with 429 and `Retry-After`; the window slides and is counted in Redis
+  (every web process agrees); refused duplicates and the scheduler's scans do not count.
+  The MCP server tells the agent to follow the existing job, or not to ask again before then.
+  `zues user list` shows each token's limit.
 - On Linux, the process that runs a plugin from another package confines itself with
   Landlock (kernel 5.13+, no root needed) before importing it (D16): from then on it, and
   every program it starts, reads only the system (/usr, /lib, ..., a few files of /etc —
