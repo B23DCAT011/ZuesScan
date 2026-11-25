@@ -158,6 +158,12 @@ jobs:
             echo "::error title=lab::nuclei did not confirm Apache CVE-2021-41773"
             fail=1
           fi
+          # Out of band: nmap misnames the app's port, httpx finds the web service, nuclei
+          # gets the DNS callback on the lab's interactsh server.
+          if ! grep -Eq '^ +[0-9]+ +(new|open) .*CVE-2021-44228' demo.txt; then
+            echo "::error title=lab::nuclei did not confirm Log4Shell (CVE-2021-44228) out of band"
+            fail=1
+          fi
           exit "$fail"
       - name: each run records the checks' versions, and httpx saw the web services
         run: |
