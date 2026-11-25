@@ -7,6 +7,13 @@ section of a version as its release notes, so every tag needs one.
 ## [Unreleased]
 
 ### Added
+- Tried, not matched (G24): a CVE inferred from a version only is tried with nuclei's own
+  template for it, on that service (`-id ... -ms`). A match confirms the finding; a run
+  without a match is recorded on it (`tried`, schema 22: on the run and, latest known, in
+  the inventory) and shown in the CLI, HTML map, dashboard, API, MCP and SARIF - a fact to
+  triage with, not proof: confidence and priority stay. Templates needing out-of-band
+  callbacks (interactsh) are never run or claimed for this: under `-ni` nuclei reports
+  them as not matched although they cannot match.
 - dnsx on Windows asks the DNS servers Windows itself uses (GetNetworkParams), as the
   scope guard does, instead of dnsx's public resolvers: names only internal DNS knows are
   found there too. When the system names no DNS server, the run says dnsx asked public

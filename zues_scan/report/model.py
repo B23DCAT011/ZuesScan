@@ -160,6 +160,7 @@ def _finding(f: Finding) -> dict[str, Any]:
         "protocol": f.service.protocol if f.service else None,
         "description": f.description,
         "evidence": f.evidence,
+        "tried": f.tried,
         "fingerprint": f.fingerprint,
     }
 

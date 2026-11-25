@@ -54,7 +54,7 @@ log = logging.getLogger(__name__)
 
 # The schema version this code reads and writes. Bump it together with a new entry
 # in `_MIGRATIONS`; never edit a migration that has already shipped.
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 
 # How long a writer waits for another to finish before "database is locked".
 BUSY_SECONDS = 15.0
@@ -638,6 +638,13 @@ _V20 = ("ALTER TABLE managed_token ADD COLUMN scans_per_hour INTEGER",)
 # a JSON list of pages like `web`'s (NULL: none asked by name).
 _V21 = ("ALTER TABLE service ADD COLUMN vhosts TEXT",)
 
+# Version 22: a test for a finding's CVE that ran and did not match (G24), on the run's
+# finding and, latest known, on the inventory's.
+_V22 = (
+    "ALTER TABLE finding ADD COLUMN tried TEXT",
+    "ALTER TABLE inv_finding ADD COLUMN tried TEXT",
+)
+
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: _V1,
     2: _V2,
@@ -660,6 +667,7 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
     19: _V19,
     20: _V20,
     21: _V21,
+    22: _V22,
 }
 
 
@@ -1781,13 +1789,14 @@ class Storage:
                     ",".join(f.cwe),
                     f.kev_added,
                     f.epss,
+                    f.tried,
                 )
             )
         self._conn.executemany(
             "INSERT INTO finding "
             "(asset_id, service_id, title, severity, cve, rule_id, description, evidence, "
-            "fingerprint, confidence, cvss_score, cvss_vector, cwe, kev_added, epss) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "fingerprint, confidence, cvss_score, cvss_vector, cwe, kev_added, epss, tried) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
 
@@ -1911,7 +1920,7 @@ class Storage:
                 asset.services.append(service)
             for f in self._conn.execute(
                 "SELECT service_id, title, severity, cve, rule_id, description, evidence, "
-                "fingerprint, confidence, cvss_score, cvss_vector, cwe, kev_added, epss "
+                "fingerprint, confidence, cvss_score, cvss_vector, cwe, kev_added, epss, tried "
                 "FROM finding WHERE asset_id = ? ORDER BY id",
                 (a["id"],),
             ):
@@ -2116,6 +2125,7 @@ def _finding(row: sqlite3.Row, asset: Asset, service: Service | None) -> Finding
         cwe=tuple(c for c in (row["cwe"] or "").split(",") if c),
         kev_added=row["kev_added"],
         epss=row["epss"],
+        tried=row["tried"],
     )
 
 

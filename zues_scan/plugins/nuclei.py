@@ -34,6 +34,15 @@ Safe defaults, because a scan must not harm or leak:
   ZuesScan records weaknesses, not inventory trivia.
 * `-duc`: no update check from inside a scan.
 
+Tried, not matched (`verify`): after the CVE stage, a CVE inferred from a version only
+(nmap said "Apache 2.4.49") is tried with nuclei's own template for that CVE, on that
+service, with `-ms` so that nuclei also reports a template that ran without matching. A
+match confirms the finding; a run without a match is written on the finding
+(`Finding.tried`) - a fact to triage with (a backported fix, a configuration that is not
+vulnerable), never proof. The main pass cannot tell: it runs thousands of templates and
+prints only matches. Templates that need interactsh (out-of-band) are left out and never
+claimed: under `-ni` they cannot match, yet nuclei reports them as "not matched".
+
 Templates: given a directory (`templates`, e.g. the copy pinned in the Docker image),
 nuclei runs exactly those, offline, from a fresh configuration directory of its own for
 each run — nothing carries over between scans, and the templates' version (from a
@@ -57,7 +66,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from zues_scan import redact, tools
-from zues_scan.plugins.base import ScanError, ScanResult
+from zues_scan.plugins.base import Attempt, ScanError, ScanResult
 from zues_scan.profiles import BUILTIN, DEFAULT_PROFILE, ScanProfile
 from zues_scan.schema import Asset, Confidence, Finding, RawOutput, ScanTarget, Service, Severity
 from zues_scan.scope import Activity
@@ -252,6 +261,93 @@ class NucleiPlugin:
         result.assets = list(found.values())
         return result
 
+    def verify(
+        self, plan: ScanTarget, assets: list[Asset], wanted: dict[tuple[str, int], set[str]]
+    ) -> ScanResult:
+        """Try nuclei's template for each CVE of `wanted` ({(address, port): CVE ids},
+        inferred from versions) on those services. Matches come back as findings; a
+        template that ran and did not match, in `tried` ({(address, port, CVE): words})."""
+        result = ScanResult()
+        if not self.is_available():
+            return result
+        cves = sorted({c.upper() for ids in wanted.values() for c in ids})
+        index = template_index(self.templates) if self.templates is not None else None
+        if index is not None:
+            oob = [c for c in cves if c in index and needs_interactsh(index[c])]
+            missing = [c for c in cves if c not in index]
+            cves = [c for c in cves if c in index and c not in oob]
+            if oob:
+                result.notes.append(
+                    f"not tried, their templates need out-of-band callbacks (interactsh): "
+                    f"{_list(oob)}"
+                )
+            if missing:
+                result.notes.append(f"no template to try: {_list(missing)}")
+        if not cves:
+            return result
+        chosen = [
+            Asset(
+                host=a.host,
+                ip=a.ip,
+                names=list(a.names),
+                services=[s for s in a.services if (a.ip or "", s.port) in wanted],
+            )
+            for a in assets
+            if a.ip
+        ]
+        groups = self.targets([a for a in chosen if a.services])
+        deadline = self.clock() + min(self.timeout, VERIFY_TIMEOUT)
+        failed: dict[tuple[str, int, str], list[str]] = defaultdict(list)
+        matched: set[tuple[str, int, str]] = set()
+        found: dict[str, Asset] = {}
+        for vhost, inputs in groups.items():
+            for network, part in (
+                (False, [i for i in inputs if "://" in i]),
+                (True, [i for i in inputs if "://" not in i]),
+            ):
+                left = int(deadline - self.clock())
+                if not part or left < 1:
+                    if part:
+                        result.incomplete = True
+                        result.notes.append(f"not tried, out of time: {_label(vhost, part)}")
+                    continue
+                command = [*self.command(vhost, network), "-id", ",".join(cves), "-ms"]
+                raw, finished = self._run(command, part, left)
+                result.raw.append(raw)
+                if not finished:
+                    result.incomplete = True
+                for line in raw.content.splitlines():
+                    outcome = _attempt(line, vhost if not network else None)
+                    if outcome is None:
+                        continue
+                    key, hit, finding = outcome
+                    if hit and finding is not None:
+                        matched.add(key)
+                        found.setdefault(key[0], Asset(host=key[0], ip=key[0])).findings.append(
+                            finding
+                        )
+                    elif not hit:
+                        failed[key].append(_where(line, vhost if not network else None))
+        services = {(a.ip, s.port, s.protocol): s for a in assets for s in a.services}
+        for asset in found.values():
+            for f in asset.findings:
+                if f.service is not None:
+                    f.service = services.get((asset.ip, f.service.port, "tcp"), f.service)
+        result.assets = list(found.values())
+        version = self.version() or "nuclei"
+        for key, places in failed.items():
+            ip, port, cve = key
+            if key in matched or cve not in wanted.get((ip, port), set()):
+                continue
+            shown = ", ".join(sorted(set(places))[:3])
+            what = f"nuclei {version}: template {cve} ran at {shown} and did not match"
+            result.tried.append(Attempt(ip, port, cve, what))
+        result.notes.append(
+            f"tried {len(cves)} version-based CVE(s) with their templates: "
+            f"{len(matched)} confirmed, {len(result.tried)} not matched"
+        )
+        return result
+
     @staticmethod
     def targets(assets: list[Asset]) -> dict[str | None, list[str]]:
         """Inputs to check, grouped by the virtual host name to send (None: by address).
@@ -348,6 +444,72 @@ class NucleiPlugin:
             if parsed is not None:
                 results.append(parsed)
         return results
+
+
+VERIFY_TIMEOUT = 300  # seconds for trying the version-based CVEs, at most
+_CVE_FILE = re.compile(r"CVE-\d{4}-\d{4,}", re.IGNORECASE)
+_INDEXES: dict[str, dict[str, Path]] = {}
+
+
+def template_index(templates: str) -> dict[str, Path]:
+    """{CVE id: template file} of a templates directory (its CVE-*.yaml files); read
+    once per directory and process."""
+    if templates not in _INDEXES:
+        index: dict[str, Path] = {}
+        for path in sorted(Path(templates).rglob("CVE-*.yaml")):
+            if _CVE_FILE.fullmatch(path.stem):
+                index.setdefault(path.stem.upper(), path)
+        _INDEXES[templates] = index
+    return _INDEXES[templates]
+
+
+def needs_interactsh(template: Path) -> bool:
+    """Does the template wait for an out-of-band callback ({{interactsh-url}}, an
+    interactsh_* matcher)? Unreadable: assume it does (no claim is better than a false one)."""
+    try:
+        return "interactsh" in template.read_text(encoding="utf-8", errors="replace").lower()
+    except OSError:
+        return True
+
+
+def _attempt(
+    line: str, vhost: str | None
+) -> tuple[tuple[str, int, str], bool, Finding | None] | None:
+    """((address, port, CVE), matched, the finding if matched) of one `-ms` line."""
+    try:
+        hit = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(hit, dict) or "template-id" not in hit:
+        return None
+    template = str(hit["template-id"]).upper()
+    if not _CVE_FILE.fullmatch(template):
+        return None
+    url = str(hit.get("matched-at") or hit.get("url") or hit.get("host") or "")
+    parts = urlsplit(url if "://" in url else f"tcp://{url}")
+    ip = str(hit.get("ip") or parts.hostname or "")
+    port = _int(hit.get("port")) or parts.port
+    if not ip or port is None:
+        return None
+    matched = hit.get("matcher-status", True) is not False
+    if not matched:
+        # The engine's own word that this template cannot be claimed (no callbacks).
+        path = Path(str(hit.get("template-path") or ""))
+        if not path.is_file() or needs_interactsh(path):
+            return None
+        return (ip, port, template), False, None
+    parsed = _finding(hit, vhost)
+    return (ip, port, template), True, parsed[1] if parsed else None
+
+
+def _where(line: str, vhost: str | None) -> str:
+    hit = json.loads(line)
+    place = str(hit.get("url") or hit.get("host") or "?")
+    return f"{place} as {vhost}" if vhost else place
+
+
+def _list(cves: list[str], shown: int = 5) -> str:
+    return ", ".join(cves[:shown]) + (f" and {len(cves) - shown} more" if len(cves) > shown else "")
 
 
 def _label(vhost: str | None, inputs: list[str]) -> str:

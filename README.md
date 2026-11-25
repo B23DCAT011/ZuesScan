@@ -268,6 +268,15 @@ zues scan 10.0.0.0/24 --scope scope.txt --nuclei --nuclei-templates /opt/nuclei-
 - Một CVE vừa được nuclei thấy vừa khớp theo phiên bản là **một** finding: giữ bản quan sát
   (`confirmed`, bằng chứng của nuclei) nhưng lấy CVSS / KEV / EPSS từ cơ sở dữ liệu CVE, và
   nối thêm bằng chứng theo phiên bản.
+- **Đã thử, không khớp**: sau bước CVE, mỗi CVE chỉ suy ra từ phiên bản (nmap nói "Apache
+  2.4.49") được thử lại bằng **chính template nuclei của CVE đó**, chỉ trên dịch vụ đó (`-id
+  CVE-… -ms`: nuclei báo cả template đã chạy mà không khớp). Khớp → finding thành `confirmed`;
+  chạy mà không khớp → ghi lên finding (`tried`: "nuclei 3.11.1 (templates 10.5.2): template
+  CVE-2021-41773 ran at http://10.0.0.5:8080 and did not match"), hiện ở CLI, bản đồ HTML,
+  dashboard (*Tried*), API, MCP, SARIF. Đây là dữ kiện để phân loại (bản vá backport, cấu hình
+  không lỗi), **không** phải bằng chứng là sạch: độ tin cậy và mức ưu tiên giữ nguyên. Template
+  cần kênh ngoài (interactsh, vd Log4Shell) không được chạy cũng không được ghi — dưới `-ni`
+  chúng không thể khớp nhưng nuclei vẫn báo "không khớp". Tối đa 5 phút cho bước này.
 
 ### Quét có đăng nhập (Debian)
 

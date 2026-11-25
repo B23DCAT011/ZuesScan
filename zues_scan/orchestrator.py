@@ -298,6 +298,11 @@ class Orchestrator:
                 )
                 asset.findings = kept
 
+        # 4c. A CVE inferred from a version only is tried with a check's own test for it
+        #     (nuclei's template for that CVE), on that service: a match confirms it, a test
+        #     that ran without matching is recorded on the finding (`tried`).
+        self._verify(plan, assets, skipped, raw_outputs, notes)
+
         # 5. Identify every finding the same way, whichever plugin or stage produced
         #    it: tie it to the merged asset, then fingerprint it. Done here, once,
         #    because only now is it settled which machine each finding belongs to.
@@ -409,6 +414,43 @@ class Orchestrator:
         notes += _summarise_skipped(skipped)
         return plan
 
+    def _verify(
+        self,
+        plan: ScanTarget,
+        assets: list[Asset],
+        skipped: list[str],
+        raw_outputs: list[RawOutput],
+        notes: list[str],
+    ) -> None:
+        wanted = _version_only_cves(assets)
+        if not wanted:
+            return
+        for check in self.checks:
+            verify = getattr(check, "verify", None)
+            if verify is None or check.name in skipped:
+                continue
+            try:
+                result = verify(plan, assets, wanted)
+            except ScanError as exc:
+                notes.append(f"{check.name}: could not try the version-based CVEs: {exc}")
+                if exc.output is not None:
+                    raw_outputs.append(exc.output)
+                continue
+            raw_outputs.extend(result.raw)
+            notes.extend(f"{check.name}: {note}" for note in result.notes)
+            for found in result.assets:
+                known = next((a for a in assets if _same_host(a, found)), None)
+                if known is None or not self.scope.is_allowed(found.ip or found.host):
+                    continue
+                # First, so that the observation wins over the version guess (step 5).
+                known.findings[:0] = found.findings
+            tried = {(t.ip, t.port, t.cve.upper()): t.what for t in result.tried}
+            for asset in assets:
+                for f in asset.findings:
+                    if f.cve and f.service and f.confidence is not Confidence.CONFIRMED:
+                        key = (asset.ip or "", f.service.port, f.cve.upper())
+                        f.tried = tried.get(key, f.tried)
+
     def activities(self) -> list[tuple[str, Activity]]:
         """What each requested plugin does to a target, as it declares (`activity`).
 
@@ -463,6 +505,26 @@ def _summarise_skipped(skipped: list[tuple[str, str]], shown: int = 20) -> list[
     return notes
 
 
+def _version_only_cves(assets: list[Asset]) -> dict[tuple[str, int], set[str]]:
+    """{(address, port): CVE ids} found from versions only, with nothing confirming them."""
+    wanted: dict[tuple[str, int], set[str]] = {}
+    for asset in assets:
+        if not asset.ip:
+            continue
+        seen = {
+            (f.service.port, f.cve.upper())
+            for f in asset.findings
+            if f.cve and f.service and f.confidence is Confidence.CONFIRMED
+        }
+        for f in asset.findings:
+            if not (f.cve and f.service and f.service.protocol == "tcp"):
+                continue
+            if f.confidence is Confidence.CONFIRMED or (f.service.port, f.cve.upper()) in seen:
+                continue
+            wanted.setdefault((asset.ip, f.service.port), set()).add(f.cve.upper())
+    return wanted
+
+
 def _merge_finding(kept: Finding, other: Finding) -> None:
     """Fold a second report of the same issue into the first one kept.
 
@@ -487,6 +549,7 @@ def _merge_finding(kept: Finding, other: Finding) -> None:
         kept.kev_added = kept.kev_added or other.kev_added
         kept.epss = kept.epss if kept.epss is not None else other.epss
     kept.description = kept.description or other.description
+    kept.tried = None if kept.confidence is Confidence.CONFIRMED else kept.tried or other.tried
     if other.evidence and other.evidence not in kept.evidence:
         kept.evidence = (
             f"{kept.evidence}\nAlso: {other.evidence}" if kept.evidence else other.evidence

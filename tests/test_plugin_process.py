@@ -18,7 +18,7 @@ from conftest import FakePlugin, lab_asset, lab_resolver
 from test_plugin_pins import MODULE, Site, pinned
 
 from zues_scan.plugins import landlock, process, registry
-from zues_scan.plugins.base import ScanError, ScanResult
+from zues_scan.plugins.base import Attempt, ScanError, ScanResult
 from zues_scan.plugins.registry import PluginContext, Policy
 from zues_scan.plugins.wire import WireError, decode, encode
 from zues_scan.profiles import ScanProfile
@@ -177,6 +177,7 @@ def test_the_schema_goes_across_and_back_unchanged() -> None:
         raw=[RawOutput("p", "text", ("p", "-x"), "out", "err")],
         notes=["n"],
         cleared={"10.0.0.5": {"CVE-1", "CVE-2"}},
+        tried=[Attempt("10.0.0.5", 80, "CVE-1", "template CVE-1 ran and did not match")],
         incomplete=True,
     )
     assert decode(ScanResult, json.loads(json.dumps(encode(result)))) == result

@@ -55,6 +55,7 @@ class FindingRow:
     last_seen: str
     accepted_until: str | None
     note: str | None
+    tried: str | None = None  # the latest test that ran for it and did not match
 
     def as_finding(self) -> Finding:
         """This inventoried finding as a Finding, to rank it like any other."""
@@ -202,9 +203,9 @@ def _findings_seen(
                     "INSERT INTO inv_finding (fingerprint, host_id, port, protocol, cve, rule_id,"
                     " title, severity, confidence, cvss_score, kev_added, epss, last_seen,"
                     " last_run, seen_profile, seen_cve_kind, first_seen, first_run, status,"
-                    " status_since) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
-                    " ?, 'new', ?)",
-                    (f.fingerprint, host_id, *values, at, run_id, at),
+                    " status_since, tried) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
+                    " ?, ?, ?, 'new', ?, ?)",
+                    (f.fingerprint, host_id, *values, at, run_id, at, f.tried),
                 )
                 _event(
                     conn, int(cur.lastrowid or 0), run_id, at, None, Transition(Status.NEW, "new")
@@ -213,9 +214,12 @@ def _findings_seen(
             conn.execute(
                 "UPDATE inv_finding SET host_id = ?, port = ?, protocol = ?, cve = ?, rule_id = ?,"
                 " title = ?, severity = ?, confidence = ?, cvss_score = ?, kev_added = ?,"
-                " epss = ?, last_seen = ?, last_run = ?, seen_profile = ?, seen_cve_kind = ?"
+                " epss = ?, last_seen = ?, last_run = ?, seen_profile = ?, seen_cve_kind = ?,"
+                # A run that did not test it keeps the last attempt; a confirmation ends it.
+                # (The new confidence: in an UPDATE, a column name reads the old value.)
+                " tried = CASE WHEN ? = 'confirmed' THEN NULL ELSE COALESCE(?, tried) END"
                 " WHERE id = ?",
-                (host_id, *values, row["id"]),
+                (host_id, *values, str(f.confidence or ""), f.tried, row["id"]),
             )
             change = when_seen(Status(row["status"]), row["accepted_until"], now)
             if change is not None:
@@ -459,6 +463,7 @@ def _row(r: sqlite3.Row) -> FindingRow:
         last_seen=r["last_seen"],
         accepted_until=r["accepted_until"],
         note=r["note"],
+        tried=r["tried"],
     )
 
 
