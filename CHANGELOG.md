@@ -6,6 +6,13 @@ section of a version as its release notes, so every tag needs one.
 
 ## [Unreleased]
 
+### Added
+- Alerts are not kept forever: the scheduler deletes, once an hour, those sent or given up
+  more than `[notify] keep_days` ago (default 90, 7-3650; `ZUES_NOTIFY_KEEP_DAYS`) and
+  those never delivered (e.g. the webhook was removed) raised that long ago. The minimum
+  is longer than any alert's deduplication window, so pruning never lets one repeat.
+  Settings -> Alerts says how long they are kept.
+
 ### Security
 - Scan limits (D17). A target is never scanned twice at once: while a scan of it waits or
   runs, another request (dashboard, API, MCP, `zues enqueue`) is refused with 409 and the

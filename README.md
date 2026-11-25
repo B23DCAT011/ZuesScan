@@ -536,6 +536,7 @@ webhook = "https://hooks.slack.com/services/…"   # tuỳ chọn, payload kiể
 min_priority = "P2"                              # báo finding mới từ mức này trở lên
 secret = "…"          # tuỳ chọn, ≥ 16 ký tự: ký mỗi cảnh báo bằng HMAC-SHA256
 failed_scans = 3      # báo khi các lần quét một target hỏng chừng này lần liền
+keep_days = 90       # xoá cảnh báo chừng này ngày sau khi gửi xong (7–3650)
 ```
 
 ```bash
@@ -587,7 +588,11 @@ zues scheduler --config service.toml --once                      # một vòng r
   cầu), bỏ cuộc sau 24 giờ hoặc ngay khi bên nhận trả lời một lỗi mà gửi lại cũng vô ích (4xx trừ
   408 / 425 / 429, hay redirect). Gửi *ít nhất một lần*: mọi lần gửi lại mang cùng header
   `X-ZuesScan-Delivery`, bên nhận dựa vào đó để bỏ trùng. Settings → **Alerts** cho xem trạng thái
-  từng cảnh báo, gửi lại ngay, và gửi thử.
+  từng cảnh báo, gửi lại ngay, và gửi thử. Bảng outbox **tự dọn**: mỗi giờ scheduler xoá cảnh
+  báo đã gửi / đã bỏ cuộc quá `keep_days` ngày (mặc định 90, `ZUES_NOTIFY_KEEP_DAYS`), và cảnh
+  báo chưa từng gửi được (vd không còn webhook) quá `keep_days` ngày từ lúc tạo. Tối thiểu 7
+  ngày — dài hơn mọi cửa sổ chống lặp của cảnh báo (1 ngày), nên dọn không làm cảnh báo lặp lại.
+  Audit trail không bị đụng tới: nó ghi việc người ta làm, outbox chỉ ghi những gì đã báo đi.
 - **Ký cảnh báo:** có `secret` thì mỗi POST mang `X-ZuesScan-Timestamp` và
   `X-ZuesScan-Signature: sha256=<HMAC-SHA256(secret, "<timestamp>." + body)>`. Bên nhận tính lại
   trên **đúng các byte nhận được** và từ chối chữ ký cũ hơn 5 phút (chống phát lại):
@@ -783,7 +788,7 @@ docker compose logs -f worker
 
 Không có `service.toml`, dịch vụ đọc cài đặt từ biến môi trường (compose đã đặt sẵn):
 `ZUES_DB`, `ZUES_REDIS_URL`, và tuỳ chọn `ZUES_QUEUE`, `ZUES_CVE_CACHE`, `ZUES_WEBHOOK`,
-`ZUES_WEBHOOK_SECRET`, `ZUES_NOTIFY_MIN_PRIORITY`, `ZUES_NOTIFY_FAILED_SCANS` (bốn biến cảnh báo
+`ZUES_WEBHOOK_SECRET`, `ZUES_NOTIFY_MIN_PRIORITY`, `ZUES_NOTIFY_FAILED_SCANS`, `ZUES_NOTIFY_KEEP_DAYS` (năm biến cảnh báo
 đặt trong file `.env` cạnh `compose.yaml` — đừng commit file đó), `ZUES_SCOPE_APPROVAL`,
 `ZUES_PLUGINS` (plugin bên thứ ba được ghim, xem phần Plugin); target, scope và token nằm
 trong database (dashboard). Muốn quản lý
