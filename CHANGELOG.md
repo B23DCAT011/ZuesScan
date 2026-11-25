@@ -126,6 +126,10 @@ section of a version as its release notes, so every tag needs one.
   admin can widen what may be scanned, and now the others know at once.
 
 ### Changed
+- The repository is now `B23DCAT011/ZuesScan` (was `reconkit`; GitHub redirects the old
+  URLs). README.md is a short English overview; the full Vietnamese documentation moved to
+  README.vi.md. Added the MIT LICENSE file the package already declared. SARIF reports point
+  at the new URL.
 - httpx sends a virtual host's name as the TLS SNI (G29): on a service that looks like TLS,
   each name gets an httpx run of its own with `-sni <name>` (at most 50 names; the others
   share the run without SNI, and the run says so), so a server that picks the site by SNI
@@ -388,6 +392,6 @@ scanner: scope guard, nmap with traceroute, CVE matching (NVD, KEV, EPSS,
 priorities), finding lifecycle across runs, evidence and audit trail, HTML / JSON / SARIF
 reports, authenticated Debian package checks.
 
-[Unreleased]: https://github.com/B23DCAT011/reconkit/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/B23DCAT011/reconkit/releases/tag/v0.2.0
-[0.1.0]: https://github.com/B23DCAT011/reconkit/commits/main
+[Unreleased]: https://github.com/B23DCAT011/ZuesScan/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/B23DCAT011/ZuesScan/releases/tag/v0.2.0
+[0.1.0]: https://github.com/B23DCAT011/ZuesScan/commits/main

@@ -47,7 +47,7 @@ def to_sarif(model: dict[str, Any]) -> dict[str, Any]:
                     "driver": {
                         "name": "ZuesScan",
                         "version": model["generated_by"].split()[-1],
-                        "informationUri": "https://github.com/B23DCAT011/reconkit",
+                        "informationUri": "https://github.com/B23DCAT011/ZuesScan",
                         "rules": list(rules.values()),
                     }
                 },
