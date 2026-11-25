@@ -637,7 +637,7 @@ def job(
         raise HTTPException(404, "no such job")
     q = holder.queue(config)
     try:
-        found = Job.fetch(job_id, connection=q.connection)
+        found = Job.fetch(job_id, connection=q.connection, serializer=rkqueue.SERIALIZER)
     except NoSuchJobError:
         raise HTTPException(404, "no such job") from None
     if found.origin != q.name:

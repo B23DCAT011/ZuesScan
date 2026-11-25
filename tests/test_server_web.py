@@ -23,9 +23,9 @@ fakeredis = pytest.importorskip("fakeredis")
 
 from conftest import FakePlugin, lab_asset, lab_resolver  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
-from rq import SimpleWorker  # noqa: E402
 
 from zues_scan.schema import Service  # noqa: E402
+from zues_scan.server import queue as rkqueue  # noqa: E402
 from zues_scan.server import sessions  # noqa: E402
 from zues_scan.server.config import ConfigError  # noqa: E402
 from zues_scan.server.web import COOKIE, DASHBOARD_CSP, create_app  # noqa: E402
@@ -84,8 +84,8 @@ class App:
     def work(self) -> None:
         from rq import Queue
 
-        q = Queue("web", connection=self.redis)
-        SimpleWorker([q], connection=self.redis).work(burst=True)
+        q = Queue("web", connection=self.redis, serializer=rkqueue.SERIALIZER)
+        rkqueue.make_worker(q, fork=False).work(burst=True)
 
     def rewrite(self, text: str) -> None:
         self.config.write_text(text, encoding="utf-8")

@@ -3,6 +3,22 @@
 One queue, many workers. A job is "scan configured target X for operator Y", with a
 timeout a little longer than the target's profile allows, and a stable description
 so that the API can show what is running.
+
+Whoever can write to Redis must not be able to run code in a worker (D19). RQ's default
+is pickle: a job is a pickled call, and a worker runs whatever function it names - a
+third-party plugin, which runs inside the worker's container with the worker's network,
+could reach an open Redis, queue `subprocess.getoutput(...)` and have it run *outside*
+its sandbox (checked for real). So:
+
+* jobs are JSON (`JSONSerializer`): reading one never runs code;
+* a worker runs only ZuesScan's own job (`JOB`, and `JOB_FAILED` as its failure
+  callback); any other job is failed unrun, and the worker log says so;
+* Redis can have a password, read from a file (`redis_password_file` /
+  `ZUES_REDIS_PASSWORD_FILE`; compose generates one): a plugin's process gets no
+  `ZUES_*` variable, and Landlock keeps it from reading the file (D15, D16).
+
+Jobs queued by an older version (pickled) are refused the same way: drain the queue
+before upgrading.
 """
 
 from __future__ import annotations
@@ -14,17 +30,20 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from redis import Redis
 from redis import exceptions as redis_errors
 from rq import Callback, Queue, SimpleWorker, Worker
+from rq.exceptions import DeserializationError
 from rq.job import Job
+from rq.serializers import JSONSerializer
 from rq.timeouts import TimerDeathPenalty
 
 from zues_scan.profiles import load_profiles
-from zues_scan.server.config import ServiceConfig
+from zues_scan.server.config import ConfigError, ServiceConfig
 
 JOB = "zues_scan.server.jobs.scan_target"
 JOB_FAILED = "zues_scan.server.jobs.job_failed"  # alerts when a job fails without a run
@@ -33,8 +52,35 @@ JOB_FAILED = "zues_scan.server.jobs.job_failed"  # alerts when a job fails witho
 UNREACHABLE = (redis_errors.ConnectionError, redis_errors.TimeoutError)
 
 
+SERIALIZER = JSONSerializer
+
+
 def connect(config: ServiceConfig) -> Redis:
-    return Redis.from_url(config.redis_url)
+    password = redis_password(config)
+    if password is None:
+        return Redis.from_url(config.redis_url)
+    return Redis.from_url(config.redis_url, password=password)
+
+
+def redis_password(config: ServiceConfig) -> str | None:
+    """The password in `redis_password_file`, read now (a new one is used at the next
+    connection); None without a file."""
+    if not config.redis_password_file:
+        return None
+    if urlsplit(config.redis_url).password is not None:
+        raise ConfigError("Redis's password is in redis_url and in redis_password_file: keep one")
+    path = Path(config.redis_password_file)
+    try:
+        password = path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise ConfigError(f"cannot read the Redis password file {path}: {exc.strerror}") from None
+    if not password:
+        raise ConfigError(f"the Redis password file {path} is empty")
+    return password
+
+
+def has_password(config: ServiceConfig) -> bool:
+    return bool(config.redis_password_file) or urlsplit(config.redis_url).password is not None
 
 
 def safe_url(url: str) -> str:
@@ -48,7 +94,40 @@ def safe_url(url: str) -> str:
 
 
 def queue(config: ServiceConfig, connection: Redis | None = None) -> Queue:
-    return Queue(config.queue, connection=connection or connect(config))
+    return Queue(config.queue, connection=connection or connect(config), serializer=SERIALIZER)
+
+
+def refusal(job: Job) -> str | None:
+    """Why a worker must not run `job` (not ZuesScan's scan job), or None."""
+    try:
+        name, instance = job.func_name, job.instance
+    except DeserializationError:
+        return "its call cannot be read as JSON (queued by an older version, or not by ZuesScan)"
+    if instance is not None or name != JOB:
+        return f"it calls {str(name)[:100]!r}, not ZuesScan's scan job"
+    callbacks = {
+        job._success_callback_name,
+        job._failure_callback_name,
+        job._stopped_callback_name,
+    } - {None}
+    if callbacks - {JOB_FAILED}:
+        return f"its callbacks are not ZuesScan's: {', '.join(sorted(map(str, callbacks)))[:200]}"
+    return None
+
+
+class _Guarded:
+    """A worker that fails, unrun, any job that is not ZuesScan's (see `refusal`)."""
+
+    def execute_job(self, job: Job, queue: Queue) -> None:
+        problem = refusal(job)
+        if problem is None:
+            super().execute_job(job, queue)  # type: ignore[misc]
+            return
+        worker: Any = self
+        worker.log.warning("refused job %s: %s", job.id, problem)
+        # No failure callback either: its name is part of what was refused.
+        job._failure_callback_name = None
+        worker.handle_job_failure(job, queue, exc_string=f"RefusedJob: {problem}")
 
 
 class AlreadyQueued(Exception):
@@ -66,7 +145,7 @@ _ACTIVE = ("queued", "started", "deferred", "scheduled")
 def active_scan(q: Queue, target_name: str) -> tuple[Job, str] | None:
     """The job (and its status) of a scan of `target_name` that waits or runs, if any."""
     ids = [*q.get_job_ids(), *q.started_job_registry.get_job_ids()]
-    for job in Job.fetch_many(ids, connection=q.connection):
+    for job in Job.fetch_many(ids, connection=q.connection, serializer=SERIALIZER):
         if job is None or (job.meta or {}).get("target") != target_name:
             continue
         status = job.get_status()
@@ -204,7 +283,11 @@ def recent_jobs(q: Queue, limit: int = 50) -> list[JobInfo]:
         q.failed_job_registry,
     ):
         ids.extend(registry.get_job_ids(desc=True, end=limit - 1))
-    jobs = [j for j in Job.fetch_many(dict.fromkeys(ids), connection=q.connection) if j]
+    jobs = [
+        j
+        for j in Job.fetch_many(dict.fromkeys(ids), connection=q.connection, serializer=SERIALIZER)
+        if j
+    ]
     infos = [info(j) for j in jobs]
     infos.sort(key=lambda i: i.enqueued_at or "", reverse=True)
     return infos[:limit]
@@ -214,14 +297,20 @@ def _iso(moment: Any) -> str | None:
     return None if moment is None else str(moment.isoformat())
 
 
-class _WindowsWorker(SimpleWorker):
+class _Worker(_Guarded, Worker):
+    """Forks a work horse per job (Unix)."""
+
+
+class _WindowsWorker(_Guarded, SimpleWorker):
     """No fork() and no SIGALRM on Windows: run jobs in-process, timed by a thread."""
 
     death_penalty_class = TimerDeathPenalty
 
 
-def make_worker(q: Queue) -> Worker | SimpleWorker:
-    """A worker for this platform (forking on Unix, in-process on Windows)."""
-    if sys.platform == "win32":
-        return _WindowsWorker([q], connection=q.connection)
-    return Worker([q], connection=q.connection)
+def make_worker(q: Queue, fork: bool | None = None) -> Worker | SimpleWorker:
+    """A worker for this platform (forking on Unix, in-process on Windows; `fork` to
+    choose) that runs only ZuesScan's jobs, read as JSON."""
+    if fork is None:
+        fork = sys.platform != "win32"
+    kind = _Worker if fork else _WindowsWorker
+    return kind([q], connection=q.connection, serializer=SERIALIZER)
