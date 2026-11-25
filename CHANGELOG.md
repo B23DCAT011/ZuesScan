@@ -7,6 +7,16 @@ section of a version as its release notes, so every tag needs one.
 ## [Unreleased]
 
 ### Added
+- Out-of-band templates with your own interactsh server (G24): `ZUES_INTERACTSH_SERVER`
+  (the server's URL, by its domain) and `ZUES_INTERACTSH_TOKEN`. nuclei then runs without
+  `-ni`, Log4Shell, blind SSRF and the like included, in the main pass and when trying
+  version-based CVEs; a miss there reads "no out-of-band callback reached <domain> within
+  15s (or the target cannot reach that server)". ProjectDiscovery's public servers and IP
+  addresses are refused; the token goes in a per-run configuration file, never on the
+  command line or in the evidence; the server is probed before the scan and, if it does not
+  answer, the scan goes on with `-ni` and says why. A callback is part of the evidence
+  (HTTP ones masked like any exchange). `zues doctor` checks the server; compose passes the
+  variables to the worker.
 - Changing the webhook secret without dropping alerts: `[notify] previous_secret`
   (`ZUES_WEBHOOK_SECRET_PREVIOUS`) keeps the old one valid while receivers move over -
   each alert then carries both signatures, `X-ZuesScan-Signature: sha256=<new>,
@@ -99,6 +109,8 @@ section of a version as its release notes, so every tag needs one.
   expires.
 
 ### Fixed
+- A nuclei template run that ended in an error (a refused connection, "interactsh client
+  not initialized") was recorded as "tried, not matched"; it is now left out and noted.
 - The scheduler read its configuration once, at start: a target added or changed in the
   dashboard (or in service.toml) was never scheduled until the scheduler restarted — the
   three-command install's "add a target, every 24h" did not scan. It now re-reads the
